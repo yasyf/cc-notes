@@ -66,12 +66,16 @@ func (p indexedPack) FindHash(offset int64) (plumbing.Hash, error) {
 
 func (p indexedPack) Count() (int64, error) { return p.count, nil }
 
-func (p indexedPack) Entries() (idxfile.EntryIter, error) { return p.entries("hash") }
+func (p indexedPack) Entries() (idxfile.EntryIter, error) {
+	return p.entries("SELECT hash, offset, crc FROM objects WHERE pack = ? ORDER BY hash")
+}
 
-func (p indexedPack) EntriesByOffset() (idxfile.EntryIter, error) { return p.entries("offset") }
+func (p indexedPack) EntriesByOffset() (idxfile.EntryIter, error) {
+	return p.entries("SELECT hash, offset, crc FROM objects WHERE pack = ? ORDER BY offset")
+}
 
-func (p indexedPack) entries(order string) (idxfile.EntryIter, error) {
-	rows, err := p.tx.QueryContext(p.ctx, "SELECT hash, offset, crc FROM objects WHERE pack = ? ORDER BY "+order, p.hash[:])
+func (p indexedPack) entries(query string) (idxfile.EntryIter, error) {
+	rows, err := p.tx.QueryContext(p.ctx, query, p.hash[:])
 	if err != nil {
 		return nil, err
 	}

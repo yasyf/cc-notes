@@ -140,6 +140,43 @@ func TestPackDataIsNotBuffered(t *testing.T) {
 	}
 }
 
+func TestPackIndexStatTracksOpenedFileAfterPathReplacement(t *testing.T) {
+	gitDir, index := packedIndex(t)
+	path := filepath.Join(gitDir, index)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	fs := indexReadFS{
+		Filesystem: gitDirFS{countingFS{Filesystem: osfs.New(gitDir), reads: &reads}},
+		reads:      make(map[string]int64),
+	}
+	file, err := fs.Open(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	replacement := path + ".replacement"
+	if err := os.WriteFile(replacement, []byte{0}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	input := contextFile{File: file, ctx: t.Context()}
+	opened, err := input.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, opened) || opened.Size() != before.Size() {
+		t.Fatalf("opened index = %v, want original inode with size %d", opened, before.Size())
+	}
+	if err := idxfile.NewDecoder(input).Decode(idxfile.NewMemoryIndex()); err != nil {
+		t.Fatalf("decode original opened index after path replacement: %v", err)
+	}
+}
+
 type countingFS struct {
 	billy.Filesystem
 	reads *int
@@ -156,6 +193,10 @@ func (fs countingFS) Open(path string) (billy.File, error) {
 type countingFile struct {
 	billy.File
 	reads *int
+}
+
+func (f countingFile) Stat() (os.FileInfo, error) {
+	return f.File.(fileStater).Stat()
 }
 
 func (f countingFile) Read(p []byte) (int, error) {

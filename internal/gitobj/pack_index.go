@@ -81,8 +81,12 @@ func (p *packIndex) identity(hash plumbing.Hash) ([]byte, error) {
 		}
 		device, inode := FileID(info)
 		ctime, _ := StatIdentity(info)
-		for _, value := range []uint64{device, inode, uint64(info.Size()), uint64(info.ModTime().UnixNano()), uint64(ctime)} {
-			stamp = binary.BigEndian.AppendUint64(stamp, value)
+		stamp, err = binary.Append(stamp, binary.BigEndian, struct {
+			Device, Inode           uint64
+			Size, Modified, Changed int64
+		}{device, inode, info.Size(), info.ModTime().UnixNano(), ctime})
+		if err != nil {
+			return nil, err
 		}
 	}
 	return stamp, nil
@@ -279,11 +283,7 @@ func (p *packIndex) add(ctx context.Context, tx *sql.Tx, identity packIdentity) 
 	}
 	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
 	index := idxfile.NewMemoryIndex()
-	info, err := p.dir.Fs().Stat(filepath.Join(packDir, "pack-"+identity.hash.String()+".idx"))
-	if err != nil {
-		return err
-	}
-	if err := idxfile.NewDecoder(indexInput{contextFile: contextFile{File: file, ctx: ctx}, info: info}).Decode(index); err != nil {
+	if err := idxfile.NewDecoder(contextFile{File: file, ctx: ctx}).Decode(index); err != nil {
 		return err
 	}
 	if !bytes.Equal(index.PackfileChecksum[:], identity.hash[:]) {
@@ -330,10 +330,3 @@ func (p *packIndex) add(ctx context.Context, tx *sql.Tx, identity packIdentity) 
 	}
 	return nil
 }
-
-type indexInput struct {
-	contextFile
-	info os.FileInfo
-}
-
-func (f indexInput) Stat() (os.FileInfo, error) { return f.info, nil }
