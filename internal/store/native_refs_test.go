@@ -37,6 +37,18 @@ func TestListUsesNativeRecordsNamespace(t *testing.T) {
 				t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "unrelated.git"))
 				t.Setenv("GIT_COMMON_DIR", filepath.Join(t.TempDir(), "unrelated-common.git"))
 			}
+			view, err := s.PinnedKinds(t.Context(), model.KindDoc, model.KindAnswer, model.KindDoc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantPins := map[string]model.SHA{
+				refs.For(model.KindDoc, a.ID): a.Head,
+				refs.For(model.KindDoc, b.ID): b.Head,
+				refs.For(model.KindDoc, c.ID): c.Head,
+			}
+			if !reflect.DeepEqual(view.pins, wantPins) {
+				t.Fatalf("native pinned kinds = %v, want %v", view.pins, wantPins)
+			}
 			got, err := s.ListDocs(t.Context(), true, true)
 			if err != nil {
 				t.Fatal(err)

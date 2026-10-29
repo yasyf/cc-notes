@@ -114,13 +114,20 @@ func (r *Repo) ListSymbolic(ctx context.Context, prefix string) (map[string]stri
 // ListPrefix returns every hash ref — loose and packed — whose full name
 // starts with prefix, mapped to the commit it points at.
 func (r *Repo) ListPrefix(ctx context.Context, prefix string) (map[string]model.SHA, error) {
+	return r.ListPrefixes(ctx, prefix)
+}
+
+// ListPrefixes returns the hash refs under the selected literal prefixes from
+// one packed-ref file and the corresponding loose namespaces. With no prefixes,
+// it lists refs/; HEAD requires an explicit matching prefix.
+func (r *Repo) ListPrefixes(ctx context.Context, prefixes ...string) (map[string]model.SHA, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	refs, err := retryEmptyRef(ctx, func() (map[string]*plumbing.Reference, error) {
-		return r.referencePrefix(ctx, prefix)
+		return r.referencePrefixes(ctx, prefixes)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list refs: %w", err)

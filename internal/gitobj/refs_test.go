@@ -335,3 +335,45 @@ func TestReferenceGenerationWriteWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeMultiplePrefixes(t *testing.T) {
+	dir := gittest.InitRepo(t)
+	gittest.Git(t, dir, "commit", "--allow-empty", "-qm", "first")
+	first := gittest.Git(t, dir, "rev-parse", "HEAD")
+	for _, name := range []string{"refs/cc-notes/docs/packed", "refs/cc-notes/tasks/packed", "refs/heads/unselected"} {
+		gittest.Git(t, dir, "update-ref", name, first)
+	}
+	gittest.Git(t, dir, "pack-refs", "--all", "--prune")
+	gittest.Git(t, dir, "commit", "--allow-empty", "-qm", "second")
+	second := gittest.Git(t, dir, "rev-parse", "HEAD")
+	gittest.Git(t, dir, "update-ref", "refs/cc-notes/docs/packed", second)
+	gittest.Git(t, dir, "update-ref", "refs/cc-notes/tasks/loose", second)
+	gittest.Git(t, dir, "symbolic-ref", "refs/cc-notes/tasks/symbolic", "refs/cc-notes/docs/packed")
+	r, err := Open(filepath.Join(dir, ".git"), filepath.Join(dir, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	prefixes := []string{"refs/cc-notes/tasks/", "refs/cc-notes/docs/packed", "refs/cc-notes/docs/", "refs/cc-notes/tasks/"}
+	got, err := r.ListPrefixes(t.Context(), prefixes...)
+	want := map[string]model.SHA{
+		"refs/cc-notes/docs/packed":  model.SHA(second),
+		"refs/cc-notes/tasks/packed": model.SHA(first),
+		"refs/cc-notes/tasks/loose":  model.SHA(second),
+	}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("ListPrefixes = %v, %v; want %v", got, err, want)
+	}
+	if prefixes[0] != "refs/cc-notes/tasks/" || prefixes[1] != "refs/cc-notes/docs/packed" {
+		t.Fatalf("ListPrefixes mutated its caller's prefixes: %v", prefixes)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := r.ListPrefixes(ctx, prefixes...); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled ListPrefixes = %v", err)
+	}
+	all, err := r.ListPrefixes(t.Context())
+	if err != nil || all["refs/heads/unselected"] != model.SHA(first) || all["HEAD"] != "" || len(all) != 5 {
+		t.Fatalf("unfiltered ListPrefixes = %v, %v; want five hash refs without HEAD", all, err)
+	}
+}
