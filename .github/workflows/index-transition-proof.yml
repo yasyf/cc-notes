@@ -1,0 +1,13 @@
+name: Initial index transition proof
+on:
+  push:
+    branches: [test/ccn-index-wal-transition]
+permissions:
+  contents: read
+jobs:
+  transition:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: go test -count=1 ./internal/gitobj -run '^TestInitialPackIndexJournalTransitionHonorsCancellation$'
