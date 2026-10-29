@@ -194,3 +194,32 @@ func TestDocListFullReadsOneListing(t *testing.T) {
 		t.Fatalf("doc show enumerated the docs namespace %d times, want the per-record reverse walk this listing replaces", docEnumerations(show))
 	}
 }
+
+func TestDocShowReadsOneCorpusAndOpensOneStore(t *testing.T) {
+	dir := initRepo(t)
+	chain := extendChain(t, dir, "progress:x", nil, 2)
+	trace := traceGit(t)
+	for _, size := range []int{2, 6} {
+		chain = extendChain(t, dir, "progress:x", chain, size-len(chain))
+		for _, suffix := range [][]string{nil, {"--json"}} {
+			args := slices.Concat([]string{"doc", "show", chain[0]}, suffix)
+			calls := trace.of(t, dir, args...)
+			if got := docEnumerations(calls); got != 2 {
+				t.Fatalf("%v over %d docs enumerated the namespace %d times, want one resolve and one corpus read: %q", args, size, got, calls)
+			}
+			opens := 0
+			for _, call := range calls {
+				if strings.Contains(call, "--absolute-git-dir\x1f") {
+					opens++
+				}
+			}
+			if opens != 1 {
+				t.Fatalf("%v opened %d stores, want one shared by the CLI and notes client: %q", args, opens, calls)
+			}
+		}
+		shown := mustJSON[docJSON](t, mustRun(t, dir, "doc", "show", chain[0], "--json"))
+		if shown.ID != chain[0] || shown.Title != "Step 0" || shown.Body != "body 0" || !slices.Equal(shown.Tags, []string{"progress:x"}) || !slices.Equal(shown.SupersededBy, []string{chain[1]}) || len(shown.Supersedes) != 0 || !slices.Equal(shown.LiveHead, []string{chain[len(chain)-1]}) {
+			t.Fatalf("show over %d docs = %+v, want the original record and current terminal successor", size, shown)
+		}
+	}
+}

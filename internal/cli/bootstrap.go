@@ -108,11 +108,7 @@ func openStoreClient(cmd *cobra.Command) (*store.Store, *notes.Client, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	c, err := notes.Open(dir)
-	if err != nil {
-		return nil, nil, err
-	}
-	return s, c, nil
+	return s, notes.FromStore(s), nil
 }
 
 func retainedStore(cmd *cobra.Command) (*store.Store, bool, error) {

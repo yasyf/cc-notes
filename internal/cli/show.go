@@ -116,11 +116,12 @@ func showDoc(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string,
 	if err != nil {
 		return err
 	}
-	supersedes, err := c.DocSuperseders(ctx, doc.ID)
-	if err != nil {
-		return err
+	var supersedes, liveHead []model.EntityID
+	if jsonOut {
+		supersedes, liveHead, err = c.DocSupersession(ctx, doc.ID)
+	} else {
+		supersedes, err = c.DocSuperseders(ctx, doc.ID)
 	}
-	liveHead, err := c.DocSupersedeHeads(ctx, doc.ID)
 	if err != nil {
 		return err
 	}

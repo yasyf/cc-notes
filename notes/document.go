@@ -803,6 +803,16 @@ func (c *Client) DocSuperseders(ctx context.Context, id model.EntityID) ([]model
 	return superseders(all, docSupersedeEdge, id), nil
 }
 
+// DocSupersession returns the sorted incoming superseders and terminal
+// supersede targets from one capture of the live and superseded docs.
+func (c *Client) DocSupersession(ctx context.Context, id model.EntityID) ([]model.EntityID, []model.EntityID, error) {
+	all, err := c.s.ListDocs(ctx, false, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	return superseders(all, docSupersedeEdge, id), supersedeHeads(all, docSupersedeEdge, id), nil
+}
+
 // NoteSupersedeHeads walks the note supersede edge transitively from id and
 // returns the sorted ids of the notes that terminate the chain — what a reader
 // of a superseded note should read instead. The listing includes superseded
