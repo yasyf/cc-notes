@@ -360,7 +360,7 @@ func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error)
 	tips := s.pins
 	if tips == nil {
 		var err error
-		if tips, err = s.RecordsGit.Refs(ctx, prefix); err != nil {
+		if tips, err = s.Repo.ListPrefix(ctx, prefix); err != nil {
 			return nil, err
 		}
 	}
