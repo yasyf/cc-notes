@@ -159,3 +159,27 @@ func TestPackIndexRecoversUnpublishedWAL(t *testing.T) {
 	}
 	assertIndexedCommit(t, index, hash)
 }
+
+func TestPackIndexFormatKeepsPriorCacheNamespace(t *testing.T) {
+	_, commonDir, hash := indexedCommitFixture(t)
+	index, _ := testPackIndex(t, commonDir)
+	if got := filepath.Base(index.path); got != "objects-v2.sqlite" {
+		t.Fatalf("object index path = %q, want version 2", got)
+	}
+	if err := os.MkdirAll(filepath.Dir(index.path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	prior := filepath.Join(filepath.Dir(index.path), "objects-v1.sqlite")
+	want := []byte("prior cache generation")
+	if err := os.WriteFile(prior, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertIndexedCommit(t, index, hash)
+	got, err := os.ReadFile(prior)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("prior cache = %q, %v; want retained bytes", got, err)
+	}
+}

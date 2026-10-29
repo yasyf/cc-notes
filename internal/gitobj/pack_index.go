@@ -50,7 +50,7 @@ func newPackIndex(dir *dotgit.DotGit, commonDir string) (*packIndex, error) {
 		return nil, err
 	}
 	dir = dotgit.NewWithOptions(dir.Fs(), dotgit.Options{AlternatesFS: osfs.New(string(filepath.Separator))})
-	return &packIndex{dir: dir, path: filepath.Join(repo.Dir, "objects-v1.sqlite")}, nil
+	return &packIndex{dir: dir, path: filepath.Join(repo.Dir, "objects-v2.sqlite")}, nil
 }
 
 func (p *packIndex) identities(ctx context.Context) ([]packIdentity, error) {
