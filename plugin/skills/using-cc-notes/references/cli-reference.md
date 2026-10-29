@@ -814,8 +814,8 @@ go through `task edit --add-branch`.
 | `--label <label>` | none | Label; repeatable |
 | `--body <text>` | empty | Description; positional `BODY` and `-` (stdin) are equivalent |
 | `--body-file <file>` | none | Read `--body` from this file; `-` reads stdin; mutually exclusive with `--body` |
-| `--criterion <text>` | none | Acceptance criterion; repeatable, required by default (see below) |
-| `--no-validation-criteria` | off | Create with no criteria; mutually exclusive with `--criterion` |
+| `--criterion <text>` | none | Acceptance criterion; repeatable, optional (see below) |
+| `--no-validation-criteria` | off | Create with no criteria (the default without `--criterion`); mutually exclusive with `--criterion` |
 | `--parent <id>` | none | Parent task id |
 | `--sprint <id>` | none | Join a sprint (id prefix) |
 | `--project <id>` | none | Join a project directly (id prefix) |
@@ -828,11 +828,11 @@ go through `task edit --add-branch`.
 | `--dir <dir>` | none | Directory anchor; repeatable |
 | `--json` | off | Emit JSON |
 
-Acceptance criteria are required by default: a `task add` with no `--criterion` and no
-`--no-validation-criteria` is a usage error (exit 2) — the default nudges every task to record
-what "done" means up front. Pass `--no-validation-criteria` to opt out explicitly; it cannot be
-combined with `--criterion`. Each criterion starts `pending`; it gates `task done` and is driven
-by the `task criterion` subgroup below.
+Acceptance criteria are optional: a `task add` with no `--criterion` creates the task with none, and
+the `--json` ack carries `"criteria_omitted": true`. Pass `--criterion` to record what "done" means
+up front; `--no-validation-criteria` states the same opt-out explicitly and cannot be combined with
+`--criterion`. Each criterion starts `pending`; it gates `task done` and is driven by the
+`task criterion` subgroup below.
 
 `--sprint` and `--project` are independent: a task may join a sprint, a project, both, or
 neither. Joining a sprint leaves the project pointer untouched; `project show` still counts the

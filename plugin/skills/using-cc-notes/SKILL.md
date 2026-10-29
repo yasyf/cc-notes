@@ -79,9 +79,8 @@ inline:
 ```
 
 Capture shared work onto the backlog with `task_add` — acceptance criteria gate
-`task_done`. task_add accepts criteria (list) or no_validation_criteria (bool); the schema
-marks both optional, and the server enforces at dispatch that you pass exactly one of them —
-omitting both fails at call time, not schema time:
+`task_done`. task_add accepts criteria (list); omit it and the task is created with none and
+the ack carries criteria_omitted:
 
 ```json
 {

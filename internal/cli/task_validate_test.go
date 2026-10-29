@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -47,18 +48,29 @@ func tkMutate(t *testing.T, dir string, args ...string) taskDTO {
 	return tkShow(t, dir, spID(t, spMust(t, dir, args...)))
 }
 
-func TestTaskAddCriteriaRequired(t *testing.T) {
+func TestTaskAddCriteriaOptional(t *testing.T) {
 	dir := spInitRepo(t)
 
-	_, _, err := spRun(t, dir, "", "task", "add", "Needs criteria")
-	if !isUsage(err) {
-		t.Fatalf("task add without criteria err = %v, want UsageError exit 2", err)
+	out := spMust(t, dir, "task", "add", "No criteria given", "--json")
+	var ack struct {
+		CriteriaOmitted bool `json:"criteria_omitted"`
 	}
-	if msg := err.Error(); !strings.Contains(msg, "--criterion") || !strings.Contains(msg, "--no-validation-criteria") {
-		t.Errorf("error %q must name both --criterion and --no-validation-criteria", msg)
+	if err := json.Unmarshal([]byte(out), &ack); err != nil {
+		t.Fatalf("decode ack %q: %v", out, err)
+	}
+	if !ack.CriteriaOmitted {
+		t.Errorf("ack %q, want criteria_omitted true", out)
+	}
+	if got := tkShow(t, dir, spID(t, out)); len(got.Criteria) != 0 {
+		t.Errorf("criteria = %v, want none", got.Criteria)
 	}
 
-	_, _, err = spRun(t, dir, "", "task", "add", "Both", "--criterion", "x", "--no-validation-criteria")
+	explicit := spMust(t, dir, "task", "add", "Explicit none", "--no-validation-criteria", "--json")
+	if strings.Contains(explicit, "criteria_omitted") {
+		t.Errorf("explicit opt-out ack %q must not carry criteria_omitted", explicit)
+	}
+
+	_, _, err := spRun(t, dir, "", "task", "add", "Both", "--criterion", "x", "--no-validation-criteria")
 	if !isUsage(err) {
 		t.Fatalf("task add --criterion + --no-validation-criteria err = %v, want UsageError exit 2", err)
 	}
