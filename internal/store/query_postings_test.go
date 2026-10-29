@@ -16,7 +16,7 @@ import (
 
 func newQueryMetadataDB(t *testing.T) *bolt.DB {
 	t.Helper()
-	db, err := bolt.Open(filepath.Join(t.TempDir(), "query.db"), 0600, nil)
+	db, err := bolt.Open(filepath.Join(t.TempDir(), "query.db"), 0o600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

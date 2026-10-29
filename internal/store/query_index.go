@@ -35,13 +35,6 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 			hit = false
 		}
 	}()
-	timeout := queryMetadataOpenTimeout
-	if deadline, ok := ctx.Deadline(); ok {
-		timeout = min(timeout, time.Until(deadline))
-		if timeout <= 0 {
-			return value, false, context.DeadlineExceeded
-		}
-	}
 	var authorityErr error
 	refresh := false
 	operation := func(tx *bolt.Tx) error {
@@ -99,9 +92,23 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 		return nil
 	}
 	var cacheErr error
+	var cacheOpenErr error
 	access := func(readOnly bool) bool {
-		db, openErr := bolt.Open(q.indexPath(), 0600, &bolt.Options{ReadOnly: readOnly, Timeout: timeout})
+		if err := ctx.Err(); err != nil {
+			cacheOpenErr = err
+			return false
+		}
+		timeout := queryMetadataOpenTimeout
+		if deadline, ok := ctx.Deadline(); ok {
+			timeout = min(timeout, time.Until(deadline))
+			if timeout <= 0 {
+				cacheOpenErr = context.DeadlineExceeded
+				return false
+			}
+		}
+		db, openErr := bolt.Open(q.indexPath(), 0o600, &bolt.Options{ReadOnly: readOnly, Timeout: timeout})
 		if openErr != nil {
+			cacheOpenErr = openErr
 			return false
 		}
 		if readOnly {
@@ -121,8 +128,8 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 	if available && cacheErr != nil {
 		return value, false, nil
 	}
-	if !q.pinned && (!available || refresh) {
-		if err := os.MkdirAll(filepath.Dir(q.indexPath()), 0750); err != nil {
+	if !q.pinned && ((!available && errors.Is(cacheOpenErr, os.ErrNotExist)) || refresh) {
+		if err := os.MkdirAll(filepath.Dir(q.indexPath()), 0o750); err != nil {
 			return value, false, nil
 		}
 		if !access(false) {
