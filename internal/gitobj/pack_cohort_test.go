@@ -35,17 +35,20 @@ func TestPackIndexPublishesCapturedCohortDuringPackArrival(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			dir, commonDir, first := indexedCommitFixture(t)
+			gittest.Git(t, dir, "commit", "--allow-empty", "-qm", "second")
+			second := plumbing.NewHash(gittest.Git(t, dir, "rev-parse", "HEAD"))
 			index, reads := testPackIndex(t, commonDir)
 			captured, err := index.identities(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
-			var second plumbing.Hash
 			var hiddenIndex string
 			index.dir = dotgit.New(packIndexOpenFS{Filesystem: index.dir.Fs(), indexOpen: func(path string) {
-				gittest.Git(t, dir, "commit", "--allow-empty", "-qm", "second")
-				second = plumbing.NewHash(gittest.Git(t, dir, "rev-parse", "HEAD"))
 				gittest.Git(t, dir, "repack", "-aq")
+				stamp, err := index.identity(captured[0].hash)
+				if err != nil || !bytes.Equal(stamp, captured[0].stamp) {
+					t.Fatalf("arrival fixture changed captured pack: %v", err)
+				}
 				if pendingIndex {
 					entries, err := os.ReadDir(filepath.Join(commonDir, packDir))
 					if err != nil {
@@ -196,6 +199,8 @@ func TestIndexedRepoRepairsPackArrivalWithinAncestry(t *testing.T) {
 
 func TestIndexedRepoSeesLateAlternatePackInSameReadScope(t *testing.T) {
 	alternate, alternateCommon, first := indexedCommitFixture(t)
+	gittest.Git(t, alternate, "commit", "--allow-empty", "-qm", "second")
+	second := plumbing.NewHash(gittest.Git(t, alternate, "rev-parse", "HEAD"))
 	dir := gittest.InitRepo(t)
 	gitDir, commonDir := gittest.Dirs(t, dir)
 	if err := os.WriteFile(filepath.Join(commonDir, "objects", "info", "alternates"), []byte(filepath.Join(alternateCommon, "objects")+"\n"), 0o600); err != nil {
@@ -218,8 +223,6 @@ func TestIndexedRepoSeesLateAlternatePackInSameReadScope(t *testing.T) {
 	if _, err := repo.lookupCommit(first); err != nil {
 		t.Fatal(err)
 	}
-	gittest.Git(t, alternate, "commit", "--allow-empty", "-qm", "second")
-	second := plumbing.NewHash(gittest.Git(t, alternate, "rev-parse", "HEAD"))
 	gittest.Git(t, alternate, "repack", "-dq")
 	gittest.Git(t, alternate, "prune-packed")
 	if got := gittest.Git(t, dir, "cat-file", "-t", second.String()); got != "commit" {
