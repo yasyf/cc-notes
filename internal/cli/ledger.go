@@ -108,7 +108,7 @@ func newLedgerListCmd() *cobra.Command {
 		Short: "List ledgers (active only unless --all)",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -139,7 +139,7 @@ func newLedgerShowCmd() *cobra.Command {
 		Short: "Show one ledger with its rows",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, _, err := openStoreClient(cmd)
+			s, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
@@ -265,7 +265,7 @@ func newLedgerSearchCmd() *cobra.Command {
 		Short: "Ranked search across ledger titles, labels, descriptions, and row content",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -451,7 +451,7 @@ func newRowListCmd() *cobra.Command {
 		Short: "List a ledger's rows, narrowed by --where",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, _, err := openStoreClient(cmd)
+			s, err := openStore(cmd)
 			if err != nil {
 				return err
 			}

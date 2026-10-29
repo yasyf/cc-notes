@@ -93,7 +93,7 @@ to a preview. The clip marker names the "papercut show LOG_ID INDEX" call that
 reads that one complaint back in full.`,
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, c, err := openStoreClient(cmd)
+			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
