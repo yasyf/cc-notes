@@ -34,14 +34,28 @@ var executableIdentity = sync.OnceValues(func() (string, error) {
 	return fmt.Sprintf("%s %s %d %d %d %d", exe, version.Version, info.Size(), info.ModTime().UnixNano(), ctime, inode), nil
 })
 
-// CachedList runs compute over a view of s pinned once to kind's refs. Each
+// CachedList runs compute over supplied pins, or a view pinned once to kind's refs. Each
 // variant, fold generation, records repository, and binary keeps one entry,
 // served only while its recorded tips equal the pinned tips and rewritten in
 // place when they differ. variant must encode every other input compute reads.
 // Errors and results with skipped ops are never stored.
 func CachedList[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind, variant []byte, compute func(*Store) ([]T, error)) ([]T, error) {
-	pinned, err := s.PinnedKinds(ctx, kind)
-	if err != nil {
+	pinned := s
+	if s.pins == nil {
+		var err error
+		pinned, err = s.PinnedKinds(ctx, kind)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return cachedPinnedList(ctx, pinned, kind, variant, compute)
+}
+
+func cachedPinnedList[T model.Snapshot](ctx context.Context, pinned *Store, kind model.Kind, variant []byte, compute func(*Store) ([]T, error)) ([]T, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := pinned.CheckRecords(); err != nil {
 		return nil, err
 	}
 	identity, err := executableIdentity()
@@ -50,7 +64,7 @@ func CachedList[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind
 	}
 	name := pinned.listCacheName(kind, variant, foldCacheGeneration, identity)
 	tips := pinned.listTips(kind)
-	if cached, ok := readCachedList[T](s.relevant, name, tips); ok {
+	if cached, ok := readCachedList[T](pinned.relevant, name, tips); ok {
 		return cached, nil
 	}
 	out, err := compute(pinned)
@@ -61,7 +75,7 @@ func CachedList[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind
 		return out, nil
 	}
 	if data, err := json.Marshal(out); err == nil {
-		s.relevant.write(name, slices.Concat([]byte(tips+"\n"), data))
+		pinned.relevant.write(name, slices.Concat([]byte(tips+"\n"), data))
 	}
 	return out, nil
 }

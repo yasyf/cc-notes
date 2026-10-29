@@ -199,7 +199,7 @@ func TestQueryGenerationRechecksAfterRead(t *testing.T) {
 	b := create(t, s, docOps("b")).EntityID()
 	settleSupersession(t, s, a)
 	calls := 0
-	heads, hit, err := indexedSupersessionQuery(t.Context(), s, model.KindDoc, func(tx *bolt.Tx, q queryMetadataSource) ([]model.EntityID, error) {
+	heads, hit, err := indexedMetadataQuery(t.Context(), s, model.KindDoc, func(tx *bolt.Tx, q queryMetadataSource) ([]model.EntityID, error) {
 		calls++
 		if calls == 1 {
 			appendOps(t, s, refs.For(model.KindDoc, a), model.AddSupersededBy{ID: b})
@@ -252,7 +252,7 @@ func TestSettledQueryGenerationRechecksRecordsAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	settleSupersession(t, s, a)
-	value, hit, err := indexedSupersessionQuery(t.Context(), s, model.KindDoc, func(_ *bolt.Tx, _ queryMetadataSource) ([]model.EntityID, error) {
+	value, hit, err := indexedMetadataQuery(t.Context(), s, model.KindDoc, func(_ *bolt.Tx, _ queryMetadataSource) ([]model.EntityID, error) {
 		replaceRepo(t, f.source)
 		return []model.EntityID{a}, nil
 	})

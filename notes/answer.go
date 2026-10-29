@@ -124,6 +124,15 @@ func (c *Client) appendAnswer(ctx context.Context, id model.EntityID, ops []mode
 // UpdatedAt-desc, id-asc order. A repeat call over unchanged answer refs and
 // the same filter reads the stored result instead of folding every answer.
 func (c *Client) Answers(ctx context.Context, f DocumentFilter) ([]model.Answer, error) {
+	if len(f.Labels) > 0 {
+		answers, hit, err := c.s.IndexedAnswers(ctx, f.Labels, store.ListOpts{IncludeDeleted: f.IncludeTombstoned, IncludeSuperseded: f.IncludeSuperseded})
+		if err != nil {
+			return nil, err
+		}
+		if hit {
+			return filteredAnswers(answers, f), nil
+		}
+	}
 	variant, err := json.Marshal(f)
 	if err != nil {
 		return nil, err
@@ -133,12 +142,16 @@ func (c *Client) Answers(ctx context.Context, f DocumentFilter) ([]model.Answer,
 		if err != nil {
 			return nil, err
 		}
-		answers = slices.DeleteFunc(answers, func(a model.Answer) bool {
-			return !matchesFilter(a.Tags, a.Anchors, f)
-		})
-		sortDocuments(answers)
-		return answers, nil
+		return filteredAnswers(answers, f), nil
 	})
+}
+
+func filteredAnswers(answers []model.Answer, f DocumentFilter) []model.Answer {
+	answers = slices.DeleteFunc(answers, func(a model.Answer) bool {
+		return !matchesFilter(a.Tags, a.Anchors, f)
+	})
+	sortDocuments(answers)
+	return answers
 }
 
 // SearchAnswers ranks the live answer set against query, mirroring SearchNotes:
