@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/format/objfile"
 	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 )
 
 type objectStorage struct {
@@ -48,7 +49,7 @@ func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Has
 			alternates, alternateErr := s.index.dir.Alternates()
 			if alternateErr == nil {
 				for _, alternate := range alternates {
-					index, indexErr := newPackIndex(alternate, alternate.Fs().Root())
+					index, indexErr := newPackIndex(dotgit.New(gitDirFS{alternate.Fs()}), alternate.Fs().Root())
 					if indexErr != nil {
 						continue
 					}
