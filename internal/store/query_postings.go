@@ -30,31 +30,32 @@ func queryMetadataBinding(tx *bolt.Tx, binding string) *bolt.Bucket {
 	return root.Bucket(queryMetadataAtom(binding))
 }
 
-func replaceQueryMetadata(tx *bolt.Tx, row queryMetadata) error {
+func ensureQueryMetadataBinding(tx *bolt.Tx, name string) (*bolt.Bucket, error) {
 	root, err := tx.CreateBucketIfNotExists(queryMetadataRootBucket)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	binding, err := root.CreateBucketIfNotExists(queryMetadataAtom(row.Binding))
+	binding, err := root.CreateBucketIfNotExists(queryMetadataAtom(name))
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket} {
+		if _, err := binding.CreateBucketIfNotExists(name); err != nil {
+			return nil, err
+		}
+	}
+	return binding, nil
+}
+
+func replaceQueryMetadata(tx *bolt.Tx, row queryMetadata) error {
+	binding, err := ensureQueryMetadataBinding(tx, row.Binding)
 	if err != nil {
 		return err
 	}
-	rows, err := binding.CreateBucketIfNotExists(queryMetadataRowsBucket)
-	if err != nil {
-		return err
-	}
-	labels, err := binding.CreateBucketIfNotExists(queryMetadataLabelsBucket)
-	if err != nil {
-		return err
-	}
-	anchors, err := binding.CreateBucketIfNotExists(queryMetadataAnchorsBucket)
-	if err != nil {
-		return err
-	}
-	superseders, err := binding.CreateBucketIfNotExists(queryMetadataSupersedersBucket)
-	if err != nil {
-		return err
-	}
+	rows := binding.Bucket(queryMetadataRowsBucket)
+	labels := binding.Bucket(queryMetadataLabelsBucket)
+	anchors := binding.Bucket(queryMetadataAnchorsBucket)
+	superseders := binding.Bucket(queryMetadataSupersedersBucket)
 	if err := removeQueryMetadataPostings(binding, row.ID); err != nil {
 		return err
 	}
