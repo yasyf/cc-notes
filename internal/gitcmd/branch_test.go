@@ -1,10 +1,14 @@
 package gitcmd_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -137,6 +141,66 @@ func TestCurrentBranch(t *testing.T) {
 			want: "main",
 		},
 		{
+			name: "stacked bookmarks select the unique top despite name and timestamp order",
+			setup: func(t *testing.T, g gitcmd.Git) {
+				commitEmpty(t, g, "trunk")
+				gittest.Git(t, g.Dir, "checkout", "-q", "--detach", "HEAD")
+				commitAt(t, g, "lower", 1700000300)
+				gittest.Git(t, g.Dir, "branch", "z-lower")
+				gittest.Git(t, g.Dir, "branch", "z-lower-alias")
+				commitAt(t, g, "middle", 1700000200)
+				gittest.Git(t, g.Dir, "branch", "a-middle")
+				commitAt(t, g, "top", 1700000100)
+				gittest.Git(t, g.Dir, "branch", "m-top")
+				gittest.Git(t, g.Dir, "tag", "m-top", "main")
+			},
+			want: "m-top",
+		},
+		{
+			name: "two names at the top of a stack remain ambiguous",
+			setup: func(t *testing.T, g gitcmd.Git) {
+				commitEmpty(t, g, "trunk")
+				gittest.Git(t, g.Dir, "checkout", "-q", "--detach", "HEAD")
+				commitEmpty(t, g, "lower")
+				gittest.Git(t, g.Dir, "branch", "lower")
+				commitEmpty(t, g, "top")
+				gittest.Git(t, g.Dir, "branch", "top")
+				gittest.Git(t, g.Dir, "branch", "top-alias")
+			},
+			want: "main",
+		},
+		{
+			name: "a trunk-excluded alias moved to the top is not a candidate",
+			setup: func(t *testing.T, g gitcmd.Git) {
+				commitEmpty(t, g, "trunk")
+				gittest.Git(t, g.Dir, "branch", "excluded")
+				gittest.Git(t, g.Dir, "checkout", "-q", "--detach", "HEAD")
+				commitEmpty(t, g, "lower")
+				gittest.Git(t, g.Dir, "branch", "lower")
+				top := commitEmpty(t, g, "top")
+				gittest.Git(t, g.Dir, "branch", "top")
+				gittest.GitShim{
+					Pattern:    `*"for-each-ref --points-at"*`,
+					Interleave: [][]string{{"-C", g.Dir, "update-ref", "refs/heads/excluded", string(top)}},
+				}.Install(t)
+			},
+			want: "top",
+		},
+		{
+			name: "a bookmarked merge contains both prior divergent bookmarks",
+			setup: func(t *testing.T, g gitcmd.Git) {
+				commitEmpty(t, g, "trunk")
+				gittest.Git(t, g.Dir, "checkout", "-q", "-b", "left")
+				commitEmpty(t, g, "left")
+				gittest.Git(t, g.Dir, "checkout", "-q", "-b", "right", "main")
+				commitEmpty(t, g, "right")
+				gittest.Git(t, g.Dir, "checkout", "-q", "--detach", "left")
+				gittest.Git(t, g.Dir, "merge", "-q", "--no-ff", "-m", "merge right", "right")
+				gittest.Git(t, g.Dir, "branch", "merged")
+			},
+			want: "merged",
+		},
+		{
 			name: "no trunk, detached at a sole bookmark tip returns it",
 			setup: func(t *testing.T, g gitcmd.Git) {
 				gittest.Git(t, g.Dir, "checkout", "-q", "-b", "wip")
@@ -217,6 +281,126 @@ func TestCurrentBranch(t *testing.T) {
 				t.Fatalf("CurrentBranch() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCurrentBranchAncestryWorkBound(t *testing.T) {
+	for _, count := range []int{0, 1, 4, 20} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			g := initRepo(t)
+			commitEmpty(t, g, "trunk")
+			gittest.Git(t, g.Dir, "checkout", "-q", "--detach", "HEAD")
+			want := model.Branch("main")
+			for i := range count {
+				name := fmt.Sprintf("bookmark-%02d", i)
+				commitEmpty(t, g, name)
+				gittest.Git(t, g.Dir, "branch", name)
+				want = model.Branch(name)
+			}
+			calls := filepath.Join(t.TempDir(), "git-calls")
+			t.Setenv("GIT_NO_LAZY_FETCH", "0")
+			stubGit(t, fmt.Sprintf(`printf '%%s|%%s\n' "$GIT_NO_LAZY_FETCH" "$*" >> %q`, calls))
+			got, err := g.CurrentBranch(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("CurrentBranch() = %q, want %q", got, want)
+			}
+			data, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var independent, pointsAt, merged int
+			for _, line := range strings.Split(string(data), "\n") {
+				switch {
+				case strings.Contains(line, "merge-base --is-ancestor"):
+					t.Fatalf("pairwise ancestry query: %s", line)
+				case strings.Contains(line, "merge-base --independent"):
+					independent++
+					if !strings.HasPrefix(line, "1|") {
+						t.Fatalf("ancestry query permits lazy fetch: %s", line)
+					}
+					for i := range count {
+						if !slices.Contains(strings.Fields(line), fmt.Sprintf("refs/heads/bookmark-%02d", i)) {
+							t.Fatalf("ancestry query omitted qualified bookmark %d: %s", i, line)
+						}
+					}
+				case strings.Contains(line, "for-each-ref --points-at"):
+					pointsAt++
+				case strings.Contains(line, "for-each-ref --merged"):
+					merged++
+				}
+			}
+			wantQueries := 0
+			if count > 1 {
+				wantQueries = 1
+			}
+			if independent != wantQueries || pointsAt != wantQueries || merged != 2 {
+				t.Fatalf("Git queries independent=%d points-at=%d merged=%d, want %d %d 2", independent, pointsAt, merged, wantQueries, wantQueries)
+			}
+		})
+	}
+}
+
+func TestCurrentBranchAncestryErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		pattern    string
+		interleave []string
+		want       string
+	}{
+		{
+			name:       "candidate ref disappears before reduction",
+			pattern:    `*"merge-base --independent"*`,
+			interleave: []string{"update-ref", "-d", "refs/heads/top"},
+			want:       "independent bookmarks:",
+		},
+		{
+			name:       "reduction fails",
+			pattern:    `*"merge-base --independent"*`,
+			interleave: []string{"config", "core.repositoryformatversion", "999"},
+			want:       "independent bookmarks:",
+		},
+		{
+			name:       "points-at lookup fails",
+			pattern:    `*"for-each-ref --points-at"*`,
+			interleave: []string{"config", "core.repositoryformatversion", "999"},
+			want:       "branches at ",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := initRepo(t)
+			commitEmpty(t, g, "trunk")
+			gittest.Git(t, g.Dir, "checkout", "-q", "--detach", "HEAD")
+			commitEmpty(t, g, "lower")
+			gittest.Git(t, g.Dir, "branch", "lower")
+			commitEmpty(t, g, "top")
+			gittest.Git(t, g.Dir, "branch", "top")
+			gittest.GitShim{
+				Pattern:    tc.pattern,
+				Interleave: [][]string{append([]string{"-C", g.Dir}, tc.interleave...)},
+			}.Install(t)
+			branch, err := g.CurrentBranch(t.Context())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CurrentBranch() = %q, %v, want error containing %q", branch, err, tc.want)
+			}
+			if branch != "" {
+				t.Fatalf("CurrentBranch() = %q after Git failure, want empty branch", branch)
+			}
+		})
+	}
+}
+
+func TestCurrentBranchCancelled(t *testing.T) {
+	g := initRepo(t)
+	commitEmpty(t, g, "trunk")
+	gittest.Git(t, g.Dir, "checkout", "-q", "--detach", "HEAD")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	branch, err := g.CurrentBranch(ctx)
+	if branch != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("CurrentBranch() = %q, %v, want empty branch and context.Canceled", branch, err)
 	}
 }
 

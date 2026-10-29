@@ -207,24 +207,31 @@ func (g Git) nearestBookmarkAncestor(ctx context.Context, trunk model.Branch) (m
 		return trunk, nil
 	}
 
+	if len(candidates) == 1 {
+		return model.Branch(candidates[0]), nil
+	}
+	args := []string{"merge-base", "--independent"}
+	candidateNames := make(map[string]bool, len(candidates))
+	for _, name := range candidates {
+		args = append(args, "refs/heads/"+name)
+		candidateNames[name] = true
+	}
+	out, err := g.probe(ctx, "", args...)
+	if err != nil {
+		return "", fmt.Errorf("independent bookmarks: %w", err)
+	}
+	tips := nonEmptyLines(out)
+	if len(tips) != 1 {
+		return trunk, nil
+	}
+	names, err := g.branchesAt(ctx, tips[0])
+	if err != nil {
+		return "", err
+	}
 	var maximal []string
-	for _, x := range candidates {
-		isMax := true
-		for _, y := range candidates {
-			if x == y {
-				continue
-			}
-			anc, err := g.isAncestorOrEqual(ctx, "refs/heads/"+y, "refs/heads/"+x)
-			if err != nil {
-				return "", err
-			}
-			if !anc {
-				isMax = false
-				break
-			}
-		}
-		if isMax {
-			maximal = append(maximal, x)
+	for _, name := range names {
+		if candidateNames[name] {
+			maximal = append(maximal, name)
 		}
 	}
 	if len(maximal) == 1 {
@@ -234,15 +241,22 @@ func (g Git) nearestBookmarkAncestor(ctx context.Context, trunk model.Branch) (m
 }
 
 func (g Git) soleBranchAtHead(ctx context.Context) (model.Branch, error) {
-	out, err := g.run(ctx, "", "for-each-ref", "--points-at", "HEAD", "--format=%(refname:lstrip=2)", "refs/heads/")
+	names, err := g.branchesAt(ctx, "HEAD")
 	if err != nil {
-		return "", fmt.Errorf("branches at HEAD: %w", err)
+		return "", err
 	}
-	names := nonEmptyLines(out)
 	if len(names) == 1 {
 		return model.Branch(names[0]), nil
 	}
 	return "", fmt.Errorf("current branch: %w", ErrDetachedHead)
+}
+
+func (g Git) branchesAt(ctx context.Context, rev string) ([]string, error) {
+	out, err := g.run(ctx, "", "for-each-ref", "--points-at", rev, "--format=%(refname:lstrip=2)", "refs/heads/")
+	if err != nil {
+		return nil, fmt.Errorf("branches at %s: %w", rev, err)
+	}
+	return nonEmptyLines(out), nil
 }
 
 func (g Git) resolveTrunkRef(ctx context.Context, trunk model.Branch) (string, error) {
@@ -266,18 +280,6 @@ func (g Git) branchesMergedInto(ctx context.Context, rev string) ([]string, erro
 		return nil, fmt.Errorf("branches merged into %s: %w", rev, err)
 	}
 	return nonEmptyLines(out), nil
-}
-
-func (g Git) isAncestorOrEqual(ctx context.Context, ref, of string) (bool, error) {
-	_, err := g.probe(ctx, "", "merge-base", "--is-ancestor", ref, of)
-	if err == nil {
-		return true, nil
-	}
-	var cmdErr *commandError
-	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 {
-		return false, nil
-	}
-	return false, fmt.Errorf("is-ancestor %s %s: %w", ref, of, err)
 }
 
 // nonEmptyLines splits raw git output on "\n" and returns every non-empty
