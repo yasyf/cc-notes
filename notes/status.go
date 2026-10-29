@@ -130,7 +130,7 @@ func (c *Client) statusFromSnapshots(ctx context.Context, branch model.Branch, n
 	if err != nil {
 		return StatusReport{}, err
 	}
-	ready, err := c.readyAmong(ctx, tasks, ScopeBacklog, "")
+	ready, err := c.readyAmongUnsorted(ctx, tasks, ScopeBacklog, "")
 	if err != nil {
 		return StatusReport{}, err
 	}
@@ -242,7 +242,7 @@ func (c *Client) TaskStatus(ctx context.Context) (StatusReport, error) {
 	if err != nil {
 		return StatusReport{}, err
 	}
-	ready, err := c.readyAmong(ctx, tasks, ScopeBacklog, "")
+	ready, err := c.readyAmongUnsorted(ctx, tasks, ScopeBacklog, "")
 	if err != nil {
 		return StatusReport{}, err
 	}

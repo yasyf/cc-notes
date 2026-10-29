@@ -250,6 +250,15 @@ func (c *Client) ReadyTasks(ctx context.Context, scope BranchScope, branch model
 }
 
 func (c *Client) readyAmong(ctx context.Context, tasks []model.Task, scope BranchScope, branch model.Branch) ([]model.Task, error) {
+	ready, err := c.readyAmongUnsorted(ctx, tasks, scope, branch)
+	if err != nil {
+		return nil, err
+	}
+	sortTasks(ready)
+	return ready, nil
+}
+
+func (c *Client) readyAmongUnsorted(ctx context.Context, tasks []model.Task, scope BranchScope, branch model.Branch) ([]model.Task, error) {
 	inScope, err := c.branchScope(ctx, scope, branch)
 	if err != nil {
 		return nil, err
@@ -258,7 +267,6 @@ func (c *Client) readyAmong(ctx context.Context, tasks []model.Task, scope Branc
 	ready := slices.DeleteFunc(slices.Clone(tasks), func(t model.Task) bool {
 		return !inScope(t) || t.Status != model.StatusOpen || t.Assignee != "" || !unblocked(live, t)
 	})
-	sortTasks(ready)
 	return ready, nil
 }
 
