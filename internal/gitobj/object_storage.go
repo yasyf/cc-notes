@@ -1,6 +1,7 @@
 package gitobj
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -56,7 +57,7 @@ func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Has
 			}
 		}
 		for _, storage := range s.scope.alternates {
-			alternateObject, alternateErr := storage.EncodedObject(typ, hash)
+			alternateObject, alternateErr := storage.alternateObject(typ, hash)
 			if alternateErr == nil {
 				return alternateObject, nil
 			}
@@ -72,6 +73,26 @@ func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Has
 		return nil, plumbing.ErrObjectNotFound
 	}
 	return obj, nil
+}
+
+func (s *objectStorage) alternateObject(typ plumbing.ObjectType, hash plumbing.Hash) (plumbing.EncodedObject, error) {
+	obj, err := s.EncodedObject(typ, hash)
+	if !staleIndex(err) || s.scope.tx == nil {
+		return obj, err
+	}
+	identities, generationErr := s.index.identities(s.scope.ctx)
+	if generationErr != nil {
+		return nil, generationErr
+	}
+	var generation []byte
+	if generationErr := s.scope.tx.QueryRowContext(s.scope.ctx, "SELECT value FROM metadata WHERE key = 'generation'").Scan(&generation); generationErr != nil {
+		return nil, generationErr
+	}
+	if bytes.Equal(generation, packGeneration(identities)) {
+		return obj, err
+	}
+	s.Reindex()
+	return s.EncodedObject(typ, hash)
 }
 
 func (s *objectStorage) looseObject(hash plumbing.Hash) (obj plumbing.EncodedObject, resultErr error) {

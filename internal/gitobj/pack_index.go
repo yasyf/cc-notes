@@ -273,12 +273,17 @@ func (p *packIndex) reconcile(ctx context.Context, db *sql.DB) (resultErr error)
 			return err
 		}
 	}
-	current, err := p.identities(ctx)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(packGeneration(current), packGeneration(identities)) {
-		return errors.New("pack generation changed while indexing")
+	for _, identity := range identities {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		stamp, err := p.identity(identity.hash)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(stamp, identity.stamp) {
+			return errors.New("pack generation changed while indexing")
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO metadata(key, value) VALUES('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", packGeneration(identities)); err != nil {
 		return err
