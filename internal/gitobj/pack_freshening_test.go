@@ -222,6 +222,7 @@ func TestPackIndexPublishesLookupIndexesWithGeneration(t *testing.T) {
 	assertIndexedCommit(t, index, hash)
 	checkLookups := func() {
 		t.Helper()
+		published := observeIndexedData(t, index)
 		for _, query := range []struct {
 			sql, lookup string
 			args        []any
@@ -231,7 +232,7 @@ func TestPackIndexPublishesLookupIndexesWithGeneration(t *testing.T) {
 		} {
 			var id, parent, unused int
 			var detail string
-			if err := observer.QueryRowContext(t.Context(), query.sql, query.args...).Scan(&id, &parent, &unused, &detail); err != nil {
+			if err := published.QueryRowContext(t.Context(), query.sql, query.args...).Scan(&id, &parent, &unused, &detail); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(detail, query.lookup) {
