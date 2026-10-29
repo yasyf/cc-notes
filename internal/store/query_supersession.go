@@ -47,7 +47,10 @@ func (s *Store) IndexedSupersession(ctx context.Context, kind model.Kind, id mod
 }
 
 func indexedSupersessionQuery[T any](ctx context.Context, s *Store, kind model.Kind, read func(*bolt.Tx, queryMetadataSource) (T, error)) (value T, hit bool, err error) {
-	source, err := captureQueryMetadata(ctx, s, kind)
+	source, err := queryMetadataIdentity(ctx, s, kind)
+	if err == nil && source.pinned {
+		source, err = source.capture(ctx)
+	}
 	if err != nil {
 		return value, false, err
 	}
@@ -67,7 +70,7 @@ func querySuperseders(ctx context.Context, tx *bolt.Tx, source queryMetadataSour
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		row, err := decodeSupersessionMetadata(source, data)
+		row, err := decodeSupersessionMetadata(tx, source, data)
 		if err != nil {
 			return err
 		}
@@ -114,11 +117,15 @@ func supersessionMetadata(ctx context.Context, tx *bolt.Tx, source queryMetadata
 	if err := ctx.Err(); err != nil {
 		return queryMetadata{}, false, err
 	}
-	if _, exists := source.tips[id]; !exists {
+	tip, err := supersessionTip(tx, source, id)
+	if err != nil {
+		return queryMetadata{}, false, err
+	}
+	if tip == "" {
 		return queryMetadata{}, false, nil
 	}
 	data := readQueryMetadata(tx, source.binding, id)
-	row, err := decodeSupersessionMetadata(source, data)
+	row, err := decodeSupersessionMetadata(tx, source, data)
 	if err != nil {
 		return queryMetadata{}, false, err
 	}
@@ -128,13 +135,35 @@ func supersessionMetadata(ctx context.Context, tx *bolt.Tx, source queryMetadata
 	return row, !row.Deleted, nil
 }
 
-func decodeSupersessionMetadata(source queryMetadataSource, data []byte) (queryMetadata, error) {
+func decodeSupersessionMetadata(tx *bolt.Tx, source queryMetadataSource, data []byte) (queryMetadata, error) {
 	var row queryMetadata
 	if err := json.Unmarshal(data, &row); err != nil {
 		return queryMetadata{}, err
 	}
-	if row.Version != queryMetadataVersion || row.Binding != source.binding || row.Kind != source.kind || row.Tip == "" || source.tips[row.ID] != row.Tip {
+	tip, err := supersessionTip(tx, source, row.ID)
+	if err != nil {
+		return queryMetadata{}, err
+	}
+	if row.Version != queryMetadataVersion || row.Binding != source.binding || row.Kind != source.kind || row.Tip == "" || tip != row.Tip {
 		return queryMetadata{}, fmt.Errorf("query metadata differs from captured %s %s", source.kind, row.ID)
 	}
 	return row, nil
+}
+
+func supersessionTip(tx *bolt.Tx, source queryMetadataSource, id model.EntityID) (model.SHA, error) {
+	if source.tips != nil {
+		return source.tips[id], nil
+	}
+	tips := queryMetadataKindTips(tx, source.binding, source.kind)
+	if tips == nil {
+		return "", nil
+	}
+	tip := tips.Get([]byte(id))
+	if tip == nil {
+		return "", nil
+	}
+	if len(tip) < 2 || tip[0] > 1 {
+		return "", fmt.Errorf("invalid metadata tip summary for %s", id)
+	}
+	return model.SHA(tip[1:]), nil
 }
