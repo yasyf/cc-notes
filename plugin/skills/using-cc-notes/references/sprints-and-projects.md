@@ -312,9 +312,9 @@ script, and a status of `pending`, `met`, or `failed`. Criteria are the one piec
 that touches the canonical flow — `task done` is **gated**: it refuses to close a task while any
 criterion is still `pending` or `failed`, and lists them.
 
-`task add` requires at least one `--criterion` by default, so a new task ships with its acceptance
-bar written down. The escape hatch is `--no-validation-criteria`, which creates a task with none;
-it is mutually exclusive with `--criterion`.
+`task add` takes any number of `--criterion` flags, so a new task can ship with its acceptance bar
+written down. Without one the task is created with none; `--no-validation-criteria` says so
+explicitly and is mutually exclusive with `--criterion`.
 
 ```console
 $ cc-notes task add "Rotate signing keys" --project 8743887 --backlog --no-validation-criteria

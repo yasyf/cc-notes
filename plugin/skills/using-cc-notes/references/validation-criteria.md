@@ -15,14 +15,9 @@ A criterion is a record attached to a task:
 
 A new criterion starts `pending`. It moves to `met` or `failed` by hand (`task criterion met` / `failed` / `pending`) or from a `task validate` run, which execs the script and records exit 0 as `met`, a non-zero exit or timeout as `failed`. Text is for a human, script is for a machine — a criterion can carry text alone (judged by hand) or text plus a script (auto-checkable).
 
-## Required by default
+## Optional
 
-`task add` demands at least one `--criterion` or the explicit `--no-validation-criteria` flag. The two are mutually exclusive; omitting both is a usage error. This forces every task to state its acceptance bar up front instead of leaving "done" to later judgment.
-
-```console
-$ cc-notes task add "Add retry backoff to the API client" --priority 1
-usage: at least one --criterion is required (or pass --no-validation-criteria)
-```
+`task add` takes any number of `--criterion` flags. With none, the task is created without criteria and the `--json` ack carries `"criteria_omitted": true`. `--no-validation-criteria` states the same opt-out explicitly; it is mutually exclusive with `--criterion`. State the acceptance bar up front whenever "done" is checkable.
 
 `--criterion` is repeatable:
 
@@ -33,7 +28,7 @@ $ cc-notes task add "Add retry backoff to the API client" --priority 1 \
 d82c087	open	P1	-	Add retry backoff to the API client
 ```
 
-For a task with no checkable bar — a spike, a throwaway, a question — opt out:
+For a task with no checkable bar — a spike, a throwaway, a question — pass none:
 
 ```console
 $ cc-notes task add "Spike: try the new client library" --no-validation-criteria

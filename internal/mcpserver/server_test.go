@@ -354,10 +354,8 @@ func TestTaskLifecycle(t *testing.T) {
 	initRepo(t)
 	cs := connect(t)
 
-	// no_validation_criteria is required when no criteria are given.
 	added := decode[taskOut](t, call(t, cs, "task_add", map[string]any{
-		"title":                  "Wire the layer",
-		"no_validation_criteria": true,
+		"title": "Wire the layer",
 	}))
 	if added.Status != "open" || added.Assignee != "" {
 		t.Fatalf("added = %+v, want open and unassigned", added)

@@ -13,12 +13,14 @@ import (
 )
 
 // writeAck carries the per-write facts a summary DTO must not: a create that
-// reused a dedupe survivor, and a task claim left without a branch. Printers
-// take it as an optional trailing argument; its zero value marshals to nothing,
-// so an ordinary ack stays byte-identical to the bare summary.
+// reused a dedupe survivor, a task created with no criteria because none were
+// given, and a task claim left without a branch. Printers take it as an
+// optional trailing argument; its zero value marshals to nothing, so an
+// ordinary ack stays byte-identical to the bare summary.
 type writeAck struct {
-	Reused    bool  `json:"reused,omitempty"`
-	BranchSet *bool `json:"branch_set,omitempty"`
+	Reused          bool  `json:"reused,omitempty"`
+	CriteriaOmitted bool  `json:"criteria_omitted,omitempty"`
+	BranchSet       *bool `json:"branch_set,omitempty"`
 }
 
 // branchAck stamps a claim that left the task without a branch. Absence of the

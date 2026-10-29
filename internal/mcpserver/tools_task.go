@@ -13,8 +13,8 @@ type taskAddArgs struct {
 	Type                 string   `json:"type,omitempty" jsonschema:"task type: task|bug|epic|question (default task)"`
 	Priority             *int     `json:"priority,omitempty" jsonschema:"priority 0-3, 0 most urgent (default 2)"`
 	Labels               []string `json:"labels,omitempty" jsonschema:"labels"`
-	Criteria             []string `json:"criteria,omitempty" jsonschema:"acceptance criterion text (required unless no_validation_criteria)"`
-	NoValidationCriteria bool     `json:"no_validation_criteria,omitempty" jsonschema:"create with no acceptance criteria"`
+	Criteria             []string `json:"criteria,omitempty" jsonschema:"acceptance criterion text"`
+	NoValidationCriteria bool     `json:"no_validation_criteria,omitempty" jsonschema:"create with no acceptance criteria (the default when criteria is empty)"`
 	Parent               string   `json:"parent,omitempty" jsonschema:"parent task id prefix"`
 	Sprint               string   `json:"sprint,omitempty" jsonschema:"sprint id prefix"`
 	Project              string   `json:"project,omitempty" jsonschema:"project id prefix"`
@@ -145,7 +145,7 @@ type criterionScriptArgs struct {
 }
 
 func registerTask(ts *toolset, b *bridge) {
-	addTool(ts, &mcp.Tool{Name: "task_add", Description: "Create a task (durable, cross-agent). Provide acceptance criteria or set no_validation_criteria. The ack is a summary; task_show reads the body and criteria back."},
+	addTool(ts, &mcp.Tool{Name: "task_add", Description: "Create a task (durable, cross-agent). Acceptance criteria are optional; a task given none is created without any and the ack carries criteria_omitted. The ack is a summary; task_show reads the body and criteria back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskAddArgs) (*mcp.CallToolResult, any, error) {
 			flags, err := freeTextFlag([]string{"--json"}, "--body", in.Body)
 			if err != nil {

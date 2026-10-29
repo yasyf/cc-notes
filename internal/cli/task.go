@@ -145,9 +145,7 @@ func newTaskAddCmd() *cobra.Command {
 			if len(criteria) > 0 && noValidation {
 				return &UsageError{Err: errors.New("--criterion and --no-validation-criteria are mutually exclusive")}
 			}
-			if !noValidation && len(criteria) == 0 {
-				return &UsageError{Err: errors.New("at least one --criterion is required (or pass --no-validation-criteria)")}
-			}
+			criteriaOmitted := !noValidation && len(criteria) == 0
 			bodyPos := ""
 			if len(args) > 1 {
 				bodyPos = args[1]
@@ -242,7 +240,7 @@ func newTaskAddCmd() *cobra.Command {
 			if created.Degraded {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "cc-notes: detached HEAD with no resolvable branch; created on the backlog — pass --branch to set one")
 			}
-			return printTask(cmd, c, created.Task, jsonOut, writeAck{Reused: created.Reused})
+			return printTask(cmd, c, created.Task, jsonOut, writeAck{Reused: created.Reused, CriteriaOmitted: criteriaOmitted})
 		},
 	}
 	flags := cmd.Flags()
@@ -250,8 +248,8 @@ func newTaskAddCmd() *cobra.Command {
 	flags.StringVar(&taskType, "type", "task", "task type (task|bug|epic|question)")
 	flags.IntVar(&priority, "priority", 2, "priority 0-3 (0 most urgent)")
 	bindAddLabels(cmd, &labels)
-	flags.StringArrayVar(&criteria, "criterion", nil, "acceptance criterion text (repeatable, required unless --no-validation-criteria)")
-	flags.BoolVar(&noValidation, "no-validation-criteria", false, "create with no acceptance criteria")
+	flags.StringArrayVar(&criteria, "criterion", nil, "acceptance criterion text (repeatable)")
+	flags.BoolVar(&noValidation, "no-validation-criteria", false, "create with no acceptance criteria (the default when no --criterion is given)")
 	flags.StringVar(&parent, "parent", "", "parent task id prefix")
 	flags.StringVar(&sprint, "sprint", "", "sprint id prefix")
 	flags.StringVar(&project, "project", "", "project id prefix")
