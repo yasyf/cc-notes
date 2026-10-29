@@ -117,7 +117,7 @@ func supersessionMetadata(ctx context.Context, tx *bolt.Tx, source queryMetadata
 	if err := ctx.Err(); err != nil {
 		return queryMetadata{}, false, err
 	}
-	tip, err := queryMetadataTip(tx, source, id)
+	tip, err := queryMetadataRowTip(tx, source, id)
 	if err != nil {
 		return queryMetadata{}, false, err
 	}
@@ -140,7 +140,7 @@ func decodeQueryMetadata(tx *bolt.Tx, source queryMetadataSource, data []byte) (
 	if err := json.Unmarshal(data, &row); err != nil {
 		return queryMetadata{}, err
 	}
-	tip, err := queryMetadataTip(tx, source, row.ID)
+	tip, err := queryMetadataRowTip(tx, source, row.ID)
 	if err != nil {
 		return queryMetadata{}, err
 	}
@@ -150,7 +150,7 @@ func decodeQueryMetadata(tx *bolt.Tx, source queryMetadataSource, data []byte) (
 	return row, nil
 }
 
-func queryMetadataTip(tx *bolt.Tx, source queryMetadataSource, id model.EntityID) (model.SHA, error) {
+func queryMetadataRowTip(tx *bolt.Tx, source queryMetadataSource, id model.EntityID) (model.SHA, error) {
 	if source.tips != nil {
 		return source.tips[id], nil
 	}
