@@ -22,13 +22,14 @@ jobs:
     env:
       GOOS: darwin
       GOARCH: arm64
-      GOLANGCI_LINT_CACHE: ${{ runner.temp }}/relevance-lint-${{ matrix.label }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ matrix.ref }}
       - uses: ./.github/actions/setup
       - uses: golangci/golangci-lint-action@v9
+        env:
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/relevance-lint-${{ matrix.label }}
         with:
           version: v2.15.0
           skip-cache: true
