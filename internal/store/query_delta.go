@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"math"
 	"slices"
 
 	bolt "go.etcd.io/bbolt"
@@ -34,7 +35,22 @@ func putQueryMetadataTip(binding *bolt.Bucket, row queryMetadata) error {
 	if row.SkippedOps > 0 {
 		partial = 1
 	}
-	return kind.Put([]byte(row.ID), append([]byte{partial}, string(row.Tip)...))
+	key := []byte(row.ID)
+	present := kind.Get(key) != nil
+	count := kind.Sequence()
+	if present && count == 0 {
+		return fmt.Errorf("zero metadata tip count for existing %s", row.Kind)
+	}
+	if !present && count == math.MaxUint64 {
+		return fmt.Errorf("metadata tip count overflow for %s", row.Kind)
+	}
+	if err := kind.Put(key, append([]byte{partial}, string(row.Tip)...)); err != nil {
+		return err
+	}
+	if !present {
+		return kind.SetSequence(count + 1)
+	}
+	return nil
 }
 
 func deleteQueryMetadataTip(binding *bolt.Bucket, row queryMetadata) error {
@@ -42,7 +58,18 @@ func deleteQueryMetadataTip(binding *bolt.Bucket, row queryMetadata) error {
 	if kind == nil {
 		return fmt.Errorf("missing metadata tip summaries for %s", row.Kind)
 	}
-	return kind.Delete([]byte(row.ID))
+	key := []byte(row.ID)
+	if kind.Get(key) == nil {
+		return nil
+	}
+	count := kind.Sequence()
+	if count == 0 {
+		return fmt.Errorf("metadata tip count underflow for %s", row.Kind)
+	}
+	if err := kind.Delete(key); err != nil {
+		return err
+	}
+	return kind.SetSequence(count - 1)
 }
 
 func queryMetadataKindTips(tx *bolt.Tx, binding string, kind model.Kind) *bolt.Bucket {
@@ -63,6 +90,10 @@ func diffQueryMetadata(ctx context.Context, tx *bolt.Tx, binding string, kind mo
 		return diff, err
 	}
 	tips := queryMetadataKindTips(tx, binding, kind)
+	var count, present uint64
+	if tips != nil {
+		count = tips.Sequence()
+	}
 	for id, tip := range captured {
 		if err := ctx.Err(); err != nil {
 			return queryMetadataDiff{}, err
@@ -73,6 +104,7 @@ func diffQueryMetadata(ctx context.Context, tx *bolt.Tx, binding string, kind mo
 		}
 		changed := previous == nil
 		if previous != nil {
+			present++
 			if len(previous) == 0 {
 				return queryMetadataDiff{}, fmt.Errorf("empty metadata tip summary")
 			}
@@ -85,15 +117,23 @@ func diffQueryMetadata(ctx context.Context, tx *bolt.Tx, binding string, kind mo
 			diff.Changed = append(diff.Changed, queryMetadataTip{ID: id, Tip: tip})
 		}
 	}
-	if tips != nil {
+	if present > count {
+		return queryMetadataDiff{}, fmt.Errorf("metadata tip count %d below %d captured members", count, present)
+	}
+	if present < count {
 		cursor := tips.Cursor()
+		var scanned uint64
 		for id, _ := cursor.First(); id != nil; id, _ = cursor.Next() {
 			if err := ctx.Err(); err != nil {
 				return queryMetadataDiff{}, err
 			}
+			scanned++
 			if _, ok := captured[model.EntityID(id)]; !ok {
 				diff.Removed = append(diff.Removed, model.EntityID(id))
 			}
+		}
+		if scanned != count {
+			return queryMetadataDiff{}, fmt.Errorf("metadata tip count %d differs from %d stored members", count, scanned)
 		}
 	}
 	slices.SortFunc(diff.Changed, func(a, b queryMetadataTip) int { return cmp.Compare(a.ID, b.ID) })
