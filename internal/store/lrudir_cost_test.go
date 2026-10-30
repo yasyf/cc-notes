@@ -30,6 +30,15 @@ func TestLRUDirCostHelper(t *testing.T) {
 	started := time.Now()
 	switch mode {
 	case "baseline":
+	case "missing":
+		for i := range count {
+			if _, ok := l.entry(fmt.Sprintf("%064d", i)); ok {
+				t.Fatal("missing entry became a hit")
+			}
+		}
+		if !l.lookupMissing || l.db != nil {
+			t.Fatalf("missing owner state: absent=%v database=%v", l.lookupMissing, l.db)
+		}
 	case "populate":
 		for i := range count {
 			l.write(fmt.Sprintf("%064d", i), []byte("cached payload"))
@@ -166,6 +175,36 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 			if requests[1][name] > requests[0][name]+64 {
 				t.Errorf("requested subset %s grew with cache population: %d to %d", name, requests[0][name], requests[1][name])
 			}
+		}
+	}
+}
+
+func TestLRUDirMissingProcessCost(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("syscall accounting requires Linux strace")
+	}
+	var results []map[string]int
+	for _, count := range []int{32, 10000} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			dir := t.TempDir()
+			baseline := cacheCostProcess(t, "baseline", dir, count, true)
+			missing := cacheCostProcess(t, "missing", dir, count, true)
+			results = append(results, missing)
+			for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat"} {
+				if missing[name] > baseline[name]+8 {
+					t.Errorf("missing lookup repeated %s: baseline=%v missing=%v", name, baseline, missing)
+				}
+			}
+			for _, name := range []string{"getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
+				if missing[name] > baseline[name] {
+					t.Errorf("missing lookup enumerated or wrote %s: baseline=%v missing=%v", name, baseline, missing)
+				}
+			}
+		})
+	}
+	for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat", "getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
+		if len(results) == 2 && results[1][name] > results[0][name]+64 {
+			t.Errorf("missing lookup %s grew with requested misses: %d to %d", name, results[0][name], results[1][name])
 		}
 	}
 }
