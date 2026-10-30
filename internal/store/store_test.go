@@ -35,6 +35,7 @@ func initStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 

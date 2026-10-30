@@ -220,6 +220,7 @@ func freshRelevantJSON(t *testing.T, dir string, filter notes.RelevantFilter) []
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	defer func() { _ = c.Close() }()
 	entries, err := c.Relevant(t.Context(), matrixTarget, filter)
 	if err != nil {
 		t.Fatalf("Relevant: %v", err)
@@ -237,6 +238,7 @@ func seedNotes(tb testing.TB, dir string, n, relevant int, branch func(i int) st
 	if err != nil {
 		tb.Fatalf("store.Open: %v", err)
 	}
+	defer func() { _ = s.Close() }()
 	updates := make([]gitcmd.RefUpdate, n)
 	for i := range n {
 		anchors := []model.Anchor{{Kind: model.AnchorPath, Value: unrelatedTarget}}
@@ -348,6 +350,7 @@ func (fx *matrixFixture) second(t *testing.T) *notes.Client {
 	if err != nil {
 		t.Fatalf("Open second client: %v", err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
 

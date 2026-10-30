@@ -4,7 +4,7 @@ import "os"
 
 const (
 	relevantCacheCap    = 2048
-	relevantCacheSubdir = "cc-notes/relevant-v3"
+	relevantCacheSubdir = "cc-notes/relevant-v4"
 )
 
 // OpenRelevantCache opens the relevance result cached under name for reading,

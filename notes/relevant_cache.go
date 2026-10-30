@@ -182,9 +182,13 @@ func readRelevantCacheEntry(f *os.File, now time.Time) (e relevantCacheEntry, hi
 	if err != nil {
 		return relevantCacheEntry{}, false, false
 	}
+	offset, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return relevantCacheEntry{}, false, false
+	}
 	r := bufio.NewReader(f)
 	h, n, ok := readRelevantCacheHeader(r)
-	if !ok || !h.readOutput(r, info.Size()-int64(n)) {
+	if !ok || !h.readOutput(r, info.Size()-offset-int64(n)) {
 		return relevantCacheEntry{}, false, false
 	}
 	if h.hit(now) {

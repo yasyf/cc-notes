@@ -13,6 +13,16 @@ permissions:
   contents: read
 
 jobs:
+  bounded-cache-cost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Install syscall tracer
+        run: sudo apt-get update && sudo apt-get install -y strace
+      - name: Fresh-process cache cost and crash contracts
+        run: ./scripts/test.sh -count=1 -v -run '^TestLRUDir' ./internal/store
+
   attachment-ref-passes:
     runs-on: ubuntu-latest
     steps:

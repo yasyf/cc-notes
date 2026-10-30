@@ -89,9 +89,7 @@ func TestFoldCacheMissesForeignGeneration(t *testing.T) {
 	note := model.Note{ID: "noteid", Title: "folded by a newer binary", Head: tip}
 
 	newerGen := foldGeneration(append(slices.Clone(model.OpKinds()), "seal_entity"))
-	if err := os.WriteFile(filepath.Join(dir, string(tip)), encodeAsGeneration(t, newerGen, note), 0o600); err != nil {
-		t.Fatalf("write newer-binary entry: %v", err)
-	}
+	c.write(string(tip), encodeAsGeneration(t, newerGen, note))
 
 	if snap, ok := c.get(tip); ok {
 		t.Fatalf("read a newer binary's entry: %#v", snap)
@@ -192,7 +190,7 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tip: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, string(tip))); statErr != nil {
+	if _, statErr := os.Stat(cacheEntryPath(t, &s.cache.lruDir, string(tip))); statErr != nil {
 		t.Fatalf("entry not written after Load: %v", statErr)
 	}
 
@@ -207,7 +205,7 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 	if got := loaded.(model.Note).Title; got != "rebuild" {
 		t.Fatalf("Load after delete: title = %q, want %q", got, "rebuild")
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, string(tip))); statErr != nil {
+	if _, statErr := os.Stat(cacheEntryPath(t, &s.cache.lruDir, string(tip))); statErr != nil {
 		t.Fatalf("entry not repopulated after re-fold: %v", statErr)
 	}
 }
@@ -222,10 +220,10 @@ func TestFoldCacheRejectsForeignHeaders(t *testing.T) {
 	read := func(t *testing.T, data []byte) (model.Snapshot, bool) {
 		t.Helper()
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, string(tip)), data, 0o600); err != nil {
-			t.Fatalf("write entry: %v", err)
-		}
-		return newFoldCache(dir, foldCacheCap).get(tip)
+		cache := newFoldCache(dir, foldCacheCap)
+		defer func() { _ = cache.close() }()
+		cache.write(string(tip), data)
+		return cache.get(tip)
 	}
 	current := strconv.Itoa(foldCacheVersion) + " " + foldCacheGeneration + " note"
 	if _, ok := read(t, entry(current+" 1 0")); !ok {
@@ -266,7 +264,7 @@ func TestFoldCacheV1NamespaceRebuildsDerivedEntries(t *testing.T) {
 	if !ok {
 		t.Fatal("encode old derived entry")
 	}
-	for _, prior := range []string{"folds", "folds-v1"} {
+	for _, prior := range []string{"folds", "folds-v1", "folds-v2"} {
 		oldDir := filepath.Join(common, "cc-notes", prior)
 		if err := os.MkdirAll(oldDir, 0o750); err != nil {
 			t.Fatal(err)
@@ -285,7 +283,7 @@ func TestFoldCacheV1NamespaceRebuildsDerivedEntries(t *testing.T) {
 	if got, found := cache.get(tip); !found || !reflect.DeepEqual(got, want) {
 		t.Fatalf("rebuilt cache entry = %#v found=%v", got, found)
 	}
-	if _, err := os.Stat(filepath.Join(common, foldCacheSubdir, string(tip))); err != nil {
+	if _, err := os.Stat(cacheEntryPath(t, &cache.lruDir, string(tip))); err != nil {
 		t.Fatalf("rebuilt cache path: %v", err)
 	}
 }
@@ -302,10 +300,7 @@ func TestFoldCacheLRUEviction(t *testing.T) {
 		c.put(tip, model.Note{ID: model.EntityID(tip), Head: tip}, 1, 0)
 	}
 
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read dir: %v", err)
-	}
+	ents := c.names()
 	if len(ents) > 2 {
 		t.Fatalf("cache holds %d entries, want <= 2", len(ents))
 	}
@@ -488,12 +483,11 @@ func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)
 	}
-	dir := s.cache.dir
 	tip, err := s.Repo.Tip(ctx, ref)
 	if err != nil {
 		t.Fatalf("Tip: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, string(tip)), []byte("not a cache entry"), 0o600); err != nil {
+	if err := os.WriteFile(cacheEntryPath(t, &s.cache.lruDir, string(tip)), []byte("not a cache entry"), 0o600); err != nil {
 		t.Fatalf("corrupt entry: %v", err)
 	}
 

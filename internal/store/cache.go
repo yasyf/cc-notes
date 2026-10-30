@@ -24,7 +24,7 @@ const (
 	foldCacheCap = 1 << 14
 	// foldCacheSubdir is the path under the git common dir where entries live;
 	// it is never a ref, so it is never pushed or synced.
-	foldCacheSubdir = "cc-notes/folds-v2"
+	foldCacheSubdir = "cc-notes/folds-v3"
 )
 
 // foldCacheGeneration tags every entry with the op vocabulary of the binary that
@@ -44,15 +44,6 @@ func foldGeneration(opKinds []string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// foldCache is a persistent, local, tip-keyed snapshot cache: a pure
-// accelerator derived from the object database that lets short-lived CLI
-// processes skip re-folding cold chains. The file name is the chain tip sha,
-// which is immutable, so a present entry of this binary's fold generation is
-// always valid — there is no staleness logic. The cache is best-effort by
-// design: every I/O error degrades to a miss (get) or a no-op (put) and is
-// never propagated. This is the one intentional error-swallow in the package —
-// the cache is a derived artifact, rebuildable by deleting the directory, not
-// state whose loss is a failure.
 type foldCache struct {
 	lruDir
 }
