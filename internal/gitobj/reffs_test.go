@@ -103,6 +103,34 @@ func TestReferenceDirectoryPreservesMissingDirectoryError(t *testing.T) {
 	}
 }
 
+func TestReferenceDirectoryPreservesSymlinkBoundaries(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "internal")
+	if err := os.MkdirAll(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "refs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inside, "retained"), []byte(testRefHash+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inside, filepath.Join(root, "refs", "inside")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, "refs", "outside")); err != nil {
+		t.Fatal(err)
+	}
+	fs := gitDirFS{osfs.New(root)}
+	if _, err := fs.ReadDir("refs/outside"); !errors.Is(err, billy.ErrCrossedBoundary) {
+		t.Fatalf("external reference symlink = %v, want crossed boundary", err)
+	}
+	infos, err := fs.ReadDir("refs/inside")
+	if err != nil || len(infos) != 1 || infos[0].Name() != "retained" {
+		t.Fatalf("internal reference symlink = %v, %v; want retained", infos, err)
+	}
+}
+
 func TestPackIndexPath(t *testing.T) {
 	cases := []struct {
 		path string

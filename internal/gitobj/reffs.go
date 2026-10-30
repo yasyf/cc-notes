@@ -35,6 +35,9 @@ type gitDirFS struct {
 
 func (fs gitDirFS) ReadDir(path string) ([]os.FileInfo, error) {
 	if underRefs(path) {
+		if _, err := fs.Filesystem.Stat(path); err != nil {
+			return nil, err
+		}
 		entries, err := os.ReadDir(filepath.Join(fs.Root(), path))
 		if err != nil {
 			return nil, err
