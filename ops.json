@@ -1,1 +1,1 @@
-{"v":1,"lamport":5,"ops":[{"kind":"remove_criterion","id":"7cf5506961e089fcc4807ddf0f45c70c"}]}
+{"v":1,"lamport":6,"ops":[{"kind":"add_criterion","id":"2e279cae3cb98efdc02abd78131e5a78","text":"Independent security review approves existing-native whole-document streaming projection and hook consumer, preserving strict true/last duplicate/JSON extensions/raw-F semantics without size cap or partial-positive/fail-open regression.","script":""}]}
