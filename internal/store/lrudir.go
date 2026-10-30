@@ -21,6 +21,19 @@ import (
 
 const cacheTokenSize = 64
 
+type cacheAccess uint8
+
+const (
+	cacheLookup cacheAccess = iota
+	cacheEnumerate
+	cacheWrite
+)
+
+type cacheEntry struct {
+	slot  int
+	token []byte
+}
+
 const cacheSchema = `CREATE TABLE IF NOT EXISTS cache_meta (id INTEGER PRIMARY KEY CHECK(id = 1), capacity INTEGER NOT NULL, next_slot INTEGER NOT NULL, rank INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS cache_entries (name TEXT PRIMARY KEY, slot INTEGER NOT NULL UNIQUE, token BLOB NOT NULL, rank INTEGER NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS cache_free (slot INTEGER PRIMARY KEY);`
@@ -47,32 +60,49 @@ type lruDir struct {
 }
 
 func (l *lruDir) read(name string) ([]byte, bool) {
-	f, ok := l.open(name)
+	entry, ok := l.entry(name)
 	if !ok {
+		return nil, false
+	}
+	f, err := os.Open(l.slotPath(entry.slot))
+	if err != nil {
 		return nil, false
 	}
 	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(f)
-	return data, err == nil
+	if err != nil || len(data) < cacheTokenSize || !bytes.Equal(data[:cacheTokenSize], entry.token) {
+		return nil, false
+	}
+	return data[cacheTokenSize:], true
+}
+
+func (l *lruDir) entry(name string) (cacheEntry, bool) {
+	db, err := l.database(cacheLookup)
+	if err != nil {
+		return cacheEntry{}, false
+	}
+	var entry cacheEntry
+	if db.QueryRow("SELECT slot, token FROM cache_entries WHERE name = ?", name).Scan(&entry.slot, &entry.token) != nil {
+		return cacheEntry{}, false
+	}
+	key := sha256.Sum256([]byte(name))
+	if len(entry.token) != cacheTokenSize || !bytes.Equal(entry.token[:32], key[:]) {
+		return cacheEntry{}, false
+	}
+	return entry, true
 }
 
 func (l *lruDir) open(name string) (*os.File, bool) {
-	db, err := l.database(true)
-	if err != nil {
+	entry, ok := l.entry(name)
+	if !ok {
 		return nil, false
 	}
-	var slot int
-	var token []byte
-	if db.QueryRow("SELECT slot, token FROM cache_entries WHERE name = ?", name).Scan(&slot, &token) != nil {
-		return nil, false
-	}
-	f, err := os.Open(l.slotPath(slot))
+	f, err := os.Open(l.slotPath(entry.slot))
 	if err != nil {
 		return nil, false
 	}
 	var header [cacheTokenSize]byte
-	key := sha256.Sum256([]byte(name))
-	if _, err := io.ReadFull(f, header[:]); err != nil || !bytes.Equal(header[:32], key[:]) || !bytes.Equal(header[:], token) {
+	if _, err := io.ReadFull(f, header[:]); err != nil || !bytes.Equal(header[:], entry.token) {
 		_ = f.Close()
 		return nil, false
 	}
@@ -106,7 +136,7 @@ func (l *lruDir) lockWriter() (*os.File, bool) {
 	return file, true
 }
 
-func (l *lruDir) database(readOnly bool) (*sql.DB, error) {
+func (l *lruDir) database(access cacheAccess) (*sql.DB, error) {
 	l.dbMu.Lock()
 	defer l.dbMu.Unlock()
 	if l.closed {
@@ -114,6 +144,9 @@ func (l *lruDir) database(readOnly bool) (*sql.DB, error) {
 	}
 	path := filepath.Join(l.dir, "index.sqlite")
 	if l.db != nil {
+		if access == cacheLookup {
+			return l.db, nil
+		}
 		info, err := os.Stat(path)
 		if err == nil && os.SameFile(info, l.dbInfo) {
 			return l.db, nil
@@ -124,7 +157,7 @@ func (l *lruDir) database(readOnly bool) (*sql.DB, error) {
 		l.db = nil
 	}
 	mode := "rwc"
-	if readOnly {
+	if access != cacheWrite {
 		mode = "rw"
 	}
 	location := url.URL{Scheme: "file", Path: path}
@@ -144,7 +177,7 @@ func (l *lruDir) database(readOnly bool) (*sql.DB, error) {
 	if err := db.Ping(); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
-	if readOnly {
+	if access != cacheWrite {
 		var capacity int
 		if err := db.QueryRow("SELECT capacity FROM cache_meta WHERE id = 1").Scan(&capacity); err != nil {
 			return nil, errors.Join(err, db.Close())
@@ -213,7 +246,7 @@ func (l *lruDir) write(name string, data []byte) {
 		return
 	}
 	defer func() { _ = lock.Close() }()
-	db, err := l.database(false)
+	db, err := l.database(cacheWrite)
 	if err != nil {
 		return
 	}
@@ -326,7 +359,7 @@ func (l *lruDir) touch(name string) {
 	if !active {
 		return
 	}
-	db, err := l.database(true)
+	db, err := l.database(cacheLookup)
 	if err != nil {
 		return
 	}
@@ -380,7 +413,7 @@ func (l *lruDir) acknowledge(hits []cacheHit) {
 }
 
 func (l *lruDir) names() []string {
-	db, err := l.database(true)
+	db, err := l.database(cacheEnumerate)
 	if err != nil {
 		return nil
 	}
@@ -411,7 +444,7 @@ func (l *lruDir) remove(name string) {
 		return
 	}
 	defer func() { _ = lock.Close() }()
-	db, err := l.database(false)
+	db, err := l.database(cacheWrite)
 	if err != nil {
 		return
 	}

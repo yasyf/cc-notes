@@ -86,11 +86,8 @@ func appendOps(t *testing.T, s *Store, ref string, ops ...model.Op) {
 
 func listEntries(t *testing.T, s *Store) int {
 	t.Helper()
-	entries, err := os.ReadDir(s.relevant.dir)
-	if err != nil {
-		t.Fatalf("read cache dir: %v", err)
-	}
-	return len(slices.DeleteFunc(entries, func(e os.DirEntry) bool { return !strings.HasPrefix(e.Name(), "list-") }))
+	entries := s.relevant.names()
+	return len(slices.DeleteFunc(entries, func(name string) bool { return !strings.HasPrefix(name, "list-") }))
 }
 
 func TestCachedListFollowsEveryTipChange(t *testing.T) {

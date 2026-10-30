@@ -84,7 +84,7 @@ func TestLRUDirProcessHelper(t *testing.T) {
 			t.Fatal("acquire publication lock")
 		}
 		defer func() { _ = lock.Close() }()
-		db, err := l.database(false)
+		db, err := l.database(cacheWrite)
 		if err != nil {
 			t.Fatal(err)
 		}
