@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -103,7 +104,7 @@ func Open(gitDir, commonDir string) (*Repo, error) {
 	fs := dotgit.NewRepositoryFilesystem(gitDirFS{osfs.New(gitDir)}, gitDirFS{osfs.New(commonDir)})
 	objects := cache.NewObjectLRUDefault()
 	storage := filesystem.NewStorageWithOptions(fs, objects, filesystem.Options{MaxOpenDescriptors: openPacks})
-	if err := verifyLayout(storage); err != nil {
+	if err := verifyLayout(commonDir); err != nil {
 		return nil, err
 	}
 	index, err := newPackIndex(dotgit.New(fs), commonDir)
@@ -204,24 +205,24 @@ func (r *Repo) RefreshShallow() ([]model.SHA, error) {
 	return grafted, nil
 }
 
-func verifyLayout(storage *filesystem.Storage) error {
-	cfg, err := storage.Config()
+func verifyLayout(commonDir string) error {
+	cfg, err := readConfig(filepath.Join(commonDir, "config"))
 	if err != nil {
 		return fmt.Errorf("read repository config: %w", err)
 	}
-	version := strings.ToLower(lastOption(cfg.Raw.Section("core").Options, "repositoryformatversion"))
+	version := strings.ToLower(lastOption(cfg.Section("core").Options, "repositoryformatversion"))
 	switch version {
 	case "", "0", "1":
 	default:
 		return fmt.Errorf("unsupported core.repositoryformatversion %q", version)
 	}
-	objectFormat := lastOption(cfg.Raw.Section("extensions").Options, "objectformat")
+	objectFormat := lastOption(cfg.Section("extensions").Options, "objectformat")
 	switch strings.ToLower(objectFormat) {
 	case "", "sha1":
 	default:
 		return fmt.Errorf("unsupported extensions.objectformat %q: cc-notes reads sha1 object databases", objectFormat)
 	}
-	refStorage := lastOption(cfg.Raw.Section("extensions").Options, "refstorage")
+	refStorage := lastOption(cfg.Section("extensions").Options, "refstorage")
 	switch strings.ToLower(refStorage) {
 	case "", "files":
 	default:
