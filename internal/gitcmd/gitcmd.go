@@ -721,7 +721,7 @@ func (g Git) MissingObjects(ctx context.Context, tips []model.SHA) ([]model.SHA,
 // clone filter, reading the ids from stdin. Like Fetch, it skips submodule
 // recursion: the records it hydrates contain no gitlinks.
 func (g Git) FetchObjects(ctx context.Context, remote string, oids []model.SHA) error {
-	if _, err := g.run(ctx, joinSHAs(oids), "fetch", "--recurse-submodules=no", "--refmap=", "--no-write-fetch-head", "--stdin", remote); err != nil {
+	if _, err := g.run(ctx, joinSHAs(oids), "-c", "fetch.negotiationAlgorithm=noop", "fetch", "--recurse-submodules=no", "--refmap=", "--no-write-fetch-head", "--stdin", remote); err != nil {
 		return fmt.Errorf("fetch %d objects from %s: %w", len(oids), remote, err)
 	}
 	return nil
