@@ -1,4 +1,4 @@
-name: Relevance executable path lint diagnostic
+name: Relevance executable path baseline proof
 
 on:
   push:
@@ -8,26 +8,24 @@ permissions:
   contents: read
 
 jobs:
-  clean-cache-lint:
+  baseline-red:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Alternate executable paths in one synthetic repository
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestRelevantCachedKeepsExecutablePathsIndependent$' ./notes
+  baseline-clean-lint:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: baseline-with-test
-            ref: bee03b49ab6ece102be7376ac6c1b2036af44e52
-    name: clean-cache-lint-${{ matrix.label }}
     env:
       GOOS: darwin
       GOARCH: arm64
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ matrix.ref }}
       - uses: ./.github/actions/setup
       - uses: golangci/golangci-lint-action@v9
         env:
-          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/relevance-lint-${{ matrix.label }}
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/relevance-lint-cwd-fixture
         with:
           version: v2.15.0
           skip-cache: true

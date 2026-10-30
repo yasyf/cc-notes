@@ -23,7 +23,11 @@ func relevantTestExecutable(t *testing.T) string {
 }
 
 func TestRelevantCachedKeepsExecutablePathsIndependent(t *testing.T) {
-	if dir := os.Getenv("CCN_RELEVANT_EXECUTABLE_FIXTURE"); dir != "" {
+	if os.Getenv("CCN_RELEVANT_EXECUTABLE_FIXTURE") == "1" {
+		dir, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
 		gittest.ScrubEnv(t)
 		t.Setenv("HOME", filepath.Join(dir, "home"))
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
@@ -96,7 +100,8 @@ func TestRelevantCachedKeepsExecutablePathsIndependent(t *testing.T) {
 			wantRenders = 1
 		}
 		cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestRelevantCachedKeepsExecutablePathsIndependent$", "-test.count=1")
-		cmd.Env = append(os.Environ(), "CCN_RELEVANT_EXECUTABLE_FIXTURE="+dir, "CCN_RELEVANT_EXPECT_RENDERS="+strconv.Itoa(wantRenders))
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "CCN_RELEVANT_EXECUTABLE_FIXTURE=1", "CCN_RELEVANT_EXPECT_RENDERS="+strconv.Itoa(wantRenders))
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("step %d executable %s: %v\n%s", i+1, filepath.Base(exe), err, out)
 		}
