@@ -41,7 +41,7 @@ var dupCheckers = map[model.Kind]dupChecker{
 					}
 					if hit {
 						slices.SortFunc(tasks, func(a, b model.Task) int {
-							if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+							if c := a.Meta().CreatedAt.Compare(b.Meta().CreatedAt); c != 0 {
 								return c
 							}
 							return cmp.Compare(a.ID, b.ID)
