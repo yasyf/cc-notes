@@ -1,7 +1,6 @@
 package notes
 
 import (
-	"compress/zlib"
 	"context"
 	"errors"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing/format/packfile"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
@@ -174,12 +174,10 @@ func TestLabeledListsReportSelectedObjectFailures(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				want := error(gitobj.ErrIncompleteChain)
 				if broken == "missing" {
 					err = os.Remove(labeledListObjectPath(c, tip))
 				} else {
 					err = os.WriteFile(labeledListObjectPath(c, tip), []byte("corrupt selected object"), 0o600)
-					want = zlib.ErrHeader
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -192,8 +190,18 @@ func TestLabeledListsReportSelectedObjectFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 				got, err := labeledListIDs(t.Context(), fresh, kind, []string{"target"})
-				if got != nil || !errors.Is(err, want) {
-					t.Fatalf("%s selected object = %v, %v; want %v", broken, got, err, want)
+				if got != nil {
+					t.Fatalf("%s selected object = %v; want nil", broken, got)
+				}
+				if broken == "missing" {
+					if !errors.Is(err, gitobj.ErrIncompleteChain) {
+						t.Fatalf("missing selected object error = %v; want %v", err, gitobj.ErrIncompleteChain)
+					}
+				} else {
+					var corrupt *packfile.Error
+					if !errors.As(err, &corrupt) || corrupt.Error() != "zlib reading error: zlib: invalid header" {
+						t.Fatalf("corrupt selected object error = %v; want *packfile.Error: zlib reading error: zlib: invalid header", err)
+					}
 				}
 			})
 		}
