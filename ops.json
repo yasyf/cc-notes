@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"claim","assignee":"Yasyf Mohamedali \u003cyasyf@poetic.com\u003e"}]}
+{"v":1,"lamport":3,"ops":[{"kind":"set_criterion_status","id":"d74d4529d1d2b03617a42b3114a6dd32","status":"met","note":"Root independently approved exact e028 source and traced existing find_baseline first-parent version-value change as canonical owner, not arbitrary ancestry. Raw failed partial batch retained: c649 owns repo-bootstrap61.62;71419 owns LR679. Current version check, exact local/remote objects, no retag/peel/force preserved."}]}
