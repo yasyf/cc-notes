@@ -380,15 +380,22 @@ func directChildren(prefix string, tips map[string]model.SHA) []tipEntry {
 // foldAll loads and folds every entry's chain, fanning out through an
 // errgroup bounded at listConcurrency.
 func foldAll[T model.Snapshot](ctx context.Context, s *Store, entries []tipEntry, foldFn func([]model.PackCommit) (T, error)) ([]T, error) {
+	names := make([]string, len(entries))
+	for i, entry := range entries {
+		names[i] = string(entry.tip)
+	}
+	cached := s.cache.entries(ctx, names)
 	out := make([]T, len(entries))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(listConcurrency)
 	for i, e := range entries {
 		g.Go(func() error {
-			if snap, ok := s.cache.get(e.tip); ok {
-				if t, ok := snap.(T); ok {
-					out[i] = t
-					return nil
+			if entry, ok := cached[string(e.tip)]; ok {
+				if snap, ok := s.cache.getEntry(e.tip, entry); ok {
+					if t, ok := snap.(T); ok {
+						out[i] = t
+						return nil
+					}
 				}
 			}
 			chain, err := s.Repo.ReadChain(gctx, e.tip)
