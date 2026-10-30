@@ -13,18 +13,9 @@ import (
 // config file at path, in file order, decoding exactly that file: no
 // includes, no other scope, no environment. A missing file holds no values.
 func ConfigValues(path, section, key string) ([]string, error) {
-	//nolint:gosec // G304: path is a git config file the caller located inside a repository's git directories.
-	f, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	cfg, err := readConfig(path)
 	if err != nil {
-		return nil, fmt.Errorf("read config %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-	cfg := formatcfg.New()
-	if err := formatcfg.NewDecoder(f).Decode(cfg); err != nil {
-		return nil, fmt.Errorf("decode config %s: %w", path, err)
+		return nil, err
 	}
 	var values []string
 	for _, s := range cfg.Sections {
@@ -38,4 +29,21 @@ func ConfigValues(path, section, key string) ([]string, error) {
 		}
 	}
 	return values, nil
+}
+
+func readConfig(path string) (*formatcfg.Config, error) {
+	cfg := formatcfg.New()
+	//nolint:gosec // G304: path is a git config file the caller located inside a repository's git directories.
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return cfg, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := formatcfg.NewDecoder(f).Decode(cfg); err != nil {
+		return nil, fmt.Errorf("decode config %s: %w", path, err)
+	}
+	return cfg, nil
 }
