@@ -21,7 +21,7 @@ jobs:
       - name: Install syscall tracer
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: Fresh-process cache cost and crash contracts
-        run: ./scripts/test.sh -count=1 -v -run '^TestLRUDir' ./internal/store
+        run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader)' ./internal/store
 
   attachment-ref-passes:
     runs-on: ubuntu-latest

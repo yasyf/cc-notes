@@ -32,10 +32,11 @@ const (
 type cacheEntry struct {
 	slot  int
 	token []byte
+	size  int64
 }
 
 const cacheSchema = `CREATE TABLE IF NOT EXISTS cache_meta (id INTEGER PRIMARY KEY CHECK(id = 1), capacity INTEGER NOT NULL, next_slot INTEGER NOT NULL, rank INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS cache_entries (name TEXT PRIMARY KEY, slot INTEGER NOT NULL UNIQUE, token BLOB NOT NULL, rank INTEGER NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS cache_entries (name TEXT PRIMARY KEY, slot INTEGER NOT NULL UNIQUE, token BLOB NOT NULL, rank INTEGER NOT NULL UNIQUE, size INTEGER NOT NULL CHECK(size >= 0));
 CREATE TABLE IF NOT EXISTS cache_free (slot INTEGER PRIMARY KEY);`
 
 type cacheHit struct {
@@ -60,20 +61,16 @@ type lruDir struct {
 }
 
 func (l *lruDir) read(name string) ([]byte, bool) {
-	entry, ok := l.entry(name)
+	reader, ok := l.open(name)
 	if !ok {
 		return nil, false
 	}
-	f, err := os.Open(l.slotPath(entry.slot))
-	if err != nil {
-		return nil, false
+	defer func() { _ = reader.Close() }()
+	if reader.remaining == 0 {
+		return reader.chunk, true
 	}
-	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(f)
-	if err != nil || len(data) < cacheTokenSize || !bytes.Equal(data[:cacheTokenSize], entry.token) {
-		return nil, false
-	}
-	return data[cacheTokenSize:], true
+	data, err := io.ReadAll(reader)
+	return data, err == nil
 }
 
 func (l *lruDir) entry(name string) (cacheEntry, bool) {
@@ -82,31 +79,31 @@ func (l *lruDir) entry(name string) (cacheEntry, bool) {
 		return cacheEntry{}, false
 	}
 	var entry cacheEntry
-	if db.QueryRow("SELECT slot, token FROM cache_entries WHERE name = ?", name).Scan(&entry.slot, &entry.token) != nil {
+	if db.QueryRow("SELECT slot, token, size FROM cache_entries WHERE name = ?", name).Scan(&entry.slot, &entry.token, &entry.size) != nil {
 		return cacheEntry{}, false
 	}
 	key := sha256.Sum256([]byte(name))
-	if len(entry.token) != cacheTokenSize || !bytes.Equal(entry.token[:32], key[:]) {
+	if entry.size < 0 || len(entry.token) != cacheTokenSize || !bytes.Equal(entry.token[:32], key[:]) {
 		return cacheEntry{}, false
 	}
 	return entry, true
 }
 
-func (l *lruDir) open(name string) (*os.File, bool) {
+func (l *lruDir) open(name string) (*CacheReader, bool) {
 	entry, ok := l.entry(name)
 	if !ok {
 		return nil, false
 	}
-	f, err := os.Open(l.slotPath(entry.slot))
+	file, err := os.Open(l.slotPath(entry.slot))
 	if err != nil {
 		return nil, false
 	}
-	var header [cacheTokenSize]byte
-	if _, err := io.ReadFull(f, header[:]); err != nil || !bytes.Equal(header[:], entry.token) {
-		_ = f.Close()
+	reader, err := newCacheReader(file, entry)
+	if err != nil {
+		_ = file.Close()
 		return nil, false
 	}
-	return f, true
+	return reader, true
 }
 
 func (l *lruDir) ensure() bool {
@@ -166,7 +163,7 @@ func (l *lruDir) database(access cacheAccess) (*sql.DB, error) {
 	query.Set("_txlock", "immediate")
 	query.Add("_pragma", "busy_timeout(25)")
 	query.Add("_pragma", "synchronous(NORMAL)")
-	query.Add("_pragma", "wal_autocheckpoint(64)")
+	query.Add("_pragma", "wal_autocheckpoint(4096)")
 	location.RawQuery = query.Encode()
 	db, err := sql.Open("sqlite", location.String())
 	if err != nil {
@@ -280,7 +277,7 @@ func (l *lruDir) write(name string, data []byte) {
 		return
 	}
 	rank++
-	if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank", name, slot, token[:], rank); err != nil {
+	if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank, size=excluded.size", name, slot, token[:], rank, len(data)); err != nil {
 		return
 	}
 	if _, err := tx.Exec("UPDATE cache_meta SET rank = ? WHERE id = 1", rank); err != nil {
@@ -334,15 +331,7 @@ func (l *lruDir) publish(slot int, token, data []byte) bool {
 	if err != nil {
 		return false
 	}
-	if _, err := f.Write(token); err != nil {
-		_ = f.Close()
-		return false
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return false
-	}
-	if err := f.Sync(); err != nil {
+	if err := writeCachePayload(f, token, data); err != nil {
 		_ = f.Close()
 		return false
 	}
