@@ -215,7 +215,7 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 }
 
 func queryMetadataBucketsComplete(binding *bolt.Bucket) bool {
-	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket} {
+	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket} {
 		if binding.Bucket(name) == nil {
 			return false
 		}

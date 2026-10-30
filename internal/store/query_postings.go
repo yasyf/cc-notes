@@ -20,6 +20,9 @@ var (
 	queryMetadataLabelsBucket      = []byte("labels")
 	queryMetadataAnchorsBucket     = []byte("anchors")
 	queryMetadataSupersedersBucket = []byte("superseders")
+	queryMetadataBlockedByBucket   = []byte("blocked-by")
+	queryMetadataParentsBucket     = []byte("parents")
+	queryMetadataRunTasksBucket    = []byte("run-tasks")
 )
 
 func queryMetadataBinding(tx *bolt.Tx, binding string) *bolt.Bucket {
@@ -39,7 +42,7 @@ func ensureQueryMetadataBinding(tx *bolt.Tx, name string) (*bolt.Bucket, error) 
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket} {
+	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket} {
 		if _, err := binding.CreateBucketIfNotExists(name); err != nil {
 			return nil, err
 		}
@@ -81,6 +84,21 @@ func replaceQueryMetadata(tx *bolt.Tx, row queryMetadata) error {
 			return err
 		}
 	}
+	if row.Kind == model.KindTask {
+		for _, target := range row.BlockedBy {
+			if err := binding.Bucket(queryMetadataBlockedByBucket).Put(queryMetadataPostingKey(queryMetadataSupersedersPrefix(row.Kind, target), row), nil); err != nil {
+				return err
+			}
+		}
+		if err := binding.Bucket(queryMetadataParentsBucket).Put(queryMetadataPostingKey(queryMetadataSupersedersPrefix(row.Kind, row.Parent), row), nil); err != nil {
+			return err
+		}
+	}
+	for _, target := range row.RunTasks {
+		if err := binding.Bucket(queryMetadataRunTasksBucket).Put(queryMetadataPostingKey(queryMetadataSupersedersPrefix(row.Kind, target), row), nil); err != nil {
+			return err
+		}
+	}
 	return putQueryMetadataTip(binding, row)
 }
 
@@ -119,6 +137,21 @@ func removeQueryMetadataPostings(binding *bolt.Bucket, id model.EntityID) error 
 			return err
 		}
 	}
+	if previous.Kind == model.KindTask {
+		for _, target := range previous.BlockedBy {
+			if err := binding.Bucket(queryMetadataBlockedByBucket).Delete(queryMetadataPostingKey(queryMetadataSupersedersPrefix(previous.Kind, target), previous)); err != nil {
+				return err
+			}
+		}
+		if err := binding.Bucket(queryMetadataParentsBucket).Delete(queryMetadataPostingKey(queryMetadataSupersedersPrefix(previous.Kind, previous.Parent), previous)); err != nil {
+			return err
+		}
+	}
+	for _, target := range previous.RunTasks {
+		if err := binding.Bucket(queryMetadataRunTasksBucket).Delete(queryMetadataPostingKey(queryMetadataSupersedersPrefix(previous.Kind, target), previous)); err != nil {
+			return err
+		}
+	}
 	return deleteQueryMetadataTip(binding, previous)
 }
 
@@ -145,6 +178,24 @@ func walkQueryMetadataAnchor(tx *bolt.Tx, binding string, kind model.Kind, ancho
 func walkQueryMetadataSuperseders(tx *bolt.Tx, binding string, kind model.Kind, target model.EntityID, includeDeleted bool, visit func([]byte) error) error {
 	return walkQueryMetadataPostings(tx, binding, queryMetadataSupersedersBucket, queryMetadataSupersedersPrefix(kind, target), includeDeleted, func(row queryMetadata) bool {
 		return row.Kind == kind && slices.Contains(row.SupersededBy, target)
+	}, visit)
+}
+
+func walkQueryMetadataBlockedBy(tx *bolt.Tx, binding string, target model.EntityID, visit func([]byte) error) error {
+	return walkQueryMetadataPostings(tx, binding, queryMetadataBlockedByBucket, queryMetadataSupersedersPrefix(model.KindTask, target), false, func(row queryMetadata) bool {
+		return row.Kind == model.KindTask && slices.Contains(row.BlockedBy, target)
+	}, visit)
+}
+
+func walkQueryMetadataTaskChildren(tx *bolt.Tx, binding string, target model.EntityID, visit func([]byte) error) error {
+	return walkQueryMetadataPostings(tx, binding, queryMetadataParentsBucket, queryMetadataSupersedersPrefix(model.KindTask, target), false, func(row queryMetadata) bool {
+		return row.Kind == model.KindTask && row.Parent == target
+	}, visit)
+}
+
+func walkQueryMetadataRunTasks(tx *bolt.Tx, binding string, target model.EntityID, visit func([]byte) error) error {
+	return walkQueryMetadataPostings(tx, binding, queryMetadataRunTasksBucket, queryMetadataSupersedersPrefix(model.KindRunbook, target), false, func(row queryMetadata) bool {
+		return row.Kind == model.KindRunbook && slices.Contains(row.RunTasks, target)
 	}, visit)
 }
 

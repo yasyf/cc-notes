@@ -6,7 +6,7 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-const queryMetadataVersion = 2
+const queryMetadataVersion = 3
 
 type queryMetadata struct {
 	Version             int                       `json:"version"`
@@ -29,6 +29,8 @@ type queryMetadata struct {
 	Priority            model.Priority            `json:"priority,omitempty"`
 	Assignee            model.Actor               `json:"assignee,omitempty"`
 	BlockedBy           []model.EntityID          `json:"blocked_by,omitempty"`
+	Parent              model.EntityID            `json:"parent,omitempty"`
+	RunTasks            []model.EntityID          `json:"run_tasks,omitempty"`
 	HasRunningRun       bool                      `json:"has_running_run,omitempty"`
 	LogEntryCount       int                       `json:"log_entry_count,omitempty"`
 	InvestigationStatus model.InvestigationStatus `json:"investigation_status,omitempty"`
@@ -70,15 +72,18 @@ func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot
 		anchors, row.Branch = value.Anchors, value.Branch
 		row.TaskStatus, row.Priority, row.Assignee = value.Status, value.Priority, value.Assignee
 		row.BlockedBy = slices.Clone(value.BlockedBy)
+		row.Parent = value.Parent
 	case model.Sprint, model.Project:
 	case model.Runbook:
 		anchors = value.Anchors
 		for _, run := range value.Runs {
+			row.RunTasks = append(row.RunTasks, run.Task)
 			if run.Status == model.RunRunning {
 				row.HasRunningRun = true
-				break
 			}
 		}
+		slices.Sort(row.RunTasks)
+		row.RunTasks = slices.Compact(row.RunTasks)
 	case model.Ledger:
 		anchors = value.Anchors
 	case model.Investigation:
