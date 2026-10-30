@@ -45,7 +45,7 @@ func TestTaskDedupeFreshCLICost(t *testing.T) {
 				}
 				sha, err := repo.WriteOpsCommit(t.Context(), nil, sig, "task fixture", model.Pack{
 					Lamport: 1,
-					Ops: []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: fmt.Sprintf("fixture %d", i), Type: model.TypeTask, Priority: 2, Labels: []string{label}}},
+					Ops:     []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: fmt.Sprintf("fixture %d", i), Type: model.TypeTask, Priority: 2, Labels: []string{label}}},
 				})
 				if err != nil {
 					t.Fatal(err)
