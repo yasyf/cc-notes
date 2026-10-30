@@ -1,1 +1,1 @@
-{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"3299121a9b463c5cc4094d74cf6887a7","status":"met","note":"Actual Linux CI baseline opens4 FAIL and final candidate opens1 PASS; final main all8 CI green; source61924d01."}]}
+{"v":1,"lamport":5,"ops":[{"kind":"set_criterion_status","id":"c28a345376ccfed6353f8f581d317662","status":"met","note":"Independent source review PASS; existing pinned views retained, each upload/download phase captures fresh tips, single map traversal; portable freshness and selected-scope tests pass."}]}
