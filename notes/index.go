@@ -11,6 +11,9 @@ import (
 // TasksBlocking returns the sorted ids of live tasks whose BlockedBy contains
 // id — the reverse dependency index a task's blocks field renders.
 func (c *Client) TasksBlocking(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	if blocks, hit, err := c.s.IndexedTasksBlocking(ctx, id); err != nil || hit {
+		return blocks, err
+	}
 	tasks, err := c.s.ListTasks(ctx)
 	if err != nil {
 		return nil, err
@@ -66,6 +69,9 @@ func pointingAt[T model.Snapshot](list []T, key func(T) model.EntityID, id model
 // TaskChildren returns the sorted ids of the live tasks whose Parent is id —
 // the reverse of a task's parent edge.
 func (c *Client) TaskChildren(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	if children, hit, err := c.s.IndexedTaskChildren(ctx, id); err != nil || hit {
+		return children, err
+	}
 	tasks, err := c.s.ListTasks(ctx)
 	if err != nil {
 		return nil, err
@@ -104,9 +110,15 @@ type TaskRun struct {
 // reverse of RunbookRun.Task — oldest start first, ties broken by runbook then
 // run id.
 func (c *Client) TaskRuns(ctx context.Context, id model.EntityID) ([]TaskRun, error) {
-	runbooks, err := c.s.ListRunbooks(ctx)
+	runbooks, hit, err := c.s.IndexedTaskRunbooks(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if !hit {
+		runbooks, err = c.s.ListRunbooks(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var runs []TaskRun
 	for _, rb := range runbooks {
