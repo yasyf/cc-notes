@@ -115,7 +115,7 @@ func TestReferenceDirectoryPreservesSymlinkBoundaries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(inside, "retained"), []byte(testRefHash+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(inside, filepath.Join(root, "refs", "inside")); err != nil {
+	if err := os.Symlink("../internal", filepath.Join(root, "refs", "inside")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(t.TempDir(), filepath.Join(root, "refs", "outside")); err != nil {
