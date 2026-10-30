@@ -351,6 +351,46 @@ func TestFetchObjectsSkipsCheckoutIndexAndFsmonitor(t *testing.T) {
 	assertFsmonitorAndIndexUntouched(t, checkout, marker, before)
 }
 
+func TestFetchObjectsHydratesBlobReachableFromKnownCommit(t *testing.T) {
+	source := initRepo(t)
+	const contents = "promised note operations\n"
+	if err := os.WriteFile(filepath.Join(source.Dir, "ops.json"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, source.Dir, "add", "ops.json")
+	gittest.Git(t, source.Dir, "commit", "-q", "-m", "note operations")
+	gittest.Git(t, source.Dir, "config", "uploadpack.allowFilter", "true")
+	blob := resolve(t, source.Dir, "HEAD:ops.json")
+
+	for _, backend := range []bool{false, true} {
+		t.Run(fmt.Sprintf("backend=%t", backend), func(t *testing.T) {
+			thin := t.TempDir()
+			gittest.Git(t, filepath.Dir(thin), "clone", "-q", "--no-checkout", "--filter=blob:none", "file://"+source.Dir, thin)
+			if objectPresent(t, thin, blob) {
+				t.Fatal("partial clone already contains the promised blob")
+			}
+			before := gittest.Git(t, thin, "for-each-ref", "--format=%(refname) %(objectname)")
+			g := gitcmd.Git{Dir: thin}
+			if backend {
+				g = gitcmd.Backend(filepath.Join(thin, ".git"), thin)
+			}
+
+			if err := g.FetchObjects(t.Context(), "origin", []model.SHA{blob}); err != nil {
+				t.Fatalf("fetch promised blob: %v", err)
+			}
+			if !objectPresent(t, thin, blob) {
+				t.Fatal("fetch succeeded without hydrating the promised blob")
+			}
+			if got := gittest.Git(t, thin, "cat-file", "blob", string(blob)); got != strings.TrimSpace(contents) {
+				t.Fatalf("hydrated content = %q, want %q", got, strings.TrimSpace(contents))
+			}
+			if after := gittest.Git(t, thin, "for-each-ref", "--format=%(refname) %(objectname)"); after != before {
+				t.Fatalf("object fetch changed refs: before %q, after %q", before, after)
+			}
+		})
+	}
+}
+
 func TestFetchPushRoundTrip(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := initRepo(t)
