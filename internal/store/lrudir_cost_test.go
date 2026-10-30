@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -58,10 +59,18 @@ func TestLRUDirCostHelper(t *testing.T) {
 	default:
 		t.Fatalf("unknown cost mode %q", mode)
 	}
+	walBefore := cacheCostFileSize(t, dir, "index.sqlite-wal")
+	dbBefore := cacheCostFileSize(t, dir, "index.sqlite")
+	workElapsed := time.Since(started).Nanoseconds()
+	closeStarted := time.Now()
 	if err := l.close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]int64{"elapsed_ns": time.Since(started).Nanoseconds()}); err != nil {
+	closeElapsed := time.Since(closeStarted).Nanoseconds()
+	walAfter := cacheCostFileSize(t, dir, "index.sqlite-wal")
+	dbAfter := cacheCostFileSize(t, dir, "index.sqlite")
+	result := map[string]int64{"elapsed_ns": time.Since(started).Nanoseconds(), "work_elapsed_ns": workElapsed, "close_elapsed_ns": closeElapsed, "wal_bytes_before_close": walBefore, "wal_bytes_after_close": walAfter, "db_bytes_before_close": dbBefore, "db_bytes_after_close": dbAfter}
+	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 		t.Fatal(err)
 	}
 	homeguard.ChildExit(0)
@@ -79,7 +88,7 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			dir := t.TempDir()
 			baseline := cacheCostProcess(t, "baseline", dir, count, true)
-			cacheCostProcess(t, "populate", dir, count, false)
+			cacheCostProcess(t, "populate", dir, count, true)
 			owned := cacheCostProcess(t, "owned", dir, count, true)
 			perAccess := cacheCostProcess(t, "per-access", dir, count, true)
 			if count == 10000 && owned["elapsed_ns"] >= perAccess["elapsed_ns"] {
@@ -150,6 +159,18 @@ func cacheCostProcess(t *testing.T, mode, dir string, count int, trace bool) map
 			}
 		}
 	}
-	t.Logf("cache-cost mode=%s entries=%d elapsed_ns=%d syscalls=%v", mode, count, result["elapsed_ns"], counts)
+	t.Logf("cache-cost mode=%s entries=%d elapsed_ns=%d work_ns=%d close_ns=%d wal_before=%d wal_after=%d db_before=%d db_after=%d syscalls=%v", mode, count, result["elapsed_ns"], result["work_elapsed_ns"], result["close_elapsed_ns"], result["wal_bytes_before_close"], result["wal_bytes_after_close"], result["db_bytes_before_close"], result["db_bytes_after_close"], counts)
 	return counts
+}
+
+func cacheCostFileSize(t *testing.T, dir, name string) int64 {
+	t.Helper()
+	info, err := os.Stat(filepath.Join(dir, name))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Size()
 }

@@ -1,17 +1,13 @@
 package store
 
-import "os"
-
 const (
 	relevantCacheCap    = 2048
 	relevantCacheSubdir = "cc-notes/relevant-v4"
 )
 
-// OpenRelevantCache opens the relevance result cached under name for reading,
-// or ok=false when none is, marking it most-recently used. The caller decodes
-// and validates the entry and closes the file: the store only holds the
-// bytes.
-func (s *Store) OpenRelevantCache(name string) (*os.File, bool) {
+// OpenRelevantCache returns a relevance stream whose bytes are verified as
+// they are read. The caller validates semantic headers and closes the reader.
+func (s *Store) OpenRelevantCache(name string) (*CacheReader, bool) {
 	f, ok := s.relevant.open(name)
 	if !ok {
 		return nil, false

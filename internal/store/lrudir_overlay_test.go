@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"os"
@@ -120,7 +121,7 @@ func TestLRUDirCorruptMetadataAndTokensMiss(t *testing.T) {
 	}
 }
 
-func TestLRUDirLargeOpenStreamsAfterHeader(t *testing.T) {
+func TestLRUDirLargeOpenVerifiesOneBoundedBlock(t *testing.T) {
 	l := &lruDir{capacity: 1, dir: t.TempDir()}
 	t.Cleanup(func() { _ = l.close() })
 	data := bytes.Repeat([]byte("large value\n"), 1<<18)
@@ -130,8 +131,8 @@ func TestLRUDirLargeOpenStreamsAfterHeader(t *testing.T) {
 		t.Fatal("large value missing")
 	}
 	defer func() { _ = f.Close() }()
-	offset, err := f.Seek(0, io.SeekCurrent)
-	if err != nil || offset != cacheTokenSize {
+	offset, err := f.file.Seek(0, io.SeekCurrent)
+	if err != nil || offset != cacheTokenSize+sha256.Size+cacheChunkSize {
 		t.Fatalf("payload offset = %d, %v", offset, err)
 	}
 	got := make([]byte, 11)
