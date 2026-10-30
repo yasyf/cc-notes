@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf/attachment-ref-batch"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"3299121a9b463c5cc4094d74cf6887a7","status":"met","note":"Actual Linux CI baseline opens4 FAIL and final candidate opens1 PASS; final main all8 CI green; source61924d01."}]}
