@@ -153,6 +153,13 @@ func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
 // accelerates the snapshot half of those. The result is sorted by oid with
 // sorted uses, so transfer errors name entities deterministically.
 func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, error) {
+	if s.pins == nil {
+		pinned, err := s.PinnedKinds(ctx, model.KindNote, model.KindDoc, model.KindLog, model.KindAnswer)
+		if err != nil {
+			return nil, fmt.Errorf("referenced attachments: %w", err)
+		}
+		s = pinned
+	}
 	var entries []tipEntry
 	for _, prefix := range []string{refs.Root(model.KindNote), refs.Root(model.KindDoc), refs.Root(model.KindLog), refs.Root(model.KindAnswer)} {
 		children, err := s.children(ctx, prefix)
