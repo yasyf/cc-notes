@@ -93,8 +93,8 @@ func TestPersistentReaderAfterNativePromisorPackRetirement(t *testing.T) {
 	packs := filepath.Join(objects, "pack")
 	writer := open(t, dir)
 	var parents []model.SHA
-	var want []model.PackCommit
-	var oids []string
+	want := make([]model.PackCommit, 0, 10)
+	oids := make([]string, 0, 30)
 	for i := range 10 {
 		pack := model.Pack{Lamport: model.Lamport(i + 1), Ops: []model.Op{model.SetBody{Body: fmt.Sprintf("retirement-body-%d", i)}}}
 		when := t0.Add(time.Duration(i) * time.Minute)
