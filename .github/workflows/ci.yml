@@ -22,6 +22,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: Fresh CLI task deduplication payload reads, cold and warm
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLICost$' ./internal/cli
+      - name: Query metadata cardinality contracts and work
+        run: ./scripts/test.sh -count=1 -v -run '^TestQueryMetadataCardinality' ./internal/store
 
   attachment-ref-passes:
     runs-on: ubuntu-latest
