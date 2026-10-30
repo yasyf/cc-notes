@@ -44,6 +44,65 @@ func TestUnderRefs(t *testing.T) {
 	}
 }
 
+func TestReferenceDirectoryRetainsRefsAfterLockRename(t *testing.T) {
+	dir := t.TempDir()
+	ref := filepath.Join(dir, "contested")
+	lock := ref + ".lock"
+	for _, file := range []string{ref, lock} {
+		if err := os.WriteFile(file, []byte(testRefHash+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(lock, ref); err != nil {
+		t.Fatal(err)
+	}
+	var legacyErr error
+	for _, entry := range entries {
+		if _, err := entry.Info(); err != nil {
+			legacyErr = err
+			break
+		}
+	}
+	if !errors.Is(legacyErr, os.ErrNotExist) {
+		t.Fatalf("unfiltered entry stat = %v, want vanished lock ENOENT", legacyErr)
+	}
+	infos, err := referenceFileInfos(entries)
+	if err != nil || len(infos) != 1 || infos[0].Name() != "contested" {
+		t.Fatalf("reference entries = %v, %v; want only contested", infos, err)
+	}
+}
+
+func TestReferenceDirectoryRetainsSiblingsAfterDeletion(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"deleted", "retained"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(testRefHash+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "deleted")); err != nil {
+		t.Fatal(err)
+	}
+	infos, err := referenceFileInfos(entries)
+	if err != nil || len(infos) != 1 || infos[0].Name() != "retained" {
+		t.Fatalf("reference entries = %v, %v; want only retained", infos, err)
+	}
+}
+
+func TestReferenceDirectoryPreservesMissingDirectoryError(t *testing.T) {
+	fs := gitDirFS{osfs.New(t.TempDir())}
+	if _, err := fs.ReadDir("refs/cc-notes/tasks"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing reference directory = %v, want ENOENT", err)
+	}
+}
+
 func TestPackIndexPath(t *testing.T) {
 	cases := []struct {
 		path string

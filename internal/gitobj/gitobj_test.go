@@ -954,7 +954,7 @@ func TestListPrefixDuringRefWrites(t *testing.T) {
 				t.Fatalf("ListPrefix surfaced lock file %s", name)
 			}
 		}
-		if got, ok := tips[ref]; ok && got != c1 && got != c2 {
+		if got := tips[ref]; got != c1 && got != c2 {
 			t.Fatalf("ListPrefix[%s] = %q, want %s or %s", ref, got, c1, c2)
 		}
 	}
