@@ -72,6 +72,9 @@ func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal 
 		t.Fatal(err)
 	}
 	work, err := parseTaskIOBytes(f)
+	if err != nil {
+		logTaskByteTraceFailure(t, f)
+	}
 	closeErr := f.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +86,22 @@ func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal 
 		t.Fatalf("missing returned-byte accounting: %+v", work)
 	}
 	t.Logf("unrelated=%d byte_create=%d elapsed_ms=%.3f successful_return_calls=%v restarted_zero_bytes=%v returned_bytes=%v query_db_returned_bytes=%v user_cpu=%v system_cpu=%v raw_traced_wrapper_rusage=%+v", unrelated, ordinal, float64(elapsed)/float64(time.Millisecond), work.Calls, work.Restarted, work.Bytes, work.QueryBytes, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState.SysUsage())
+}
+
+func logTaskByteTraceFailure(t *testing.T, f *os.File) {
+	t.Helper()
+	offset, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		t.Logf("byte trace diagnostic position: %v", err)
+		return
+	}
+	start := max(int64(0), offset-(64<<10))
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		t.Logf("byte trace diagnostic seek: %v", err)
+		return
+	}
+	window, err := io.ReadAll(io.LimitReader(f, 128<<10))
+	t.Logf("byte_trace_failure_window_start=%d scanner_file_offset=%d raw=%q diagnostic_read_error=%v", start, offset, window, err)
 }
 
 func parseTaskIOBytes(r io.Reader) (taskIOBytes, error) {

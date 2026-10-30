@@ -124,7 +124,7 @@ func taskDedupeFixture(t *testing.T, count int) string {
 		t.Fatal(err)
 	}
 	sig := gitobj.Signature{Name: "Fixture", Email: "fixture@example.com", When: time.Unix(1700000000, 0)}
-	var packed []string
+	packed := make([]string, 0, count+1)
 	for i := range count + 1 {
 		label := "other"
 		if i == 0 {

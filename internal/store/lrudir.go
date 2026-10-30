@@ -49,16 +49,17 @@ type lruDir struct {
 	capacity int
 	dir      string
 
-	writer sync.Mutex
-	mu     sync.Mutex
-	active bool
-	rank   uint64
-	order  *list.List
-	hits   map[string]*list.Element
-	dbMu   sync.Mutex
-	db     *sql.DB
-	dbInfo os.FileInfo
-	closed bool
+	writer        sync.Mutex
+	mu            sync.Mutex
+	active        bool
+	rank          uint64
+	order         *list.List
+	hits          map[string]*list.Element
+	dbMu          sync.Mutex
+	db            *sql.DB
+	dbInfo        os.FileInfo
+	lookupMissing bool
+	closed        bool
 }
 
 func (l *lruDir) read(name string) ([]byte, bool) {
@@ -199,6 +200,12 @@ func (l *lruDir) database(access cacheAccess) (*sql.DB, error) {
 	if l.closed {
 		return nil, sql.ErrConnDone
 	}
+	if access == cacheLookup && l.lookupMissing {
+		return nil, os.ErrNotExist
+	}
+	if access != cacheLookup {
+		l.lookupMissing = false
+	}
 	path := filepath.Join(l.dir, "index.sqlite")
 	if l.db != nil {
 		if access == cacheLookup {
@@ -212,6 +219,12 @@ func (l *lruDir) database(access cacheAccess) (*sql.DB, error) {
 			return nil, err
 		}
 		l.db = nil
+	}
+	if access == cacheLookup {
+		if _, err := os.Stat(path); err != nil { //nolint:gosec // G703: path is the fixed metadata file inside the store's cache directory.
+			l.lookupMissing = errors.Is(err, os.ErrNotExist)
+			return nil, err
+		}
 	}
 	mode := "rwc"
 	if access != cacheWrite {
@@ -242,7 +255,7 @@ func (l *lruDir) database(access cacheAccess) (*sql.DB, error) {
 		if capacity != l.capacity {
 			return nil, errors.Join(fmt.Errorf("cache capacity %d, expected %d", capacity, l.capacity), db.Close())
 		}
-		info, err := os.Stat(path)
+		info, err := os.Stat(path) //nolint:gosec // G703: path is the fixed metadata file inside the store's cache directory.
 		if err != nil {
 			return nil, errors.Join(err, db.Close())
 		}
@@ -269,7 +282,7 @@ func (l *lruDir) database(access cacheAccess) (*sql.DB, error) {
 	if capacity != l.capacity {
 		return nil, errors.Join(fmt.Errorf("cache capacity %d, expected %d", capacity, l.capacity), db.Close())
 	}
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) //nolint:gosec // G703: path is the fixed metadata file inside the store's cache directory.
 	if err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
@@ -286,6 +299,7 @@ func (l *lruDir) close() error {
 		return nil
 	}
 	l.closed = true
+	l.lookupMissing = false
 	if l.db == nil {
 		return nil
 	}
@@ -404,7 +418,7 @@ func (l *lruDir) publish(slot int, token, data []byte) bool {
 	if f.Close() != nil {
 		return false
 	}
-	return os.Rename(pending, l.slotPath(slot)) == nil
+	return os.Rename(pending, l.slotPath(slot)) == nil //nolint:gosec // G703: Fixed staging and integer slot paths derive only from the store's cache directory.
 }
 
 func (l *lruDir) touch(name string) {

@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - name: Install syscall accounting
-        run: sudo apt-get update && sudo apt-get install -y strace
+        run: sudo apt-get update && sudo apt-get install -y strace && strace --version
       - name: Download the pinned legacy CLI baseline
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,8 +51,8 @@ jobs:
       - name: Build and record both pinned release-style variants
         id: build_variants
         env:
-          CCN_ROWS1024_SHA: 9de12f6be2dad6b7f8019dbf5b2fc748d931568a
-          CCN_ROWS4096_SHA: 1ddb0a0118fddea0f03c0c2d69c6506a3bc3d1c7
+          CCN_ROWS1024_SHA: 6fc61d483298811ac1489b8f5292f6b6123a10af
+          CCN_ROWS4096_SHA: 935c627c1cdb0f95f1f9b6866751cc489ef0f3b4
         run: |
           git fetch --no-tags origin "$CCN_ROWS1024_SHA" "$CCN_ROWS4096_SHA"
           git diff --exit-code "$CCN_ROWS1024_SHA" "$CCN_ROWS4096_SHA" -- . ':!internal/store/cache_publication.go'
@@ -70,6 +70,9 @@ jobs:
             test "$(git -C "$ccn_variant_source" rev-parse HEAD)" = "$ccn_variant_sha"
             printf '%s  %s\n' "$ccn_runtime_hash" "$ccn_variant_source/internal/store/cache_publication.go" | sha256sum --check --strict -
             printf '%s  %s\n' 209751b3801fef5227125790929e702b6242f238fbc8c2d8ffd17f67172a1fe7 "$ccn_variant_source/internal/store/cache_publication_test.go" | sha256sum --check --strict -
+            printf '%s  %s\n' 2d7ebabebe9f9a6a57c763a5bbe1a63bfb975641ec3d3fc7cf979a4ebe214717 "$ccn_variant_source/internal/store/lrudir.go" | sha256sum --check --strict -
+            printf '%s  %s\n' 5c41c174697f5c063c99e492905e6e6897fc1bd07e6459720cb17a0eb34a8ba4 "$ccn_variant_source/internal/store/lrudir_cost_test.go" | sha256sum --check --strict -
+            printf '%s  %s\n' 7bedc5920926715920b17b73225a68f51e7d4e6e071d2fed9b067a783b09ca36 "$ccn_variant_source/internal/store/lrudir_missing_test.go" | sha256sum --check --strict -
             (
               cd "$ccn_variant_source/web"
               npm ci
@@ -107,7 +110,7 @@ jobs:
         if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
         run: |
           cd "$CCN_ROWS1024_SOURCE"
-          ./scripts/test.sh -count=1 -v -run '^(TestLRUDirPublicationBatch|TestLRUDirProcessBatchCrashAndGC$|TestLRUDirCompetingPublicationBatches$|TestLRUDirProcessCrashPublication$|TestLRUDirProcessesShareCapacity$|TestLRUDirFoldAllPublishesTailAfterWait$|TestLRUDirQueryRefreshPublishesUnselectedTail$|TestLRUDirPointLoadAtStillPublishesImmediately$)' ./internal/store
+          ./scripts/test.sh -count=1 -v -run '^(TestLRUDirMissing|TestLRUDirPublicationBatch|TestLRUDirProcessBatchCrashAndGC$|TestLRUDirCompetingPublicationBatches$|TestLRUDirProcessCrashPublication$|TestLRUDirProcessesShareCapacity$|TestLRUDirFoldAllPublishesTailAfterWait$|TestLRUDirQueryRefreshPublishesUnselectedTail$|TestLRUDirPointLoadAtStillPublishesImmediately$)' ./internal/store
       - name: Rows 4096 separate cold returned-byte comparison
         if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
         env:
@@ -117,7 +120,7 @@ jobs:
         if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
         run: |
           cd "$CCN_ROWS4096_SOURCE"
-          ./scripts/test.sh -count=1 -v -run '^(TestLRUDirPublicationBatch|TestLRUDirProcessBatchCrashAndGC$|TestLRUDirCompetingPublicationBatches$|TestLRUDirProcessCrashPublication$|TestLRUDirProcessesShareCapacity$|TestLRUDirFoldAllPublishesTailAfterWait$|TestLRUDirQueryRefreshPublishesUnselectedTail$|TestLRUDirPointLoadAtStillPublishesImmediately$)' ./internal/store
+          ./scripts/test.sh -count=1 -v -run '^(TestLRUDirMissing|TestLRUDirPublicationBatch|TestLRUDirProcessBatchCrashAndGC$|TestLRUDirCompetingPublicationBatches$|TestLRUDirProcessCrashPublication$|TestLRUDirProcessesShareCapacity$|TestLRUDirFoldAllPublishesTailAfterWait$|TestLRUDirQueryRefreshPublishesUnselectedTail$|TestLRUDirPointLoadAtStillPublishesImmediately$)' ./internal/store
       - name: Query mutation work accounting
         if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
         run: ./scripts/test.sh -count=1 -v -run '^(TestTaskQueryIndexConsecutiveWork|TestQueryMutationWorkContextCallsites)$' ./internal/store
