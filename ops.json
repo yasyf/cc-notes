@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf/ticket-answer-once"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"a1533f57ff9baad46528d0585bc696d6","status":"met","note":"ROOT independent prod/source PASS context887ff389; peer test append PASS07c2. PR480 exacta084 all22checks terminal21SUCCESS1SKIPPED, reviewed real ctx.answers full-read invocation1 plus3 explicit duplicate/result timestamp tie cases and existing card trust fixtures. Merged474890ec. Public release/local install still pending and separate criteria remain open."}]}
