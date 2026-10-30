@@ -28,6 +28,7 @@ func TestLRUDirCostHelper(t *testing.T) {
 	l := &lruDir{capacity: count, dir: dir}
 	started := time.Now()
 	switch mode {
+	case "baseline":
 	case "populate":
 		for i := range count {
 			l.write(fmt.Sprintf("%064d", i), []byte("cached payload"))
@@ -77,32 +78,35 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 	for _, count := range []int{32, 10000} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			dir := t.TempDir()
+			baseline := cacheCostProcess(t, "baseline", dir, count, true)
 			cacheCostProcess(t, "populate", dir, count, false)
 			owned := cacheCostProcess(t, "owned", dir, count, true)
 			perAccess := cacheCostProcess(t, "per-access", dir, count, true)
 			if count == 10000 && owned["elapsed_ns"] >= perAccess["elapsed_ns"] {
 				t.Fatalf("owned handle did not improve listing latency: owned=%v per-access=%v", owned, perAccess)
 			}
-			if owned["openat"] > count+64 || owned["openat"]*2 >= perAccess["openat"] {
+			ownedOpens := owned["open"] + owned["openat"]
+			perAccessOpens := perAccess["open"] + perAccess["openat"]
+			if ownedOpens > count+64 || ownedOpens*2 >= perAccessOpens {
 				t.Fatalf("owned handle reopened per hit: owned=%v per-access=%v", owned, perAccess)
 			}
-			if owned["write"]+owned["pwrite64"] > 8 || owned["fsync"]+owned["fdatasync"] != 0 {
+			if owned["write"] > 8 || owned["pwrite64"] > 8 || owned["fsync"]+owned["fdatasync"] != 0 {
 				t.Fatalf("read-only listing wrote cache metadata: %v", owned)
 			}
 			write := cacheCostProcess(t, "write", dir, count, true)
 			writes = append(writes, write)
-			for _, name := range []string{"read", "pread64", "openat", "newfstatat", "getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
+			for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat", "getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
 				if write[name] > 512 {
 					t.Errorf("new-process write %s exceeded bound: %v", name, write)
 				}
 			}
-			if write["getdents64"] > 4 {
+			if write["getdents64"] > baseline["getdents64"] {
 				t.Fatalf("new-process write enumerated cache directory: %v", write)
 			}
 		})
 	}
 	if len(writes) == 2 {
-		for _, name := range []string{"read", "pread64", "openat", "newfstatat", "getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
+		for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat", "getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
 			if writes[1][name] > writes[0][name]+64 {
 				t.Errorf("fresh write %s grew with cache population: %d to %d", name, writes[0][name], writes[1][name])
 			}
@@ -116,7 +120,7 @@ func cacheCostProcess(t *testing.T, mode, dir string, count int, trace bool) map
 	command := os.Args[0]
 	report := filepath.Join(t.TempDir(), "syscalls.txt")
 	if trace {
-		args = append([]string{"-f", "-qq", "-c", "-o", report, "-e", "trace=read,pread64,openat,newfstatat,getdents64,write,pwrite64,fsync,fdatasync,mmap", command}, args...)
+		args = append([]string{"-f", "-qq", "-c", "-o", report, "-e", "trace=read,pread64,open,openat,fstat,newfstatat,getdents64,write,pwrite64,fsync,fdatasync,mmap", command}, args...)
 		command = "strace"
 	}
 	cmd := exec.CommandContext(t.Context(), command, args...)

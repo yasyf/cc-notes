@@ -89,8 +89,8 @@ func TestScopeClosesOnCancellationWithoutInterruptingOpenedStream(t *testing.T) 
 	start := make(chan struct{})
 	readResult := make(chan error, 1)
 	go func() {
-		prefix := make([]byte, 1)
-		if _, err := io.ReadFull(f, prefix); err != nil {
+		var prefix [1]byte
+		if _, err := io.ReadFull(f, prefix[:]); err != nil {
 			readResult <- err
 			close(ready)
 			return
@@ -98,7 +98,7 @@ func TestScopeClosesOnCancellationWithoutInterruptingOpenedStream(t *testing.T) 
 		close(ready)
 		<-start
 		rest, err := io.ReadAll(f)
-		if err == nil && string(append(prefix, rest...)) != "stream remains owned by its reader" {
+		if err == nil && string(prefix[:])+string(rest) != "stream remains owned by its reader" {
 			err = errors.New("stream bytes changed during scope close")
 		}
 		readResult <- err
