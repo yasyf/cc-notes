@@ -16,7 +16,7 @@ import (
 	"sync"
 	"syscall"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // SQLite registers its database/sql driver during initialization.
 )
 
 const cacheTokenSize = 64
@@ -296,6 +296,7 @@ func (l *lruDir) slotPath(slot int) string {
 
 func (l *lruDir) publish(slot int, token, data []byte) bool {
 	pending := filepath.Join(l.dir, ".pending")
+	//nolint:gosec // G304: pending is the fixed staging file in this store's derived cache directory.
 	f, err := os.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return false

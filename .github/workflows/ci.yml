@@ -30,8 +30,21 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Install syscall accounting
         run: sudo apt-get update && sudo apt-get install -y strace
-      - name: Composed task payload, metadata and full-list work
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLI(Cost|MetadataCost)$' ./internal/cli
+      - name: Download the pinned legacy CLI baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ccn_legacy_dir="$RUNNER_TEMP/ccn-legacy-07418"
+          mkdir -p "$ccn_legacy_dir"
+          gh release download v0.74.18 --repo yasyf/cc-notes --pattern cc-notes_linux_amd64 --pattern SHA256SUMS.txt --dir "$ccn_legacy_dir"
+          cd "$ccn_legacy_dir"
+          printf '%s  %s\n' fce14f9ef1cb764b1ebaed0ccc17db323b972d39d1b26da3f6bd4fc302c58 SHA256SUMS.txt | sha256sum --check --strict -
+          sha256sum --check --ignore-missing SHA256SUMS.txt
+          chmod +x cc-notes_linux_amd64
+          ./cc-notes_linux_amd64 --version
+          echo "CCN_LEGACY_BASELINE_CLI=$ccn_legacy_dir/cc-notes_linux_amd64" >> "$GITHUB_ENV"
+      - name: Composed task payload, metadata and legacy full-list comparison
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)$' ./internal/cli
 
   attachment-ref-passes:
     runs-on: ubuntu-latest
