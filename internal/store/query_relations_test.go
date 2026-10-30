@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -13,15 +12,11 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-func metadataPostingIDs(t *testing.T, db *bolt.DB, walk func(*bolt.Tx, func([]byte) error) error) []model.EntityID {
+func metadataPostingIDs(t *testing.T, db *bolt.DB, walk func(*bolt.Tx, func(queryMetadata) error) error) []model.EntityID {
 	t.Helper()
 	var ids []model.EntityID
 	if err := db.View(func(tx *bolt.Tx) error {
-		return walk(tx, func(data []byte) error {
-			var row queryMetadata
-			if err := json.Unmarshal(data, &row); err != nil {
-				return err
-			}
+		return walk(tx, func(row queryMetadata) error {
 			ids = append(ids, row.ID)
 			return nil
 		})
@@ -65,7 +60,7 @@ func TestQueryMetadataSupersedersMatchSnapshotOracle(t *testing.T) {
 				}
 			}
 			slices.Sort(want)
-			got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+			got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 				return walkQueryMetadataSuperseders(tx, "binding", model.KindDoc, target, includeDeleted, visit)
 			})
 			if !slices.Equal(got, want) {
@@ -98,14 +93,14 @@ func TestQueryMetadataExactAnchorsAndKindIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, anchor := range anchors {
-		got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+		got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 			return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, anchor, false, visit)
 		})
 		if want := []model.EntityID{model.EntityID(fmt.Sprintf("doc-%d", i))}; !slices.Equal(got, want) {
 			t.Fatalf("anchor %#v = %v, want %v", anchor, got, want)
 		}
 	}
-	got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, model.Anchor{Kind: model.AnchorPath, Value: "a/"}, false, visit)
 	})
 	if len(got) != 0 {
@@ -131,12 +126,12 @@ func TestQueryMetadataRelationsReplaceDeleteAndRollback(t *testing.T) {
 	}); !errors.Is(err, rollback) {
 		t.Fatal(err)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, oldAnchor, false, visit)
 	}); !slices.Equal(got, []model.EntityID{"source"}) {
 		t.Fatalf("rollback lost old anchor: %v", got)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataSuperseders(tx, "binding", model.KindDoc, "new-target", true, visit)
 	}); len(got) != 0 {
 		t.Fatalf("rollback retained new edge: %v", got)
@@ -149,14 +144,14 @@ func TestQueryMetadataRelationsReplaceDeleteAndRollback(t *testing.T) {
 		if includeDeleted {
 			want = []model.EntityID{"source"}
 		}
-		for name, walk := range map[string]func(*bolt.Tx, func([]byte) error) error{
-			"label": func(tx *bolt.Tx, visit func([]byte) error) error {
+		for name, walk := range map[string]func(*bolt.Tx, func(queryMetadata) error) error{
+			"label": func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 				return walkQueryMetadataLabel(tx, "binding", model.KindDoc, "label", includeDeleted, visit)
 			},
-			"anchor": func(tx *bolt.Tx, visit func([]byte) error) error {
+			"anchor": func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 				return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, newAnchor, includeDeleted, visit)
 			},
-			"edge": func(tx *bolt.Tx, visit func([]byte) error) error {
+			"edge": func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 				return walkQueryMetadataSuperseders(tx, "binding", model.KindDoc, "new-target", includeDeleted, visit)
 			},
 		} {
@@ -165,12 +160,12 @@ func TestQueryMetadataRelationsReplaceDeleteAndRollback(t *testing.T) {
 			}
 		}
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, oldAnchor, true, visit)
 	}); len(got) != 0 {
 		t.Fatalf("replace retained old anchor: %v", got)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataSuperseders(tx, "binding", model.KindDoc, "old-target", true, visit)
 	}); len(got) != 0 {
 		t.Fatalf("replace retained old edge: %v", got)
@@ -178,12 +173,12 @@ func TestQueryMetadataRelationsReplaceDeleteAndRollback(t *testing.T) {
 	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(tx, "binding", "source") }); err != nil {
 		t.Fatal(err)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, newAnchor, true, visit)
 	}); len(got) != 0 {
 		t.Fatalf("delete retained new anchor: %v", got)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataSuperseders(tx, "binding", model.KindDoc, "new-target", true, visit)
 	}); len(got) != 0 {
 		t.Fatalf("delete retained new edge: %v", got)
@@ -209,14 +204,14 @@ func TestQueryMetadataLivePostingsDoNotHydrateDeletedRows(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			walks := []func(*bolt.Tx, func([]byte) error) error{
-				func(tx *bolt.Tx, visit func([]byte) error) error {
+			walks := []func(*bolt.Tx, func(queryMetadata) error) error{
+				func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 					return walkQueryMetadataLabel(tx, "binding", model.KindDoc, "selected", false, visit)
 				},
-				func(tx *bolt.Tx, visit func([]byte) error) error {
+				func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 					return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, anchor, false, visit)
 				},
-				func(tx *bolt.Tx, visit func([]byte) error) error {
+				func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 					return walkQueryMetadataSuperseders(tx, "binding", model.KindDoc, "target", false, visit)
 				},
 			}

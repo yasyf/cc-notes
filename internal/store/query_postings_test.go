@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -32,11 +31,7 @@ func labelMetadata(t *testing.T, db *bolt.DB, binding string, kind model.Kind, l
 	t.Helper()
 	var rows []queryMetadata
 	if err := db.View(func(tx *bolt.Tx) error {
-		return walkQueryMetadataLabel(tx, binding, kind, label, false, func(data []byte) error {
-			var row queryMetadata
-			if err := json.Unmarshal(data, &row); err != nil {
-				return err
-			}
+		return walkQueryMetadataLabel(tx, binding, kind, label, false, func(row queryMetadata) error {
 			rows = append(rows, row)
 			return nil
 		})
@@ -152,37 +147,47 @@ func TestQueryMetadataLabelBindingIsolationAndNUL(t *testing.T) {
 	}
 }
 
-func TestQueryMetadataLabelCopiesTransactionBytes(t *testing.T) {
+func TestQueryMetadataLabelOwnsRowsAcrossTransactions(t *testing.T) {
 	db := newQueryMetadataDB(t)
-	row := projectQueryMetadata("binding", "before", model.Answer{ID: "answer", Tags: []string{"label"}, SkippedOps: 7})
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, row) }); err != nil {
+	first := projectQueryMetadata("binding", "before", model.Answer{ID: "answer-a", Tags: []string{"label", "first"}, SkippedOps: 7})
+	second := projectQueryMetadata("binding", "second", model.Answer{ID: "answer-b", Tags: []string{"label", "second"}})
+	if err := db.Update(func(tx *bolt.Tx) error {
+		if err := replaceQueryMetadata(tx, first); err != nil {
+			return err
+		}
+		return replaceQueryMetadata(tx, second)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	var captured []byte
+	var captured []queryMetadata
 	if err := db.View(func(tx *bolt.Tx) error {
-		point := readQueryMetadata(tx, "binding", "answer")
+		point := readQueryMetadata(tx, "binding", first.ID)
 		point[0] = '!'
-		return walkQueryMetadataLabel(tx, "binding", model.KindAnswer, "label", false, func(data []byte) error {
-			captured = data
+		return walkQueryMetadataLabel(tx, "binding", model.KindAnswer, "label", false, func(row queryMetadata) error {
+			captured = append(captured, row)
 			return nil
 		})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	row.Tip = "after"
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, row) }); err != nil {
+	if !reflect.DeepEqual(captured, []queryMetadata{first, second}) {
+		t.Fatalf("captured rows = %#v, want %#v", captured, []queryMetadata{first, second})
+	}
+	captured[0].Labels[0] = "mutated"
+	wantLabels := slices.Clone(first.Labels)
+	wantLabels[0] = "mutated"
+	if !reflect.DeepEqual(captured[1], second) {
+		t.Fatalf("captured rows share slice storage: %#v", captured)
+	}
+	first.Tip = "after"
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, first) }); err != nil {
 		t.Fatal(err)
 	}
-	var previous queryMetadata
-	if err := json.Unmarshal(captured, &previous); err != nil {
-		t.Fatal(err)
+	if captured[0].Tip != "before" || captured[0].SkippedOps != 7 || !slices.Equal(captured[0].Labels, wantLabels) {
+		t.Fatalf("captured row changed after transaction: %#v", captured[0])
 	}
-	if previous.Tip != "before" || previous.SkippedOps != 7 {
-		t.Fatalf("captured row changed after transaction: %#v", previous)
-	}
-	captured[0] = '!'
-	if got := labelMetadata(t, db, "binding", model.KindAnswer, "label"); len(got) != 1 || got[0].Tip != "after" || got[0].SkippedOps != 7 {
-		t.Fatalf("cursor bytes alias stored row: %#v", got)
+	if got := labelMetadata(t, db, "binding", model.KindAnswer, "label"); !reflect.DeepEqual(got, []queryMetadata{first, second}) {
+		t.Fatalf("captured row aliases stored metadata: %#v", got)
 	}
 }
 
@@ -212,10 +217,9 @@ func TestQueryMetadataLabelOnlyVisitsSelectedRows(t *testing.T) {
 			}
 			visits := 0
 			if err := db.View(func(tx *bolt.Tx) error {
-				return walkQueryMetadataLabel(tx, "binding", model.KindDoc, "selected", false, func(data []byte) error {
+				return walkQueryMetadataLabel(tx, "binding", model.KindDoc, "selected", false, func(queryMetadata) error {
 					visits++
-					var row queryMetadata
-					return json.Unmarshal(data, &row)
+					return nil
 				})
 			}); err != nil {
 				t.Fatal(err)
@@ -245,7 +249,7 @@ func TestQueryMetadataLabelStopsAtVisitorError(t *testing.T) {
 	stop := errors.New("stop")
 	visits := 0
 	err := db.View(func(tx *bolt.Tx) error {
-		return walkQueryMetadataLabel(tx, "binding", model.KindDoc, "label", false, func([]byte) error {
+		return walkQueryMetadataLabel(tx, "binding", model.KindDoc, "label", false, func(queryMetadata) error {
 			visits++
 			return stop
 		})
