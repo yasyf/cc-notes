@@ -90,7 +90,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 			// Lock-and-rename publishes (git, libgit2, gix, JGit, cc-notes) move a
 			// stamp; a foreign in-place rewrite of an existing loose ref under a
 			// directory stamp (go-git setRef) is not covered.
-			if cached, hit, cachedOK = readRelevantCacheEntry(f, now, exe); hit {
+			if cached, hit, cachedOK = readRelevantCacheEntry(f, now); hit {
 				if _, bound := c.s.Binding(); bound {
 					if err := c.s.CheckRecords(); err != nil {
 						return nil, err
@@ -104,7 +104,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if cachedOK {
 		deps = cached.Deps
 	}
-	in, err := c.relevantInputs(ctx, p, filter, variant, deps, exe)
+	in, err := c.relevantInputs(ctx, p, filter, variant, deps)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (e relevantCacheEntry) encode() ([]byte, error) {
 	return slices.Concat(header, []byte{'\n'}, e.Output, deps), nil
 }
 
-func readRelevantCacheEntry(f *os.File, now time.Time, exe string) (e relevantCacheEntry, hit, ok bool) {
+func readRelevantCacheEntry(f *os.File, now time.Time) (e relevantCacheEntry, hit, ok bool) {
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
@@ -187,7 +187,7 @@ func readRelevantCacheEntry(f *os.File, now time.Time, exe string) (e relevantCa
 	if !ok || !h.readOutput(r, info.Size()-int64(n)) {
 		return relevantCacheEntry{}, false, false
 	}
-	if h.hit(now, exe) {
+	if h.hit(now) {
 		return h.relevantCacheEntry, true, true
 	}
 	if !h.readDeps(r) {
@@ -291,15 +291,15 @@ func (c *Client) relevantName(p string, filter RelevantFilter, variant, exe stri
 	if b, bound := c.s.Binding(); bound {
 		binding = b.String()
 	}
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s\n%s\n%s\n%s\n%+v\n%s\n%d %s", c.s.GitDir(), c.s.Git.Dir, binding, p, filter, variant, len(exe), exe))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s\n%s\n%s\n%s\n%+v\n%d %s\n%s", c.s.GitDir(), c.s.Git.Dir, binding, p, filter, len(exe), exe, variant))
 	return hex.EncodeToString(sum[:])
 }
 
-func (e relevantCacheEntry) hit(now time.Time, exe string) bool {
+func (e relevantCacheEntry) hit(now time.Time) bool {
 	if e.Racy || e.Revalidate || !e.clockValid(now) || e.Env != relevantEnv() {
 		return false
 	}
-	if exe != e.Exe {
+	if exe, err := os.Executable(); err != nil || exe != e.Exe {
 		return false
 	}
 	if git, err := exec.LookPath("git"); err != nil || git != e.Git {

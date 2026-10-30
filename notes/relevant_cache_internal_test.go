@@ -224,7 +224,7 @@ func TestRelevantCacheEntryHitGuards(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := settled
 			tc.edit(&entry)
-			if got := entry.hit(now, exe); got != tc.hit {
+			if got := entry.hit(now); got != tc.hit {
 				t.Fatalf("hit = %t, want %t", got, tc.hit)
 			}
 		})
@@ -325,7 +325,7 @@ func TestRelevantCachedPersistsASettledCaptureInAQuietRepository(t *testing.T) {
 		}
 	}
 
-	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
 	if err != nil {
 		t.Fatalf("relevantInputs: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestRelevantCachedGuardsTheRealDirectoryBehindALinkedInclude(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
 	if err != nil {
 		t.Fatalf("relevantInputs: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestRelevantCachedGuardsTheDirectoryHoldingATraversedLink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
 	if err != nil {
 		t.Fatalf("relevantInputs: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestRelevantInputsDistrustAStampTheWalkContradicts(t *testing.T) {
 			if tc.present {
 				set[true]()
 			}
-			in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
+			in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
 			if err != nil {
 				t.Fatalf("relevantInputs: %v", err)
 			}
@@ -543,7 +543,7 @@ func TestRelevantInputsDistrustAGuardNotObservedExisting(t *testing.T) {
 		gittest.Git(t, dir, "pack-refs", "--all")
 		gittest.Git(t, dir, "update-ref", "refs/remotes/upstream/other", string(root))
 		gittest.Git(t, dir, "update-ref", keep, string(root))
-		in, err := c.relevantInputs(t.Context(), "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
+		in, err := c.relevantInputs(t.Context(), "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
 		if err != nil {
 			t.Fatalf("relevantInputs: %v", err)
 		}
@@ -621,7 +621,7 @@ func TestRelevantInputsRefuseACaptureWhoseRefDirectoryWasSwappedAway(t *testing.
 	const tip = "refs/remotes/upstream/tip"
 	gittest.Git(t, dir, "update-ref", "refs/remotes/upstream/keep", string(root))
 	gittest.Git(t, dir, "symbolic-ref", "ORIG_HEAD", tip)
-	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{Base: "main-worktree/ORIG_HEAD"}, "json", relevantDeps{}, relevantTestExecutable(t))
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{Base: "main-worktree/ORIG_HEAD"}, "json", relevantDeps{})
 	if err != nil {
 		t.Fatalf("relevantInputs: %v", err)
 	}
@@ -1289,5 +1289,14 @@ func TestConfigTrue(t *testing.T) {
 				t.Fatalf("configTrue(%q, %t) = %t, want %t", tc.value, tc.hasValue, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRelevantNameSeparatesExecutablePathsFromVariants(t *testing.T) {
+	c, _ := newWBClient(t)
+	first := c.relevantName("svc/handler.go", RelevantFilter{}, "json\n7 /B", "/A")
+	second := c.relevantName("svc/handler.go", RelevantFilter{}, "json", "/B\n2 /A")
+	if first == second {
+		t.Fatalf("distinct executable/variant tuples share cache name %s", first)
 	}
 }
