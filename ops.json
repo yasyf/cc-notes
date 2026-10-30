@@ -1,1 +1,1 @@
-{"v":1,"lamport":7,"ops":[{"kind":"add_criterion","id":"506f53f98520ef1aedd1334c6e5c6ef9","text":"Actual CI legacy-recognition oracle, UTF8 and short-read/deep/large key-scalar cases, independent process memory bound and existing hook authority fixtures pass on exact final source.","script":""}]}
+{"v":1,"lamport":8,"ops":[{"kind":"add_criterion","id":"b5d964af9e960596bd59fa2f463e1365","text":"Native SDK and dependent Capt/hook sources are merged and officially published; root-slot local runtime activation and fresh affected-operation verification pass.","script":""}]}
