@@ -61,7 +61,7 @@ func TestPackIndexCancellationDoesNotPublishPartialGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	err = db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE name = 'metadata'").Scan(&count)
+	err = db.QueryRowContext(t.Context(), "SELECT count(*) FROM metadata WHERE key = 'generation'").Scan(&count)
 	if count != 0 {
 		t.Error("cancelled generation was published")
 	}

@@ -159,12 +159,12 @@ func TestPackIndexRejectsCapturedPackMutationDuringLaterDecode(t *testing.T) {
 				t.Fatalf("mutation reached = %v, ready = %v; want true, false", changed, index.ready)
 			}
 			observer := observeIndexedData(t, index)
-			var tables int
-			if err := observer.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE name = 'metadata'").Scan(&tables); err != nil {
+			var generations int
+			if err := observer.QueryRowContext(t.Context(), "SELECT count(*) FROM metadata WHERE key = 'generation'").Scan(&generations); err != nil {
 				t.Fatal(err)
 			}
-			if tables != 0 {
-				t.Fatalf("rolled-back metadata tables = %d, want zero", tables)
+			if generations != 0 {
+				t.Fatalf("published generations after captured mutation = %d, want zero", generations)
 			}
 		})
 	}

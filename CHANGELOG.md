@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The object index write-ahead log stays bounded.** Index
+  writes came from short-lived connections whose passive auto-checkpoint
+  always raced a concurrent reader, and read-only connections cannot
+  checkpoint, so in a clone with many live MCP servers the log never reset:
+  one monorepo store reached a 12 GB log beside a 4.7 GB database, and every
+  `doc list` took over a minute. A write that leaves the log at 64 MiB or
+  more now waits up to five seconds for older readers and truncates it, and
+  `journal_size_limit` caps what a reset leaves behind. Reindexing also
+  commits one pack at a time, so a killed or canceled rebuild keeps the
+  packs it finished and the next run indexes only the rest.
 - **`answer list` result cache rewrites entries in place instead of leaving
   stale files behind.** In 0.73.4, the cache named each entry after the exact
   set of answer ref tips, so every answer change left the previous entry
