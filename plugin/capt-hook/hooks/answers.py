@@ -337,8 +337,8 @@ def refine_captured_answers(evt: PostToolUseEvent) -> None:
         return
     fresh = set(captured.values())
     candidates = [a for a in durable_answers(evt) if a["id"] not in fresh]
-    verdicts = triage_answers(evt, pairs, candidates)
     paths = [arg for path in session_paths(evt) for arg in ("--add-path", path)]
+    verdicts = triage_answers(evt, pairs, candidates)
     for i, pair in enumerate(pairs):
         answer_id = captured[pair.question]
         verdict = verdicts.get(i)
