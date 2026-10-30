@@ -4,6 +4,7 @@ package helperdeployment
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,28 +65,48 @@ func TestHelperDaemonFrameCarriesTheProvisionPayload(t *testing.T) {
 	}
 }
 
-func TestReadinessBuildIsTheInstalledBundleVersion(t *testing.T) {
-	appPath := filepath.Join(t.TempDir(), helperclient.ExecutableName+".app")
-	contents := filepath.Join(appPath, "Contents")
-	if err := os.MkdirAll(contents, 0o755); err != nil {
+func TestReadinessBuildNamesTheInstalledBundleArtifact(t *testing.T) {
+	appPath := writeSourceBundle(t)
+	executable := filepath.Join(appPath, "Contents", "MacOS", helperclient.ExecutableName)
+	stamp := time.Unix(1234567890, 987654321)
+	if err := os.Chtimes(executable, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
-	const build = "0.73.4"
-	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(`<plist><dict><key>CFBundleShortVersionString</key><string>`+build+`</string></dict></plist>`), 0o644); err != nil {
+	info, err := os.Stat(executable)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if !info.ModTime().Equal(stamp) {
+		t.Fatalf("executable mtime = %v, want %v", info.ModTime(), stamp)
+	}
+	const build = "0.0.1+1234567890987654321"
 	digest := deploy.SHA256{1}
-
-	if err := validateReadiness(build, 1, digest, appPath); err != nil {
-		t.Fatalf("readiness naming the installed bundle version was refused: %v", err)
+	for _, tt := range []struct {
+		name       string
+		build      string
+		generation uint64
+		digest     deploy.SHA256
+		wantErr    bool
+	}{
+		{"exact artifact", build, 1, digest, false},
+		{"marketing version only", "0.0.1", 1, digest, true},
+		{"different version", "0.0.2+1234567890987654321", 1, digest, true},
+		{"different executable", "0.0.1+1234567890987654322", 1, digest, true},
+		{"extra suffix", build + "+other", 1, digest, true},
+		{"no generation", build, 0, digest, true},
+		{"no digest", build, 1, deploy.SHA256{}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateReadiness(tt.build, tt.generation, tt.digest, appPath)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateReadiness(%q, %d, %x) = %v, wantErr %t", tt.build, tt.generation, tt.digest, err, tt.wantErr)
+			}
+		})
 	}
-	if err := validateReadiness("0.73.3", 1, digest, appPath); err == nil {
-		t.Fatal("readiness naming a different bundle version was accepted")
+	if err := os.Remove(executable); err != nil {
+		t.Fatal(err)
 	}
-	if err := validateReadiness(build, 0, digest, appPath); err == nil {
-		t.Fatal("readiness with no generation was accepted")
-	}
-	if err := validateReadiness(build, 1, deploy.SHA256{}, appPath); err == nil {
-		t.Fatal("readiness with no evidence digest was accepted")
+	if err := validateReadiness(build, 1, digest, appPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing executable = %v, want os.ErrNotExist", err)
 	}
 }
