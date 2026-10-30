@@ -19,6 +19,40 @@ func (s *Store) IndexedTasksBlocking(ctx context.Context, id model.EntityID) ([]
 	})
 }
 
+// IndexedTasksBlockingFor selects live reverse dependencies for the supplied task IDs.
+func (s *Store) IndexedTasksBlockingFor(ctx context.Context, ids []model.EntityID) (map[model.EntityID][]model.EntityID, bool, error) {
+	if len(ids) == 0 {
+		if err := s.CheckRecords(); err != nil {
+			return nil, false, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		return make(map[model.EntityID][]model.EntityID), true, nil
+	}
+	return indexedMetadataQuery(ctx, s, model.KindTask, func(tx *bolt.Tx, source queryMetadataSource) (map[model.EntityID][]model.EntityID, error) {
+		return queryTasksBlockingFor(ctx, tx, source, ids)
+	})
+}
+
+func queryTasksBlockingFor(ctx context.Context, tx *bolt.Tx, source queryMetadataSource, ids []model.EntityID) (map[model.EntityID][]model.EntityID, error) {
+	blocks := make(map[model.EntityID][]model.EntityID, len(ids))
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, found := blocks[id]; found {
+			continue
+		}
+		values, err := queryTaskRelationIDs(ctx, tx, source, id, walkQueryMetadataBlockedBy)
+		if err != nil {
+			return nil, err
+		}
+		blocks[id] = values
+	}
+	return blocks, nil
+}
+
 // IndexedTaskChildren selects live children from derived parent postings.
 // A derived-cache miss leaves authoritative listing to the caller.
 func (s *Store) IndexedTaskChildren(ctx context.Context, id model.EntityID) ([]model.EntityID, bool, error) {
