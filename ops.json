@@ -1,1 +1,1 @@
-{"v":1,"lamport":12,"ops":[{"kind":"set_criterion_status","id":"2e279cae3cb98efdc02abd78131e5a78","status":"pending"}]}
+{"v":1,"lamport":13,"ops":[{"kind":"set_criterion_status","id":"2e279cae3cb98efdc02abd78131e5a78","status":"met","note":"Native V2 SOURCE_SECURITY_PASS9a2041b4 plus exact PyO3 API append SOURCEPASS FE/capt-request-body-streaming-gil-api-source-review.json and consumer49dd SOURCEPASSefed3bc7. Actual compilation/regression/RSS and installation remain separate pending criteria."}]}
