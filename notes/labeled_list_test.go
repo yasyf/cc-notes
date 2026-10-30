@@ -1,6 +1,7 @@
 package notes
 
 import (
+	"compress/zlib"
 	"context"
 	"errors"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -155,6 +157,46 @@ func TestLabeledListsKeepUnavailableIndexAndCancellationBehavior(t *testing.T) {
 				t.Fatalf("canceled = %v, %v", got, err)
 			}
 		})
+	}
+}
+
+func TestLabeledListsReportSelectedObjectFailures(t *testing.T) {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation} {
+		for _, broken := range []string{"missing", "corrupt"} {
+			t.Run(string(kind)+"/"+broken, func(t *testing.T) {
+				c, dir := newWBClient(t)
+				id := createLabeledListEntity(t, c, kind, "selected", []string{"target"})
+				time.Sleep(2100 * time.Millisecond)
+				if _, hit, err := c.s.StatusMetadata(t.Context(), kind); err != nil || !hit {
+					t.Fatalf("prime metadata = %v, %v", hit, err)
+				}
+				tip, err := c.s.Repo.Tip(t.Context(), refs.For(kind, id))
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := error(gitobj.ErrIncompleteChain)
+				if broken == "missing" {
+					err = os.Remove(labeledListObjectPath(c, tip))
+				} else {
+					err = os.WriteFile(labeledListObjectPath(c, tip), []byte("corrupt selected object"), 0o600)
+					want = zlib.ErrHeader
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v2")); err != nil {
+					t.Fatal(err)
+				}
+				fresh, err := Open(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := labeledListIDs(t.Context(), fresh, kind, []string{"target"})
+				if got != nil || !errors.Is(err, want) {
+					t.Fatalf("%s selected object = %v, %v; want %v", broken, got, err, want)
+				}
+			})
+		}
 	}
 }
 
