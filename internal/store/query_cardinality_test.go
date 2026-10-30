@@ -186,9 +186,10 @@ func TestQueryMetadataCardinalityRejectsImpossibleCounts(t *testing.T) {
 			err := db.Update(func(tx *bolt.Tx) error {
 				tips := queryMetadataKindTips(tx, "binding", model.KindDoc)
 				var count uint64
-				if mode == "stored overcount" {
+				switch mode {
+				case "stored overcount":
 					count = 2
-				} else if mode == "insert overflow" {
+				case "insert overflow":
 					count = math.MaxUint64
 				}
 				if err := tips.SetSequence(count); err != nil {
