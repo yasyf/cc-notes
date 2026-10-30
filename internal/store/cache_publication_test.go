@@ -10,12 +10,13 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/model"
 )
 
 func TestLRUDirPublicationBatchRowBound(t *testing.T) {
-	c := newFoldCache(t.TempDir(), 128)
+	c := newFoldCache(t.TempDir(), cachePublicationRows*2)
 	t.Cleanup(func() { _ = c.close() })
 	b := newFoldPublicationBatch(t.Context(), c)
 	defer b.discard()
@@ -38,6 +39,35 @@ func TestLRUDirPublicationBatchRowBound(t *testing.T) {
 	b.flush()
 	if data, ok := c.read("tail"); !ok || string(data) != "tail" {
 		t.Fatalf("tail = %q, %v", data, ok)
+	}
+}
+
+func TestLRUDirPublicationBatchFlushDuration(t *testing.T) {
+	for _, size := range []int{13, cachePublicationBytes / cachePublicationRows} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			c := newFoldCache(t.TempDir(), cachePublicationRows+1)
+			t.Cleanup(func() { _ = c.close() })
+			c.write("prime", []byte("prime"))
+			b := newFoldPublicationBatch(t.Context(), c)
+			defer b.discard()
+			data := bytes.Repeat([]byte("x"), size)
+			for i := range cachePublicationRows - 1 {
+				b.add(&cachePublication{name: strconv.Itoa(i), data: data})
+			}
+			started := time.Now()
+			b.add(&cachePublication{name: "last", data: data})
+			elapsed := time.Since(started)
+			if len(b.values) != 0 || b.bytes != 0 {
+				t.Fatalf("chunk did not flush: queued=%d bytes=%d", len(b.values), b.bytes)
+			}
+			for _, name := range []string{"0", "last"} {
+				got, ok := c.read(name)
+				if !ok || !bytes.Equal(got, data) {
+					t.Fatalf("published %s = %d bytes, %v", name, len(got), ok)
+				}
+			}
+			t.Logf("publication_rows=%d logical_bytes=%d flush_elapsed_ns=%d", cachePublicationRows, size*cachePublicationRows, elapsed.Nanoseconds())
+		})
 	}
 }
 
