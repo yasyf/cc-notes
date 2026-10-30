@@ -1,5 +1,6 @@
-// Package gitobj owns object writes and reads through go-git's filesystem ODB
-// storage. Repository discovery belongs to the caller, which uses real git
+// Package gitobj owns object writes and decoding through go-git, with targeted
+// native Git streams for packed reads. Repository discovery belongs to the caller,
+// which uses real git
 // rev-parse. This bypasses go-git's repository open, whose extension allowlist
 // rejects extensions.worktreeConfig repositories. Ref writes, prefix-scoped
 // ref enumeration, fetch/push, and config live outside this package.
@@ -23,6 +24,7 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -65,7 +67,7 @@ type Signature struct {
 	When  time.Time
 }
 
-// Repo is a read/object-write handle on a git repository, backed by go-git.
+// Repo reads and writes Git objects with operation-owned native packed streams.
 // It is safe for concurrent use.
 type Repo struct {
 	// mu guards storage and every memo below it, shallow and graftAt included.
@@ -107,12 +109,8 @@ func Open(gitDir, commonDir string) (*Repo, error) {
 	if err := verifyLayout(commonDir); err != nil {
 		return nil, err
 	}
-	index, err := newPackIndex(dotgit.New(fs), commonDir)
-	if err != nil {
-		return nil, err
-	}
 	r := &Repo{
-		storage:  &objectStorage{Storage: storage, index: index, objects: objects},
+		storage:  &objectStorage{Storage: storage, dir: dotgit.New(fs), backend: gitcmd.Backend(commonDir, commonDir), objects: objects},
 		fs:       fs,
 		reaches:  make(map[plumbing.Hash]*reach, reachCap),
 		subtrees: make(map[plumbing.Hash]*treeIndex),

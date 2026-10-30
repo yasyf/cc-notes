@@ -1,9 +1,7 @@
 package gitobj
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"io"
 	"os"
@@ -13,56 +11,27 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/objfile"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
+
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 )
 
 type objectStorage struct {
 	*filesystem.Storage
-	index   *packIndex
+	dir     *dotgit.DotGit
+	backend gitcmd.Git
 	objects cache.Object
 	scope   *objectReadScope
 }
 
-func (s *objectStorage) Reindex() {
-	s.index.ready = false
-}
+func (s *objectStorage) Reindex() { s.scope.refresh = true }
 
-func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Hash) (_ plumbing.EncodedObject, resultErr error) {
-	defer func() {
-		if resultErr != nil && !errors.Is(resultErr, plumbing.ErrObjectNotFound) {
-			s.index.ready = false
-		}
-	}()
+func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Hash) (plumbing.EncodedObject, error) {
 	if err := s.scope.ctx.Err(); err != nil {
 		return nil, err
 	}
-	first, second := s.looseObject, s.packedObject
-	if s.index.ready {
-		first, second = second, first
-	}
-	obj, err := first(hash)
+	obj, err := s.looseObject(hash)
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
-		obj, err = second(hash)
-	}
-	if errors.Is(err, plumbing.ErrObjectNotFound) {
-		if !s.scope.alternatesLoaded {
-			s.scope.alternatesLoaded = true
-			alternates, alternateErr := s.index.dir.Alternates()
-			if alternateErr == nil {
-				for _, alternate := range alternates {
-					index, indexErr := newPackIndex(dotgit.New(gitDirFS{alternate.Fs()}), alternate.Fs().Root())
-					if indexErr != nil {
-						continue
-					}
-					s.scope.alternates = append(s.scope.alternates, &objectStorage{index: index, objects: s.objects, scope: &objectReadScope{ctx: s.scope.ctx}})
-				}
-			}
-		}
-		for _, storage := range s.scope.alternates {
-			alternateObject, alternateErr := storage.alternateObject(typ, hash)
-			if alternateErr == nil {
-				return alternateObject, nil
-			}
-		}
+		obj, err = s.packedObject(hash)
 	}
 	if contextErr := s.scope.ctx.Err(); contextErr != nil {
 		return nil, contextErr
@@ -76,28 +45,8 @@ func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Has
 	return obj, nil
 }
 
-func (s *objectStorage) alternateObject(typ plumbing.ObjectType, hash plumbing.Hash) (plumbing.EncodedObject, error) {
-	obj, err := s.EncodedObject(typ, hash)
-	if !staleIndex(err) || s.scope.tx == nil {
-		return obj, err
-	}
-	identities, generationErr := s.index.identities(s.scope.ctx)
-	if generationErr != nil {
-		return nil, generationErr
-	}
-	var generation []byte
-	if generationErr := s.scope.tx.QueryRowContext(s.scope.ctx, "SELECT value FROM metadata WHERE key = 'generation'").Scan(&generation); generationErr != nil {
-		return nil, generationErr
-	}
-	if bytes.Equal(generation, packGeneration(identities)) {
-		return obj, err
-	}
-	s.Reindex()
-	return s.EncodedObject(typ, hash)
-}
-
 func (s *objectStorage) looseObject(hash plumbing.Hash) (obj plumbing.EncodedObject, resultErr error) {
-	file, err := s.index.dir.Object(hash)
+	file, err := s.dir.Object(hash)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, plumbing.ErrObjectNotFound
 	}
@@ -133,53 +82,72 @@ func (s *objectStorage) looseObject(hash plumbing.Hash) (obj plumbing.EncodedObj
 }
 
 func (s *objectStorage) packedObject(hash plumbing.Hash) (plumbing.EncodedObject, error) {
-	if !s.index.ready && s.scope.tx != nil {
-		if err := s.scope.closeIndex(); err != nil {
+	if s.scope.refresh {
+		if err := s.scope.closeBatches(); err != nil {
 			return nil, err
 		}
+		s.scope.refresh = false
 	}
-	if err := s.index.prepare(s.scope.ctx); err != nil {
-		return nil, err
-	}
-	if s.scope.tx == nil {
-		db, err := s.index.open(s.scope.ctx, true)
-		if err != nil {
-			return nil, err
-		}
-		s.scope.db = db
-		tx, err := db.BeginTx(s.scope.ctx, &sql.TxOptions{ReadOnly: true})
-		if err != nil {
-			return nil, err
-		}
-		s.scope.tx = tx
-		var generation []byte
-		if err := tx.QueryRowContext(s.scope.ctx, "SELECT value FROM metadata WHERE key = 'generation'").Scan(&generation); err != nil {
-			return nil, err
-		}
-		if len(generation) != 32 {
-			return nil, errors.New("object index generation is incomplete")
-		}
-	}
-	pack, index, err := locateIndexedPack(s.scope.ctx, s.scope.tx, hash)
+	batch, err := s.scope.batch(s.backend)
 	if err != nil {
 		return nil, err
 	}
-	reader, err := s.scope.pack(s, pack, index)
+	info, err := batch.Info(hash)
 	if err != nil {
 		return nil, err
 	}
-	return reader.Get(hash)
+	if cached, ok := s.objects.Get(hash); ok && cached.Type() == info.Type && cached.Size() == info.Size {
+		return cached, nil
+	}
+	if info.Size > 1<<16 {
+		return &nativeObject{info: info, scope: s.scope, backend: s.backend}, nil
+	}
+	reader, err := batch.Contents(info)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = reader.Close() }()
+	memory := &plumbing.MemoryObject{}
+	memory.SetType(info.Type)
+	memory.SetSize(info.Size)
+	writer, err := memory.Writer()
+	if err != nil {
+		return nil, err
+	}
+	_, readErr := io.Copy(writer, reader)
+	if err := errors.Join(readErr, writer.Close()); err != nil {
+		return nil, err
+	}
+	s.objects.Put(memory)
+	return memory, nil
 }
 
-func (r *Repo) beginRead(ctx context.Context) {
-	r.storage.scope = &objectReadScope{ctx: ctx}
+type nativeObject struct {
+	info    gitcmd.ObjectInfo
+	scope   *objectReadScope
+	backend gitcmd.Git
 }
 
+func (o *nativeObject) Hash() plumbing.Hash         { return o.info.Hash }
+func (o *nativeObject) Type() plumbing.ObjectType   { return o.info.Type }
+func (o *nativeObject) Size() int64                 { return o.info.Size }
+func (o *nativeObject) SetType(plumbing.ObjectType) {}
+func (o *nativeObject) SetSize(int64)               {}
+func (o *nativeObject) Writer() (io.WriteCloser, error) {
+	return nil, errors.New("native object is read-only")
+}
+
+func (o *nativeObject) Reader() (io.ReadCloser, error) {
+	batch, err := o.scope.batch(o.backend)
+	if err != nil {
+		return nil, err
+	}
+	return batch.Contents(o.info)
+}
+
+func (r *Repo) beginRead(ctx context.Context) { r.storage.scope = &objectReadScope{ctx: ctx} }
 func (r *Repo) endRead(resultErr *error) {
-	closeErr := r.storage.scope.close()
-	*resultErr = errors.Join(*resultErr, closeErr)
-	if closeErr != nil {
-		r.storage.index.ready = false
-	}
+	*resultErr = errors.Join(*resultErr, r.storage.scope.closeBatches())
+	r.storage.scope.closed = true
 	r.storage.scope = nil
 }
