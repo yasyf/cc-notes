@@ -19,7 +19,7 @@ func TestTaskRelationsPreserveEmptyIDsAndLifecycle(t *testing.T) {
 	c, _ := newWBClient(t)
 	target := statusCreate(t, c, model.CreateTask{Nonce: model.NewNonce(), Title: "target", Type: model.TypeTask}).EntityID()
 	root := statusCreate(t, c, model.CreateTask{Nonce: model.NewNonce(), Title: "other root", Type: model.TypeTask}).EntityID()
-	var children []model.EntityID
+	children := make([]model.EntityID, 0, 2)
 	for _, status := range []model.Status{model.StatusDone, model.StatusCancelled} {
 		child := statusCreate(t, c,
 			model.CreateTask{Nonce: model.NewNonce(), Title: string(status), Type: model.TypeTask, Parent: target},
@@ -55,7 +55,8 @@ func TestTaskRelationsPreserveEmptyIDsAndLifecycle(t *testing.T) {
 
 func taskRelationRunbookAt(t *testing.T, c *Client, at int64, runs ...model.StartRun) model.Runbook {
 	t.Helper()
-	ops := []model.Op{model.CreateRunbook{Nonce: model.NewNonce(), Title: "relation fixture"}}
+	ops := make([]model.Op, 0, 1+len(runs))
+	ops = append(ops, model.CreateRunbook{Nonce: model.NewNonce(), Title: "relation fixture"})
 	for _, run := range runs {
 		ops = append(ops, run)
 	}
