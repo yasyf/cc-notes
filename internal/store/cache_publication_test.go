@@ -96,9 +96,10 @@ func TestLRUDirPublicationBatchCapacityAndRepeatedKeys(t *testing.T) {
 			l := newProcessCache(t, capacity)
 			l.writeBatch([]cachePublication{{"a", []byte("first")}, {"b", []byte("b")}, {"a", []byte("last")}, {"c", []byte("c")}, {"d", []byte("d")}})
 			var want []string
-			if capacity == 1 {
+			switch capacity {
+			case 1:
 				want = []string{"d"}
-			} else if capacity == 3 {
+			case 3:
 				want = []string{"a", "c", "d"}
 			}
 			if got := l.names(); !slices.Equal(got, want) {
@@ -178,7 +179,7 @@ func reopenColdPublicationStore(t *testing.T, s *Store) *Store {
 
 func TestLRUDirFoldAllPublishesTailAfterWait(t *testing.T) {
 	s := initStore(t)
-	var heads []model.SHA
+	heads := make([]model.SHA, 0, 3)
 	for i := range 3 {
 		note := create(t, s, noteOps(fmt.Sprintf("tail %d", i))).(model.Note)
 		heads = append(heads, note.Head)
@@ -197,7 +198,7 @@ func TestLRUDirFoldAllPublishesTailAfterWait(t *testing.T) {
 
 func TestLRUDirQueryRefreshPublishesUnselectedTail(t *testing.T) {
 	s := initStore(t)
-	var heads []model.SHA
+	heads := make([]model.SHA, 0, 3)
 	for i := range 3 {
 		label := "other"
 		if i == 0 {
