@@ -123,8 +123,8 @@ func (l *lruDir) readEntries(ctx context.Context, db *sql.DB, names []string, en
 	for i, name := range names {
 		args[i] = name
 	}
-	query := "SELECT name, slot, token, size FROM cache_entries WHERE name IN (" + strings.TrimSuffix(strings.Repeat("?,", len(names)), ",") + ")"
-	rows, err := db.QueryContext(ctx, query, args...)
+	query := "SELECT name, slot, token, size FROM cache_entries WHERE name IN (" + strings.TrimSuffix(strings.Repeat("?,", len(names)), ",") + ")" //nolint:gosec // G202: SQL combines only fixed text and a placeholder count.
+	rows, err := db.QueryContext(ctx, query, args...) //nolint:gosec // G701: Every key is passed as a bound argument.
 	if err != nil {
 		return err
 	}
