@@ -185,13 +185,26 @@ func (c *Client) CreateTask(ctx context.Context, spec TaskSpec) (TaskCreated, er
 	return TaskCreated{Task: snapshot.(model.Task), Degraded: degraded}, nil
 }
 
-// Tasks folds every task, filters it through f, and returns the survivors in
+// Tasks folds the task set selected by f and returns the survivors in
 // task list order: priority ascending, created ascending, id ascending.
 func (c *Client) Tasks(ctx context.Context, f TaskFilter) ([]model.Task, error) {
+	if len(f.Labels) > 0 {
+		tasks, hit, err := c.s.IndexedTasks(ctx, f.Labels)
+		if err != nil {
+			return nil, err
+		}
+		if hit {
+			return c.filteredTasks(ctx, tasks, f)
+		}
+	}
 	tasks, err := c.s.ListTasks(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return c.filteredTasks(ctx, tasks, f)
+}
+
+func (c *Client) filteredTasks(ctx context.Context, tasks []model.Task, f TaskFilter) ([]model.Task, error) {
 	inScope, err := c.branchScope(ctx, f.Scope, f.Branch)
 	if err != nil {
 		return nil, err

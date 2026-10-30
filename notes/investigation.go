@@ -121,10 +121,23 @@ func (c *Client) CreateInvestigation(ctx context.Context, spec InvestigationSpec
 // live records in UpdatedAt-desc, id-asc order — tombstoned and superseded ones
 // stay hidden.
 func (c *Client) Investigations(ctx context.Context, f InvestigationFilter) ([]model.Investigation, error) {
+	if len(f.Labels) > 0 {
+		invs, hit, err := c.s.IndexedInvestigations(ctx, f.Labels)
+		if err != nil {
+			return nil, err
+		}
+		if hit {
+			return filteredInvestigations(invs, f), nil
+		}
+	}
 	invs, err := c.s.ListInvestigations(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return filteredInvestigations(invs, f), nil
+}
+
+func filteredInvestigations(invs []model.Investigation, f InvestigationFilter) []model.Investigation {
 	invs = slices.DeleteFunc(invs, func(inv model.Investigation) bool {
 		if len(f.Statuses) > 0 && !slices.Contains(f.Statuses, inv.Status) {
 			return true
@@ -132,7 +145,7 @@ func (c *Client) Investigations(ctx context.Context, f InvestigationFilter) ([]m
 		return !hasAll(inv.Tags, f.Labels) || !matchesAnchorFilter(inv.Anchors, f.Anchors)
 	})
 	sortDocuments(invs)
-	return invs, nil
+	return invs
 }
 
 // EditInvestigation applies the mask to the investigation. An all-empty mask is

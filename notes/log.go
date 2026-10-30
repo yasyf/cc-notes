@@ -171,15 +171,28 @@ func (c *Client) RemoveLog(ctx context.Context, id model.EntityID) (model.Log, e
 // Logs folds the log set the filter selects and returns it in UpdatedAt-desc,
 // id-asc order.
 func (c *Client) Logs(ctx context.Context, f LogFilter) ([]model.Log, error) {
+	if len(f.Labels) > 0 {
+		logs, hit, err := c.s.IndexedLogs(ctx, f.Labels, f.IncludeDeleted)
+		if err != nil {
+			return nil, err
+		}
+		if hit {
+			return filteredLogs(logs, f), nil
+		}
+	}
 	logs, err := c.s.ListLogs(ctx, f.IncludeDeleted)
 	if err != nil {
 		return nil, err
 	}
+	return filteredLogs(logs, f), nil
+}
+
+func filteredLogs(logs []model.Log, f LogFilter) []model.Log {
 	logs = slices.DeleteFunc(logs, func(l model.Log) bool {
 		return !hasAll(l.Tags, f.Labels) || !matchesAnchorFilter(l.Anchors, f.Anchors)
 	})
 	sortDocuments(logs)
-	return logs, nil
+	return logs
 }
 
 // SearchLogs ranks the live log set against query, filtered by the SearchFilter,
