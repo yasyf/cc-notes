@@ -311,3 +311,40 @@ func TestObjectBatchReleaseOverlapsCallerCancellationAndReapsBothChildren(t *tes
 		}
 	}
 }
+
+func TestObjectBatchPromisorMissRemainsLocalAndReusable(t *testing.T) {
+	source := gittest.InitRepo(t)
+	gittest.Git(t, source, "commit", "--allow-empty", "-qm", "one")
+	gittest.Git(t, source, "config", "uploadpack.allowFilter", "true")
+	thin := t.TempDir()
+	gittest.Git(t, filepath.Dir(thin), "clone", "-q", "--no-local", "--filter=blob:none", "file://"+source, thin)
+	head := plumbing.NewHash(gittest.Git(t, thin, "rev-parse", "HEAD"))
+	gittest.Git(t, source, "commit", "--allow-empty", "-qm", "not fetched")
+	missing := plumbing.NewHash(gittest.Git(t, source, "rev-parse", "HEAD"))
+	if gittest.Git(t, thin, "config", "--get", "remote.origin.promisor") != "true" {
+		t.Fatal("fixture is not promisor-backed")
+	}
+	trace := filepath.Join(t.TempDir(), "git-trace")
+	t.Setenv("GIT_TRACE", trace)
+	batch, err := Backend(filepath.Join(thin, ".git"), thin).ObjectBatch(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = batch.Close() })
+	if _, err := batch.Info(missing); !errors.Is(err, plumbing.ErrObjectNotFound) {
+		t.Fatalf("promisor miss=%v, want local missing", err)
+	}
+	if _, err := batch.Info(head); err != nil {
+		t.Fatalf("present object after miss=%v", err)
+	}
+	if err := batch.Close(); err != nil {
+		t.Fatalf("local missing emitted diagnostic or leaked child: %v", err)
+	}
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), " fetch ") {
+		t.Fatalf("native reader attempted promisor fetch: %s", data)
+	}
+}
