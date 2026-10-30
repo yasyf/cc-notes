@@ -215,6 +215,7 @@ func TestRelevantCacheEntryHitGuards(t *testing.T) {
 		{"racy", func(e *relevantCacheEntry) { e.Racy = true }, false},
 		{"revalidate", func(e *relevantCacheEntry) { e.Revalidate = true }, false},
 		{"past the deadline", func(e *relevantCacheEntry) { e.Deadline = now.Add(-time.Second).UnixNano() }, false},
+		{"other executable", func(e *relevantCacheEntry) { e.Exe = filepath.Join(t.TempDir(), "cc-notes") }, false},
 		{"other git", func(e *relevantCacheEntry) { e.Git = filepath.Join(t.TempDir(), "git") }, false},
 		{"other environment", func(e *relevantCacheEntry) { e.Env = "0" }, false},
 		{"moved stamp", func(e *relevantCacheEntry) { e.Stamps = []fileStamp{{Path: exe, Missing: true}} }, false},
@@ -223,7 +224,7 @@ func TestRelevantCacheEntryHitGuards(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := settled
 			tc.edit(&entry)
-			if got := entry.hit(now); got != tc.hit {
+			if got := entry.hit(now, exe); got != tc.hit {
 				t.Fatalf("hit = %t, want %t", got, tc.hit)
 			}
 		})
@@ -324,7 +325,7 @@ func TestRelevantCachedPersistsASettledCaptureInAQuietRepository(t *testing.T) {
 		}
 	}
 
-	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
 	if err != nil {
 		t.Fatalf("relevantInputs: %v", err)
 	}
@@ -383,7 +384,7 @@ func TestRelevantCachedGuardsTheRealDirectoryBehindALinkedInclude(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
 	if err != nil {
 		t.Fatalf("relevantInputs: %v", err)
 	}
@@ -433,7 +434,7 @@ func TestRelevantCachedGuardsTheDirectoryHoldingATraversedLink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
 	if err != nil {
 		t.Fatalf("relevantInputs: %v", err)
 	}
@@ -492,7 +493,7 @@ func TestRelevantInputsDistrustAStampTheWalkContradicts(t *testing.T) {
 			if tc.present {
 				set[true]()
 			}
-			in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+			in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
 			if err != nil {
 				t.Fatalf("relevantInputs: %v", err)
 			}
@@ -542,7 +543,7 @@ func TestRelevantInputsDistrustAGuardNotObservedExisting(t *testing.T) {
 		gittest.Git(t, dir, "pack-refs", "--all")
 		gittest.Git(t, dir, "update-ref", "refs/remotes/upstream/other", string(root))
 		gittest.Git(t, dir, "update-ref", keep, string(root))
-		in, err := c.relevantInputs(t.Context(), "svc/handler.go", RelevantFilter{}, "json", relevantDeps{})
+		in, err := c.relevantInputs(t.Context(), "svc/handler.go", RelevantFilter{}, "json", relevantDeps{}, relevantTestExecutable(t))
 		if err != nil {
 			t.Fatalf("relevantInputs: %v", err)
 		}
@@ -620,7 +621,7 @@ func TestRelevantInputsRefuseACaptureWhoseRefDirectoryWasSwappedAway(t *testing.
 	const tip = "refs/remotes/upstream/tip"
 	gittest.Git(t, dir, "update-ref", "refs/remotes/upstream/keep", string(root))
 	gittest.Git(t, dir, "symbolic-ref", "ORIG_HEAD", tip)
-	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{Base: "main-worktree/ORIG_HEAD"}, "json", relevantDeps{})
+	in, err := c.relevantInputs(ctx, "svc/handler.go", RelevantFilter{Base: "main-worktree/ORIG_HEAD"}, "json", relevantDeps{}, relevantTestExecutable(t))
 	if err != nil {
 		t.Fatalf("relevantInputs: %v", err)
 	}

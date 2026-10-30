@@ -202,7 +202,11 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 	if err != nil {
 		return nil, err
 	}
-	in, err := c.relevantInputs(ctx, p, filter, "", relevantDeps{})
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locate executable: %w", err)
+	}
+	in, err := c.relevantInputs(ctx, p, filter, "", relevantDeps{}, exe)
 	if err != nil {
 		return nil, err
 	}

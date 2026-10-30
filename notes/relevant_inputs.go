@@ -91,7 +91,7 @@ type relevantInputs struct {
 	values     map[string]model.SHA
 }
 
-func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFilter, variant string, deps relevantDeps) (*relevantInputs, error) {
+func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFilter, variant string, deps relevantDeps, exe string) (*relevantInputs, error) {
 	if err := c.s.CheckRecords(); err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (c *Client) relevantInputs(ctx context.Context, p string, filter RelevantFi
 	}
 	in.findRoots()
 	in.watchRecords()
-	if err := in.watchExecutables(); err != nil {
+	if err := in.watchExecutables(exe); err != nil {
 		return nil, err
 	}
 	in.env = relevantEnv()
@@ -425,11 +425,7 @@ func (in *relevantInputs) watchRecords() {
 	in.keep(fileStamp{Path: b.CommonDir, Ident: true, Inode: b.Inode, Mode: os.ModeDir})
 }
 
-func (in *relevantInputs) watchExecutables() error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("locate executable: %w", err)
-	}
+func (in *relevantInputs) watchExecutables(exe string) error {
 	exeStamp := in.watch(exe)
 	revision := ""
 	if info, ok := debug.ReadBuildInfo(); ok {
@@ -1096,7 +1092,7 @@ func (in *relevantInputs) auditWorktree(ctx context.Context, anchors []string) e
 
 func (in *relevantInputs) key() string {
 	var digest strings.Builder
-	digest.WriteString(in.client.relevantName(in.path, in.filter, in.variant))
+	digest.WriteString(in.client.relevantName(in.path, in.filter, in.variant, in.exe))
 	for _, line := range in.lines {
 		digest.WriteByte('\n')
 		digest.WriteString(line)

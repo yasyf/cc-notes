@@ -76,7 +76,11 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if err != nil {
 		return nil, err
 	}
-	name := c.relevantName(p, filter, variant)
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locate executable: %w", err)
+	}
+	name := c.relevantName(p, filter, variant, exe)
 	now := time.Now()
 	var cached relevantCacheEntry
 	var cachedOK bool
@@ -86,7 +90,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 			// Lock-and-rename publishes (git, libgit2, gix, JGit, cc-notes) move a
 			// stamp; a foreign in-place rewrite of an existing loose ref under a
 			// directory stamp (go-git setRef) is not covered.
-			if cached, hit, cachedOK = readRelevantCacheEntry(f, now); hit {
+			if cached, hit, cachedOK = readRelevantCacheEntry(f, now, exe); hit {
 				if _, bound := c.s.Binding(); bound {
 					if err := c.s.CheckRecords(); err != nil {
 						return nil, err
@@ -100,7 +104,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if cachedOK {
 		deps = cached.Deps
 	}
-	in, err := c.relevantInputs(ctx, p, filter, variant, deps)
+	in, err := c.relevantInputs(ctx, p, filter, variant, deps, exe)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +176,7 @@ func (e relevantCacheEntry) encode() ([]byte, error) {
 	return slices.Concat(header, []byte{'\n'}, e.Output, deps), nil
 }
 
-func readRelevantCacheEntry(f *os.File, now time.Time) (e relevantCacheEntry, hit, ok bool) {
+func readRelevantCacheEntry(f *os.File, now time.Time, exe string) (e relevantCacheEntry, hit, ok bool) {
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
@@ -183,7 +187,7 @@ func readRelevantCacheEntry(f *os.File, now time.Time) (e relevantCacheEntry, hi
 	if !ok || !h.readOutput(r, info.Size()-int64(n)) {
 		return relevantCacheEntry{}, false, false
 	}
-	if h.hit(now) {
+	if h.hit(now, exe) {
 		return h.relevantCacheEntry, true, true
 	}
 	if !h.readDeps(r) {
@@ -282,20 +286,20 @@ func (f fileStamp) racy(start time.Time) bool {
 	return !f.Missing && (time.Unix(0, f.ModTime).After(edge) || time.Unix(0, f.Ctime).After(edge))
 }
 
-func (c *Client) relevantName(p string, filter RelevantFilter, variant string) string {
+func (c *Client) relevantName(p string, filter RelevantFilter, variant, exe string) string {
 	binding := ""
 	if b, bound := c.s.Binding(); bound {
 		binding = b.String()
 	}
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s\n%s\n%s\n%s\n%+v\n%s", c.s.GitDir(), c.s.Git.Dir, binding, p, filter, variant))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s\n%s\n%s\n%s\n%+v\n%s\n%d %s", c.s.GitDir(), c.s.Git.Dir, binding, p, filter, variant, len(exe), exe))
 	return hex.EncodeToString(sum[:])
 }
 
-func (e relevantCacheEntry) hit(now time.Time) bool {
+func (e relevantCacheEntry) hit(now time.Time, exe string) bool {
 	if e.Racy || e.Revalidate || !e.clockValid(now) || e.Env != relevantEnv() {
 		return false
 	}
-	if exe, err := os.Executable(); err != nil || exe != e.Exe {
+	if exe != e.Exe {
 		return false
 	}
 	if git, err := exec.LookPath("git"); err != nil || git != e.Git {
