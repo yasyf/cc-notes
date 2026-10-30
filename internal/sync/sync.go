@@ -267,7 +267,7 @@ func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
-	tracking, err := s.RecordsGit.Refs(ctx, trackingPrefix)
+	tracking, err := recordRefs(ctx, s, trackingPrefix)
 	if err != nil {
 		return err
 	}
@@ -289,13 +289,27 @@ func mirrors(listed, tracking map[string]model.SHA, trackingPrefix string) bool 
 	return true
 }
 
+func recordRefs(ctx context.Context, s *store.Store, prefix string) (map[string]model.SHA, error) {
+	if err := s.CheckRecords(); err != nil {
+		return nil, err
+	}
+	tips, err := s.Repo.ListPrefix(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.CheckRecords(); err != nil {
+		return nil, err
+	}
+	return tips, nil
+}
+
 // trackingView maps the tracking refs under trackingPrefix back to their
 // canonical refs/cc-notes/ names. A tracking ref that does not parse as a
 // cc-notes ref is an error: it was not written by cc-notes. Sync reads the
 // per-remote view a round fetched; foldTracking reads a remote's whole view to
 // fold a plain fetch's tracking refs locally.
 func trackingView(ctx context.Context, s *store.Store, trackingPrefix string) (map[string]model.SHA, error) {
-	tracking, err := s.RecordsGit.Refs(ctx, trackingPrefix)
+	tracking, err := recordRefs(ctx, s, trackingPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +401,7 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 // remote tip the local chain does not contain is always in scope, however
 // quiet the tracking delta: correctness over speed.
 func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA) (map[string]model.SHA, error) {
-	local, err := e.store.RecordsGit.Refs(ctx, namespace)
+	local, err := recordRefs(ctx, e.store, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +436,7 @@ func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA
 // clone joins the set before anything is pushed, so an entity written by a
 // cc-notes predating the policy never leaves on its first sync.
 func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) ([]string, map[string]bool, error) {
-	local, err := e.store.RecordsGit.Refs(ctx, namespace)
+	local, err := recordRefs(ctx, e.store, namespace)
 	if err != nil {
 		return nil, nil, err
 	}
