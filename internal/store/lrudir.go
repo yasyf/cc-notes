@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -61,7 +62,15 @@ type lruDir struct {
 }
 
 func (l *lruDir) read(name string) ([]byte, bool) {
-	reader, ok := l.open(name)
+	entry, ok := l.entry(name)
+	if !ok {
+		return nil, false
+	}
+	return l.readEntry(entry)
+}
+
+func (l *lruDir) readEntry(entry cacheEntry) ([]byte, bool) {
+	reader, ok := l.openEntry(entry)
 	if !ok {
 		return nil, false
 	}
@@ -82,11 +91,58 @@ func (l *lruDir) entry(name string) (cacheEntry, bool) {
 	if db.QueryRow("SELECT slot, token, size FROM cache_entries WHERE name = ?", name).Scan(&entry.slot, &entry.token, &entry.size) != nil {
 		return cacheEntry{}, false
 	}
+	return entry, entry.valid(name)
+}
+
+func (entry cacheEntry) valid(name string) bool {
 	key := sha256.Sum256([]byte(name))
-	if entry.size < 0 || len(entry.token) != cacheTokenSize || !bytes.Equal(entry.token[:32], key[:]) {
-		return cacheEntry{}, false
+	return entry.size >= 0 && len(entry.token) == cacheTokenSize && bytes.Equal(entry.token[:32], key[:])
+}
+
+func (l *lruDir) entries(ctx context.Context, names []string) map[string]cacheEntry {
+	if len(names) == 0 || l.capacity <= 0 {
+		return nil
 	}
-	return entry, true
+	db, err := l.database(cacheLookup)
+	if err != nil {
+		return nil
+	}
+	entries := make(map[string]cacheEntry, min(len(names), l.capacity))
+	for len(names) > 0 && len(entries) < l.capacity {
+		n := min(len(names), 128)
+		if l.readEntries(ctx, db, names[:n], entries) != nil {
+			return nil
+		}
+		names = names[n:]
+	}
+	return entries
+}
+
+func (l *lruDir) readEntries(ctx context.Context, db *sql.DB, names []string, entries map[string]cacheEntry) error {
+	args := make([]any, len(names))
+	for i, name := range names {
+		args[i] = name
+	}
+	query := "SELECT name, slot, token, size FROM cache_entries WHERE name IN (" + strings.TrimSuffix(strings.Repeat("?,", len(names)), ",") + ")" //nolint:gosec // G202: SQL combines only fixed text and a placeholder count.
+	rows, err := db.QueryContext(ctx, query, args...) //nolint:gosec // G701: Every key is passed as a bound argument.
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		var entry cacheEntry
+		if err := rows.Scan(&name, &entry.slot, &entry.token, &entry.size); err != nil {
+			return err
+		}
+		if entry.valid(name) {
+			entries[name] = entry
+			if len(entries) == l.capacity {
+				return nil
+			}
+		}
+	}
+	return rows.Err()
 }
 
 func (l *lruDir) open(name string) (*CacheReader, bool) {
@@ -94,6 +150,10 @@ func (l *lruDir) open(name string) (*CacheReader, bool) {
 	if !ok {
 		return nil, false
 	}
+	return l.openEntry(entry)
+}
+
+func (l *lruDir) openEntry(entry cacheEntry) (*CacheReader, bool) {
 	file, err := os.Open(l.slotPath(entry.slot))
 	if err != nil {
 		return nil, false
@@ -233,7 +293,11 @@ func (l *lruDir) close() error {
 }
 
 func (l *lruDir) write(name string, data []byte) {
-	if l.capacity <= 0 {
+	l.writeBatch([]cachePublication{{name: name, data: data}})
+}
+
+func (l *lruDir) writeBatch(values []cachePublication) {
+	if l.capacity <= 0 || len(values) == 0 {
 		return
 	}
 	l.writer.Lock()
@@ -263,22 +327,24 @@ func (l *lruDir) write(name string, data []byte) {
 			return
 		}
 	}
-	slot, err := l.allocate(tx, name)
-	if err != nil {
-		return
-	}
-	key := sha256.Sum256([]byte(name))
-	var token [cacheTokenSize]byte
-	copy(token[:32], key[:])
-	if _, err := rand.Read(token[32:]); err != nil {
-		return
-	}
-	if !l.publish(slot, token[:], data) {
-		return
-	}
-	rank++
-	if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank, size=excluded.size", name, slot, token[:], rank, len(data)); err != nil {
-		return
+	for _, value := range values {
+		slot, err := l.allocate(tx, value.name)
+		if err != nil {
+			return
+		}
+		key := sha256.Sum256([]byte(value.name))
+		var token [cacheTokenSize]byte
+		copy(token[:32], key[:])
+		if _, err := rand.Read(token[32:]); err != nil {
+			return
+		}
+		if !l.publish(slot, token[:], value.data) {
+			return
+		}
+		rank++
+		if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank, size=excluded.size", value.name, slot, token[:], rank, len(value.data)); err != nil {
+			return
+		}
 	}
 	if _, err := tx.Exec("UPDATE cache_meta SET rank = ? WHERE id = 1", rank); err != nil {
 		return
@@ -356,8 +422,15 @@ func (l *lruDir) touch(name string) {
 	if db.QueryRow("SELECT 1 FROM cache_entries WHERE name = ?", name).Scan(&present) != nil {
 		return
 	}
+	l.rememberHit(name)
+}
+
+func (l *lruDir) rememberHit(name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if !l.active {
+		return
+	}
 	l.rank++
 	hit := cacheHit{name, l.rank}
 	if element, ok := l.hits[name]; ok {

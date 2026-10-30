@@ -63,7 +63,9 @@ jobs:
           sha256sum "$ccn_perf_cli" "$CCN_LEGACY_BASELINE_CLI"
           echo "CCN_PRODUCTIONLIKE_CLI=$ccn_perf_cli" >> "$GITHUB_ENV"
       - name: Composed task payload, metadata and legacy full-list comparison
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)$' ./internal/cli
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)|TestTaskIOBytesTraceAccounting)$' ./internal/cli
+      - name: Query mutation work accounting
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskQueryIndexConsecutiveWork|TestQueryMutationWorkContextCallsites)$' ./internal/store
 
   attachment-ref-passes:
     runs-on: ubuntu-latest

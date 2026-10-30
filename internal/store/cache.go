@@ -75,15 +75,23 @@ func (c *foldCache) getTop(tip model.SHA) (model.Snapshot, model.Lamport, model.
 	return snap, top, floor, true
 }
 
-func (c *foldCache) put(tip model.SHA, snap model.Snapshot, top, floor model.Lamport) {
-	if snap.Meta().SkippedOps > 0 {
-		return
-	}
-	data, ok := encodeFoldEntry(snap, top, floor)
+func (c *foldCache) getEntry(tip model.SHA, entry cacheEntry) (model.Snapshot, bool) {
+	data, ok := c.readEntry(entry)
 	if !ok {
-		return
+		return nil, false
 	}
-	c.write(string(tip), data)
+	snap, _, _, ok := decodeFoldEntry(data)
+	if !ok {
+		return nil, false
+	}
+	c.rememberHit(string(tip))
+	return snap, true
+}
+
+func (c *foldCache) put(tip model.SHA, snap model.Snapshot, top, floor model.Lamport) {
+	if value := foldPublication(tip, snap, top, floor); value != nil {
+		c.write(value.name, value.data)
+	}
 }
 
 func (c *foldCache) putChain(tip model.SHA, snap model.Snapshot, chain []model.PackCommit) {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/homeguard"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -45,7 +46,9 @@ func taskDedupeFreshCLIWork(t *testing.T) []map[string]int {
 	if binary == "" {
 		t.Fatal("production-like candidate binary is required")
 	}
-	info, err := exec.Command("go", "version", "-m", cli.TestBinary).CombinedOutput()
+	cmd := exec.Command("go", "version", "-m", cli.TestBinary)
+	cmd.Env = append(os.Environ(), "HOME="+homeguard.RealHome())
+	info, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("functional test binary build info: %v; %s", err, info)
 	}
@@ -119,6 +122,9 @@ func taskDedupeFreshCLIWorkFor(t *testing.T, binary string) []map[string]int {
 				}
 				consecutiveCounts = append(consecutiveCounts, consecutive)
 				t.Logf("unrelated=%d consecutive_without_reprime=%v", count, consecutive)
+				for i := range 3 {
+					tracedTaskCreateBytes(t, dir, binary, count, i+1)
+				}
 			}
 		})
 	}
@@ -161,6 +167,7 @@ func tracedTaskCLI(t *testing.T, dir, binary string, args ...string) (string, ma
 		t.Fatalf("fresh CLI %v: %v; stdout %q; stderr %q", args, err, stdout.String(), stderr.String())
 	}
 	elapsed := time.Since(started)
+	t.Logf("traced_wrapper_cli=%q args=%q user_cpu=%v system_cpu=%v raw_native_rusage=%+v", binary, args, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState.SysUsage())
 	if stderr.Len() != 0 {
 		t.Fatalf("fresh CLI %v stderr: %q", args, stderr.String())
 	}

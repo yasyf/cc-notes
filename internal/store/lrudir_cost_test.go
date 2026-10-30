@@ -37,10 +37,32 @@ func TestLRUDirCostHelper(t *testing.T) {
 		if got := len(l.names()); got != count {
 			t.Fatalf("populated %d, want %d", got, count)
 		}
+	case "populate-batch":
+		cache := newFoldCache(dir, count)
+		l = &cache.lruDir
+		batch := newFoldPublicationBatch(t.Context(), cache)
+		for i := range count {
+			batch.add(&cachePublication{name: fmt.Sprintf("%064d", i), data: []byte("cached payload")})
+		}
+		batch.flush()
+		if got := len(l.names()); got != count {
+			t.Fatalf("batch populated %d, want %d", got, count)
+		}
 	case "write":
 		l.write("new", []byte("new payload"))
 		if data, ok := l.read("new"); !ok || string(data) != "new payload" {
 			t.Fatalf("new payload = %q, %v", data, ok)
+		}
+	case "requested":
+		names := []string{fmt.Sprintf("%064d", 0), fmt.Sprintf("%064d", count/2), fmt.Sprintf("%064d", count-1)}
+		entries := l.entries(t.Context(), names)
+		if len(entries) != len(names) {
+			t.Fatalf("requested %d entries, got %d", len(names), len(entries))
+		}
+		for _, name := range names {
+			if data, ok := l.readEntry(entries[name]); !ok || string(data) != "cached payload" {
+				t.Fatalf("requested payload %s = %q, %v", name, data, ok)
+			}
 		}
 	case "owned", "per-access":
 		for i := range count {
@@ -84,11 +106,29 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	var writes []map[string]int
+	var requests []map[string]int
 	for _, count := range []int{32, 10000} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			dir := t.TempDir()
 			baseline := cacheCostProcess(t, "baseline", dir, count, true)
-			cacheCostProcess(t, "populate", dir, count, true)
+			populated := cacheCostProcess(t, "populate", dir, count, true)
+			batch := cacheCostProcess(t, "populate-batch", t.TempDir(), count, true)
+			if batch["pwrite64"]*2 >= populated["pwrite64"] {
+				t.Errorf("bulk publication did not reduce metadata writes: point=%v batch=%v", populated, batch)
+			}
+			if batch["fsync"]+batch["fdatasync"] > populated["fsync"]+populated["fdatasync"] {
+				t.Errorf("bulk publication added sync calls: point=%v batch=%v", populated, batch)
+			}
+			requested := cacheCostProcess(t, "requested", dir, count, true)
+			requests = append(requests, requested)
+			for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat"} {
+				if requested[name] > 512 {
+					t.Errorf("requested subset %s exceeded bound: %v", name, requested)
+				}
+			}
+			if requested["getdents64"] > baseline["getdents64"] || requested["fsync"]+requested["fdatasync"] != 0 || requested["write"] > 8 || requested["pwrite64"] > 8 {
+				t.Fatalf("requested subset enumerated or wrote cache metadata: %v", requested)
+			}
 			owned := cacheCostProcess(t, "owned", dir, count, true)
 			perAccess := cacheCostProcess(t, "per-access", dir, count, true)
 			if count == 10000 && owned["elapsed_ns"] >= perAccess["elapsed_ns"] {
@@ -118,6 +158,13 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 		for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat", "getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
 			if writes[1][name] > writes[0][name]+64 {
 				t.Errorf("fresh write %s grew with cache population: %d to %d", name, writes[0][name], writes[1][name])
+			}
+		}
+	}
+	if len(requests) == 2 {
+		for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat", "getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
+			if requests[1][name] > requests[0][name]+64 {
+				t.Errorf("requested subset %s grew with cache population: %d to %d", name, requests[0][name], requests[1][name])
 			}
 		}
 	}
