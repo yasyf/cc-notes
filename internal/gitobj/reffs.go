@@ -34,20 +34,21 @@ type gitDirFS struct {
 }
 
 func (fs gitDirFS) ReadDir(path string) ([]os.FileInfo, error) {
+	if underRefs(path) {
+		if _, err := fs.Filesystem.Stat(path); err != nil {
+			return nil, err
+		}
+		entries, err := os.ReadDir(filepath.Join(fs.Root(), path))
+		if err != nil {
+			return nil, err
+		}
+		return referenceFileInfos(entries)
+	}
 	entries, err := fs.Filesystem.ReadDir(path)
 	if err != nil {
 		return entries, err
 	}
-	switch {
-	case underRefs(path):
-		kept := entries[:0]
-		for _, entry := range entries {
-			if !strings.HasSuffix(entry.Name(), ".lock") {
-				kept = append(kept, entry)
-			}
-		}
-		return kept, nil
-	case filepath.Clean(path) == packDir:
+	if filepath.Clean(path) == packDir {
 		for i, entry := range entries {
 			if rest, ok := strings.CutPrefix(entry.Name(), loosePackPrefix); ok {
 				entries[i] = renamedInfo{FileInfo: entry, name: packPrefix + rest}
@@ -55,6 +56,24 @@ func (fs gitDirFS) ReadDir(path string) ([]os.FileInfo, error) {
 		}
 	}
 	return entries, nil
+}
+
+func referenceFileInfos(entries []os.DirEntry) ([]os.FileInfo, error) {
+	infos := make([]os.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".lock") {
+			continue
+		}
+		info, err := entry.Info()
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
 }
 
 func (fs gitDirFS) Open(path string) (billy.File, error) {
