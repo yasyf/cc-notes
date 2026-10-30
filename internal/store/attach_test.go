@@ -414,14 +414,26 @@ func TestReferencedAttachmentsPinnedAndFresh(t *testing.T) {
 		t.Fatalf("pin attachment refs: %v", err)
 	}
 	attach(t, s, ref, "b.bin", oidB, 9)
-	want := []ReferencedObject{{OID: oidA, Size: 5, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "a.bin"}}}}
-	if got := referenced(t, pinned); !reflect.DeepEqual(got, want) {
-		t.Fatalf("pinned referenced = %+v, want %+v", got, want)
+	want := []ReferencedObject{
+		{OID: oidA, Size: 5, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "a.bin"}}},
+		{OID: oidB, Size: 9, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "b.bin"}}},
+	}
+	if got := referenced(t, pinned); !reflect.DeepEqual(got, want[:1]) {
+		t.Fatalf("pinned referenced = %+v, want %+v", got, want[:1])
+	}
+	tip := pinned.pins[ref]
+	filtered := s.Pinned(map[string]model.SHA{
+		ref:                               tip,
+		ref + "/nested":                   tip,
+		refs.Root(model.KindNote):          tip,
+		refs.Root(model.KindTask) + "other": tip,
+	})
+	if got := referenced(t, filtered); !reflect.DeepEqual(got, want[:1]) {
+		t.Fatalf("mixed pinned referenced = %+v, want %+v", got, want[:1])
 	}
 	if got := referenced(t, s.Pinned(map[string]model.SHA{})); len(got) != 0 {
 		t.Fatalf("empty pinned referenced = %+v, want none", got)
 	}
-	want = append(want, ReferencedObject{OID: oidB, Size: 9, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "b.bin"}}})
 	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
 		t.Fatalf("fresh referenced = %+v, want %+v", got, want)
 	}
