@@ -150,14 +150,14 @@ func TestQueryMetadataDeltaRemovalCleansAllPostings(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, walk := range []func(*bolt.Tx, func([]byte) error) error{
-		func(tx *bolt.Tx, visit func([]byte) error) error {
+	for _, walk := range []func(*bolt.Tx, func(queryMetadata) error) error{
+		func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 			return walkQueryMetadataLabel(tx, "binding", model.KindDoc, "removed-label", true, visit)
 		},
-		func(tx *bolt.Tx, visit func([]byte) error) error {
+		func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 			return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, anchor, true, visit)
 		},
-		func(tx *bolt.Tx, visit func([]byte) error) error {
+		func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 			return walkQueryMetadataSuperseders(tx, "binding", model.KindDoc, "removed-target", true, visit)
 		},
 	} {

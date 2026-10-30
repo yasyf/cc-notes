@@ -66,12 +66,11 @@ func indexedMetadataQuery[T any](ctx context.Context, s *Store, kind model.Kind,
 
 func querySuperseders(ctx context.Context, tx *bolt.Tx, source queryMetadataSource, id model.EntityID) ([]model.EntityID, error) {
 	var incoming []model.EntityID
-	err := walkQueryMetadataSuperseders(tx, source.binding, source.kind, id, false, func(data []byte) error {
+	err := walkQueryMetadataSuperseders(tx, source.binding, source.kind, id, false, func(row queryMetadata) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		row, err := decodeQueryMetadata(tx, source, data)
-		if err != nil {
+		if err := validateQueryMetadata(tx, source, row); err != nil {
 			return err
 		}
 		incoming = append(incoming, row.ID)
@@ -140,14 +139,21 @@ func decodeQueryMetadata(tx *bolt.Tx, source queryMetadataSource, data []byte) (
 	if err := json.Unmarshal(data, &row); err != nil {
 		return queryMetadata{}, err
 	}
-	tip, err := queryMetadataRowTip(tx, source, row.ID)
-	if err != nil {
+	if err := validateQueryMetadata(tx, source, row); err != nil {
 		return queryMetadata{}, err
 	}
-	if row.Version != queryMetadataVersion || row.Binding != source.binding || row.Kind != source.kind || row.Tip == "" || tip != row.Tip {
-		return queryMetadata{}, fmt.Errorf("query metadata differs from captured %s %s", source.kind, row.ID)
-	}
 	return row, nil
+}
+
+func validateQueryMetadata(tx *bolt.Tx, source queryMetadataSource, row queryMetadata) error {
+	tip, err := queryMetadataRowTip(tx, source, row.ID)
+	if err != nil {
+		return err
+	}
+	if row.Version != queryMetadataVersion || row.Binding != source.binding || row.Kind != source.kind || row.Tip == "" || tip != row.Tip {
+		return fmt.Errorf("query metadata differs from captured %s %s", source.kind, row.ID)
+	}
+	return nil
 }
 
 func queryMetadataRowTip(tx *bolt.Tx, source queryMetadataSource, id model.EntityID) (model.SHA, error) {

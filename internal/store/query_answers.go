@@ -25,12 +25,11 @@ func (s *Store) IndexedAnswers(ctx context.Context, labels []string, opts ListOp
 	}()
 	entries, hit, err := indexedMetadataQuery(ctx, s, model.KindAnswer, func(tx *bolt.Tx, source queryMetadataSource) ([]tipEntry, error) {
 		var entries []tipEntry
-		err := walkQueryMetadataLabel(tx, source.binding, source.kind, labels[0], opts.IncludeDeleted, func(data []byte) error {
+		err := walkQueryMetadataLabel(tx, source.binding, source.kind, labels[0], opts.IncludeDeleted, func(row queryMetadata) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			row, err := decodeQueryMetadata(tx, source, data)
-			if err != nil {
+			if err := validateQueryMetadata(tx, source, row); err != nil {
 				return err
 			}
 			if !opts.IncludeSuperseded && len(row.SupersededBy) > 0 {

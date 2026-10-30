@@ -87,7 +87,7 @@ func TestQueryMetadataTaskPostingsMatchSnapshots(t *testing.T) {
 		}
 		for _, tc := range []struct {
 			name string
-			walk func(*bolt.Tx, string, model.EntityID, func([]byte) error) error
+			walk func(*bolt.Tx, string, model.EntityID, func(queryMetadata) error) error
 			want []model.EntityID
 		}{
 			{"blocked by", walkQueryMetadataBlockedBy, blocks},
@@ -95,7 +95,7 @@ func TestQueryMetadataTaskPostingsMatchSnapshots(t *testing.T) {
 			{"run task", walkQueryMetadataRunTasks, runs},
 		} {
 			slices.Sort(tc.want)
-			got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+			got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 				return tc.walk(tx, "binding", target, visit)
 			})
 			if !slices.Equal(got, tc.want) || (got == nil) != (tc.want == nil) {
@@ -115,14 +115,14 @@ func TestQueryMetadataTaskPostingsReplaceDeleteRollback(t *testing.T) {
 				}
 				return projectQueryMetadata("binding", "tip", model.Runbook{ID: "source", Runs: []model.RunbookRun{{Task: target}, {Task: target}}, Deleted: deleted})
 			}
-			walks := []func(*bolt.Tx, string, model.EntityID, func([]byte) error) error{walkQueryMetadataRunTasks}
+			walks := []func(*bolt.Tx, string, model.EntityID, func(queryMetadata) error) error{walkQueryMetadataRunTasks}
 			if kind == model.KindTask {
-				walks = []func(*bolt.Tx, string, model.EntityID, func([]byte) error) error{walkQueryMetadataBlockedBy, walkQueryMetadataTaskChildren}
+				walks = []func(*bolt.Tx, string, model.EntityID, func(queryMetadata) error) error{walkQueryMetadataBlockedBy, walkQueryMetadataTaskChildren}
 			}
 			assertTarget := func(target model.EntityID, want []model.EntityID) {
 				t.Helper()
 				for _, walk := range walks {
-					got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error { return walk(tx, "binding", target, visit) })
+					got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error { return walk(tx, "binding", target, visit) })
 					if !slices.Equal(got, want) {
 						t.Fatalf("target %q = %v, want %v", target, got, want)
 					}
@@ -192,8 +192,8 @@ func TestQueryMetadataTaskPostingsReadOnlyMatchingRows(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			for _, walk := range []func(*bolt.Tx, string, model.EntityID, func([]byte) error) error{walkQueryMetadataBlockedBy, walkQueryMetadataTaskChildren, walkQueryMetadataRunTasks} {
-				if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error { return walk(tx, "binding", "absent", visit) }); got != nil {
+			for _, walk := range []func(*bolt.Tx, string, model.EntityID, func(queryMetadata) error) error{walkQueryMetadataBlockedBy, walkQueryMetadataTaskChildren, walkQueryMetadataRunTasks} {
+				if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error { return walk(tx, "binding", "absent", visit) }); got != nil {
 					t.Fatalf("absent target visited unrelated rows: %v", got)
 				}
 			}
@@ -203,13 +203,15 @@ func TestQueryMetadataTaskPostingsReadOnlyMatchingRows(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			for _, walk := range []func(*bolt.Tx, string, model.EntityID, func([]byte) error) error{walkQueryMetadataBlockedBy, walkQueryMetadataTaskChildren} {
-				if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error { return walk(tx, "binding", "selected", visit) }); !slices.Equal(got, []model.EntityID{"selected"}) {
+			for _, walk := range []func(*bolt.Tx, string, model.EntityID, func(queryMetadata) error) error{walkQueryMetadataBlockedBy, walkQueryMetadataTaskChildren} {
+				if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
+					return walk(tx, "binding", "selected", visit)
+				}); !slices.Equal(got, []model.EntityID{"selected"}) {
 					t.Fatalf("selected target = %v", got)
 				}
 				stop := errors.New("visitor stopped")
 				if err := db.View(func(tx *bolt.Tx) error {
-					return walk(tx, "binding", "selected", func([]byte) error { return stop })
+					return walk(tx, "binding", "selected", func(queryMetadata) error { return stop })
 				}); !errors.Is(err, stop) {
 					t.Fatalf("visitor error = %v", err)
 				}
@@ -235,8 +237,8 @@ func TestQueryMetadataTaskRelationRejectsDigestCollision(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, walk := range []func(*bolt.Tx, string, model.EntityID, func([]byte) error) error{walkQueryMetadataBlockedBy, walkQueryMetadataTaskChildren} {
-		if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error { return walk(tx, "binding", "target", visit) }); got != nil {
+	for _, walk := range []func(*bolt.Tx, string, model.EntityID, func(queryMetadata) error) error{walkQueryMetadataBlockedBy, walkQueryMetadataTaskChildren} {
+		if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error { return walk(tx, "binding", "target", visit) }); got != nil {
 			t.Fatalf("digest collision returned wrong relation: %v", got)
 		}
 	}

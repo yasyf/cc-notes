@@ -28,7 +28,7 @@ func TestQueryMetadataLongPostingTermsReplaceAndDelete(t *testing.T) {
 	if got := labelMetadata(t, db, "binding", model.KindDoc, oldLabel); len(got) != 1 || got[0].SkippedOps != 7 {
 		t.Fatalf("long duplicate label rows = %#v", got)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, oldAnchor, false, visit)
 	}); !slices.Equal(got, []model.EntityID{"source"}) {
 		t.Fatalf("long anchor rows = %v", got)
@@ -40,7 +40,7 @@ func TestQueryMetadataLongPostingTermsReplaceAndDelete(t *testing.T) {
 	if got := labelMetadata(t, db, "binding", model.KindDoc, oldLabel); len(got) != 0 {
 		t.Fatalf("replacement retained old long label: %#v", got)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, oldAnchor, true, visit)
 	}); len(got) != 0 {
 		t.Fatalf("replacement retained old long anchor: %v", got)
@@ -48,7 +48,7 @@ func TestQueryMetadataLongPostingTermsReplaceAndDelete(t *testing.T) {
 	if got := labelMetadata(t, db, "binding", model.KindDoc, newLabel); len(got) != 1 || got[0].Tip != "new-tip" {
 		t.Fatalf("replacement lost new long label: %#v", got)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, newAnchor, false, visit)
 	}); !slices.Equal(got, []model.EntityID{"source"}) {
 		t.Fatalf("replacement lost new long anchor: %v", got)
@@ -59,7 +59,7 @@ func TestQueryMetadataLongPostingTermsReplaceAndDelete(t *testing.T) {
 	if got := labelMetadata(t, db, "binding", model.KindDoc, newLabel); len(got) != 0 {
 		t.Fatalf("delete retained long label: %#v", got)
 	}
-	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func([]byte) error) error {
+	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 		return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, newAnchor, true, visit)
 	}); len(got) != 0 {
 		t.Fatalf("delete retained long anchor: %v", got)
@@ -101,14 +101,14 @@ func TestQueryMetadataPostingDigestCollisionUsesExactStoredTerms(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for name, walk := range map[string]func(*bolt.Tx, func([]byte) error) error{
-		"label": func(tx *bolt.Tx, visit func([]byte) error) error {
+	for name, walk := range map[string]func(*bolt.Tx, func(queryMetadata) error) error{
+		"label": func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 			return walkQueryMetadataLabel(tx, "binding", model.KindDoc, "selected", false, visit)
 		},
-		"anchor": func(tx *bolt.Tx, visit func([]byte) error) error {
+		"anchor": func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 			return walkQueryMetadataAnchor(tx, "binding", model.KindDoc, anchor, false, visit)
 		},
-		"inbound": func(tx *bolt.Tx, visit func([]byte) error) error {
+		"inbound": func(tx *bolt.Tx, visit func(queryMetadata) error) error {
 			return walkQueryMetadataSuperseders(tx, "binding", model.KindDoc, "target", false, visit)
 		},
 	} {

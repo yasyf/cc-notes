@@ -22,11 +22,7 @@ func queryIndexedLabels(ctx context.Context, t *testing.T, source queryMetadataS
 	t.Helper()
 	return readQueryMetadataIndex(ctx, source, func(tx *bolt.Tx) ([]model.EntityID, error) {
 		ids := []model.EntityID{}
-		err := walkQueryMetadataLabel(tx, source.binding, source.kind, label, false, func(data []byte) error {
-			var row queryMetadata
-			if err := json.Unmarshal(data, &row); err != nil {
-				return err
-			}
+		err := walkQueryMetadataLabel(tx, source.binding, source.kind, label, false, func(row queryMetadata) error {
 			ids = append(ids, row.ID)
 			return nil
 		})

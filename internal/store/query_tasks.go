@@ -27,14 +27,13 @@ func (s *Store) IndexedTaskChildren(ctx context.Context, id model.EntityID) ([]m
 	})
 }
 
-func queryTaskRelationIDs(ctx context.Context, tx *bolt.Tx, source queryMetadataSource, id model.EntityID, walk func(*bolt.Tx, string, model.EntityID, func([]byte) error) error) ([]model.EntityID, error) {
+func queryTaskRelationIDs(ctx context.Context, tx *bolt.Tx, source queryMetadataSource, id model.EntityID, walk func(*bolt.Tx, string, model.EntityID, func(queryMetadata) error) error) ([]model.EntityID, error) {
 	var ids []model.EntityID
-	err := walk(tx, source.binding, id, func(data []byte) error {
+	err := walk(tx, source.binding, id, func(row queryMetadata) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		row, err := decodeQueryMetadata(tx, source, data)
-		if err != nil {
+		if err := validateQueryMetadata(tx, source, row); err != nil {
 			return err
 		}
 		ids = append(ids, row.ID)
@@ -57,12 +56,11 @@ func (s *Store) IndexedTaskRunbooks(ctx context.Context, id model.EntityID) (run
 	}()
 	entries, hit, err := indexedMetadataQuery(ctx, s, model.KindRunbook, func(tx *bolt.Tx, source queryMetadataSource) ([]tipEntry, error) {
 		var entries []tipEntry
-		err := walkQueryMetadataRunTasks(tx, source.binding, id, func(data []byte) error {
+		err := walkQueryMetadataRunTasks(tx, source.binding, id, func(row queryMetadata) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			row, err := decodeQueryMetadata(tx, source, data)
-			if err != nil {
+			if err := validateQueryMetadata(tx, source, row); err != nil {
 				return err
 			}
 			entries = append(entries, tipEntry{ref: refs.For(model.KindRunbook, row.ID), tip: row.Tip})

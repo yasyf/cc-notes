@@ -163,43 +163,43 @@ func readQueryMetadata(tx *bolt.Tx, binding string, id model.EntityID) []byte {
 	return bytes.Clone(bucket.Bucket(queryMetadataRowsBucket).Get([]byte(id)))
 }
 
-func walkQueryMetadataLabel(tx *bolt.Tx, binding string, kind model.Kind, label string, includeDeleted bool, visit func([]byte) error) error {
+func walkQueryMetadataLabel(tx *bolt.Tx, binding string, kind model.Kind, label string, includeDeleted bool, visit func(queryMetadata) error) error {
 	return walkQueryMetadataPostings(tx, binding, queryMetadataLabelsBucket, queryMetadataLabelPrefix(kind, label), includeDeleted, func(row queryMetadata) bool {
 		return row.Kind == kind && slices.Contains(row.Labels, label)
 	}, visit)
 }
 
-func walkQueryMetadataAnchor(tx *bolt.Tx, binding string, kind model.Kind, anchor model.Anchor, includeDeleted bool, visit func([]byte) error) error {
+func walkQueryMetadataAnchor(tx *bolt.Tx, binding string, kind model.Kind, anchor model.Anchor, includeDeleted bool, visit func(queryMetadata) error) error {
 	return walkQueryMetadataPostings(tx, binding, queryMetadataAnchorsBucket, queryMetadataAnchorPrefix(kind, anchor), includeDeleted, func(row queryMetadata) bool {
 		return row.Kind == kind && slices.Contains(row.Anchors, anchor)
 	}, visit)
 }
 
-func walkQueryMetadataSuperseders(tx *bolt.Tx, binding string, kind model.Kind, target model.EntityID, includeDeleted bool, visit func([]byte) error) error {
+func walkQueryMetadataSuperseders(tx *bolt.Tx, binding string, kind model.Kind, target model.EntityID, includeDeleted bool, visit func(queryMetadata) error) error {
 	return walkQueryMetadataPostings(tx, binding, queryMetadataSupersedersBucket, queryMetadataSupersedersPrefix(kind, target), includeDeleted, func(row queryMetadata) bool {
 		return row.Kind == kind && slices.Contains(row.SupersededBy, target)
 	}, visit)
 }
 
-func walkQueryMetadataBlockedBy(tx *bolt.Tx, binding string, target model.EntityID, visit func([]byte) error) error {
+func walkQueryMetadataBlockedBy(tx *bolt.Tx, binding string, target model.EntityID, visit func(queryMetadata) error) error {
 	return walkQueryMetadataPostings(tx, binding, queryMetadataBlockedByBucket, queryMetadataSupersedersPrefix(model.KindTask, target), false, func(row queryMetadata) bool {
 		return row.Kind == model.KindTask && slices.Contains(row.BlockedBy, target)
 	}, visit)
 }
 
-func walkQueryMetadataTaskChildren(tx *bolt.Tx, binding string, target model.EntityID, visit func([]byte) error) error {
+func walkQueryMetadataTaskChildren(tx *bolt.Tx, binding string, target model.EntityID, visit func(queryMetadata) error) error {
 	return walkQueryMetadataPostings(tx, binding, queryMetadataParentsBucket, queryMetadataSupersedersPrefix(model.KindTask, target), false, func(row queryMetadata) bool {
 		return row.Kind == model.KindTask && row.Parent == target
 	}, visit)
 }
 
-func walkQueryMetadataRunTasks(tx *bolt.Tx, binding string, target model.EntityID, visit func([]byte) error) error {
+func walkQueryMetadataRunTasks(tx *bolt.Tx, binding string, target model.EntityID, visit func(queryMetadata) error) error {
 	return walkQueryMetadataPostings(tx, binding, queryMetadataRunTasksBucket, queryMetadataSupersedersPrefix(model.KindRunbook, target), false, func(row queryMetadata) bool {
 		return row.Kind == model.KindRunbook && slices.Contains(row.RunTasks, target)
 	}, visit)
 }
 
-func walkQueryMetadataPostings(tx *bolt.Tx, binding string, index, prefix []byte, includeDeleted bool, matches func(queryMetadata) bool, visit func([]byte) error) error {
+func walkQueryMetadataPostings(tx *bolt.Tx, binding string, index, prefix []byte, includeDeleted bool, matches func(queryMetadata) bool, visit func(queryMetadata) error) error {
 	bucket := queryMetadataBinding(tx, binding)
 	if bucket == nil {
 		return nil
@@ -223,7 +223,7 @@ func walkQueryMetadataPostings(tx *bolt.Tx, binding string, index, prefix []byte
 		if !matches(row) {
 			continue
 		}
-		if err := visit(bytes.Clone(data)); err != nil {
+		if err := visit(row); err != nil {
 			return err
 		}
 	}
