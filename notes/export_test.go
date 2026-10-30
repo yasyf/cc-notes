@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"time"
 )
@@ -92,7 +93,11 @@ func relevantCacheBytes(ctx context.Context, c *Client, target string, filter Re
 	if err != nil {
 		return "", nil, false, err
 	}
-	name = c.relevantName(p, filter, variant)
+	exe, err := os.Executable()
+	if err != nil {
+		return "", nil, false, err
+	}
+	name = c.relevantName(p, filter, variant, exe)
 	f, ok := c.s.OpenRelevantCache(name)
 	if !ok {
 		return name, nil, false, nil

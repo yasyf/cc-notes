@@ -1096,7 +1096,7 @@ func (in *relevantInputs) auditWorktree(ctx context.Context, anchors []string) e
 
 func (in *relevantInputs) key() string {
 	var digest strings.Builder
-	digest.WriteString(in.client.relevantName(in.path, in.filter, in.variant))
+	digest.WriteString(in.client.relevantName(in.path, in.filter, in.variant, in.exe))
 	for _, line := range in.lines {
 		digest.WriteByte('\n')
 		digest.WriteString(line)

@@ -76,7 +76,11 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if err != nil {
 		return nil, err
 	}
-	name := c.relevantName(p, filter, variant)
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locate executable: %w", err)
+	}
+	name := c.relevantName(p, filter, variant, exe)
 	now := time.Now()
 	var cached relevantCacheEntry
 	var cachedOK bool
@@ -282,12 +286,12 @@ func (f fileStamp) racy(start time.Time) bool {
 	return !f.Missing && (time.Unix(0, f.ModTime).After(edge) || time.Unix(0, f.Ctime).After(edge))
 }
 
-func (c *Client) relevantName(p string, filter RelevantFilter, variant string) string {
+func (c *Client) relevantName(p string, filter RelevantFilter, variant, exe string) string {
 	binding := ""
 	if b, bound := c.s.Binding(); bound {
 		binding = b.String()
 	}
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s\n%s\n%s\n%s\n%+v\n%s", c.s.GitDir(), c.s.Git.Dir, binding, p, filter, variant))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s\n%s\n%s\n%s\n%+v\n%d %s\n%s", c.s.GitDir(), c.s.Git.Dir, binding, p, filter, len(exe), exe, variant))
 	return hex.EncodeToString(sum[:])
 }
 

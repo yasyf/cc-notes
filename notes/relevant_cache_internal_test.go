@@ -215,6 +215,7 @@ func TestRelevantCacheEntryHitGuards(t *testing.T) {
 		{"racy", func(e *relevantCacheEntry) { e.Racy = true }, false},
 		{"revalidate", func(e *relevantCacheEntry) { e.Revalidate = true }, false},
 		{"past the deadline", func(e *relevantCacheEntry) { e.Deadline = now.Add(-time.Second).UnixNano() }, false},
+		{"other executable", func(e *relevantCacheEntry) { e.Exe = filepath.Join(t.TempDir(), "cc-notes") }, false},
 		{"other git", func(e *relevantCacheEntry) { e.Git = filepath.Join(t.TempDir(), "git") }, false},
 		{"other environment", func(e *relevantCacheEntry) { e.Env = "0" }, false},
 		{"moved stamp", func(e *relevantCacheEntry) { e.Stamps = []fileStamp{{Path: exe, Missing: true}} }, false},
@@ -1288,5 +1289,14 @@ func TestConfigTrue(t *testing.T) {
 				t.Fatalf("configTrue(%q, %t) = %t, want %t", tc.value, tc.hasValue, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRelevantNameSeparatesExecutablePathsFromVariants(t *testing.T) {
+	c, _ := newWBClient(t)
+	first := c.relevantName("svc/handler.go", RelevantFilter{}, "json\n7 /B", "/A")
+	second := c.relevantName("svc/handler.go", RelevantFilter{}, "json", "/B\n2 /A")
+	if first == second {
+		t.Fatalf("distinct executable/variant tuples share cache name %s", first)
 	}
 }
