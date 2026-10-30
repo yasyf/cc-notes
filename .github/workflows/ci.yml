@@ -38,7 +38,7 @@ jobs:
           mkdir -p "$ccn_legacy_dir"
           gh release download v0.74.18 --repo yasyf/cc-notes --pattern cc-notes_linux_amd64 --pattern SHA256SUMS.txt --dir "$ccn_legacy_dir"
           cd "$ccn_legacy_dir"
-          printf '%s  %s\n' fce14f9ef1cb764b1ebaed0ccc17db323b972d39d1b26da3f6bd4fc302c58 SHA256SUMS.txt | sha256sum --check --strict -
+          printf '%s  %s\n' fce14f9ef1cb764b1ebaed0ccc17db323b972d39d1b26da3f6bd4b05290e76ae SHA256SUMS.txt | sha256sum --check --strict -
           sha256sum --check --ignore-missing SHA256SUMS.txt
           chmod +x cc-notes_linux_amd64
           ./cc-notes_linux_amd64 --version
