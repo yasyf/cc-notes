@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"slices"
 
@@ -17,57 +18,74 @@ type dupChecker func(s *Store, ctx context.Context, candidate []model.PackCommit
 var dupCheckers = map[model.Kind]dupChecker{
 	model.KindNote: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Note,
-			func() ([]model.Note, error) { return s.ListNotes(ctx, false, false) },
+			func(_ model.Note) ([]model.Note, error) { return s.ListNotes(ctx, false, false) },
 			func(n model.Note) bool { return n.StaleAt == 0 }, sameNoteContent)
 	},
 	model.KindDoc: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Doc,
-			func() ([]model.Doc, error) { return s.ListDocs(ctx, false, false) },
+			func(_ model.Doc) ([]model.Doc, error) { return s.ListDocs(ctx, false, false) },
 			func(d model.Doc) bool { return d.StaleAt == 0 }, sameDocContent)
 	},
 	model.KindLog: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Log,
-			func() ([]model.Log, error) { return s.ListLogs(ctx, false) },
+			func(_ model.Log) ([]model.Log, error) { return s.ListLogs(ctx, false) },
 			func(model.Log) bool { return true }, sameLogContent)
 	},
 	model.KindTask: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Task,
-			func() ([]model.Task, error) { return s.ListTasks(ctx) },
+			func(task model.Task) ([]model.Task, error) {
+				if len(task.Labels) > 0 {
+					tasks, hit, err := s.IndexedTasks(ctx, task.Labels)
+					if err != nil {
+						return nil, err
+					}
+					if hit {
+						slices.SortFunc(tasks, func(a, b model.Task) int {
+							if c := a.Meta().CreatedAt.Compare(b.Meta().CreatedAt); c != 0 {
+								return c
+							}
+							return cmp.Compare(a.ID, b.ID)
+						})
+						return tasks, nil
+					}
+				}
+				return s.ListTasks(ctx)
+			},
 			func(t model.Task) bool { return t.ClosedAt == 0 }, sameTaskContent)
 	},
 	model.KindSprint: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Sprint,
-			func() ([]model.Sprint, error) { return s.ListSprints(ctx) },
+			func(_ model.Sprint) ([]model.Sprint, error) { return s.ListSprints(ctx) },
 			func(sp model.Sprint) bool { return sp.ClosedAt == 0 }, sameSprintContent)
 	},
 	model.KindProject: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Project,
-			func() ([]model.Project, error) { return s.ListProjects(ctx) },
+			func(_ model.Project) ([]model.Project, error) { return s.ListProjects(ctx) },
 			func(p model.Project) bool { return p.ClosedAt == 0 }, sameProjectContent)
 	},
 	model.KindRunbook: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Runbook,
-			func() ([]model.Runbook, error) { return s.ListRunbooks(ctx) },
+			func(_ model.Runbook) ([]model.Runbook, error) { return s.ListRunbooks(ctx) },
 			liveRunbook, sameRunbookContent)
 	},
 	model.KindInvestigation: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Investigation,
-			func() ([]model.Investigation, error) { return s.ListInvestigations(ctx) },
+			func(_ model.Investigation) ([]model.Investigation, error) { return s.ListInvestigations(ctx) },
 			liveInvestigation, sameInvestigationContent)
 	},
 	model.KindPlan: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Plan,
-			func() ([]model.Plan, error) { return s.ListPlans(ctx) },
+			func(_ model.Plan) ([]model.Plan, error) { return s.ListPlans(ctx) },
 			livePlan, samePlanContent)
 	},
 	model.KindLedger: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Ledger,
-			func() ([]model.Ledger, error) { return s.ListLedgers(ctx) },
+			func(_ model.Ledger) ([]model.Ledger, error) { return s.ListLedgers(ctx) },
 			liveLedger, sameLedgerContent)
 	},
 	model.KindAnswer: func(s *Store, ctx context.Context, candidate []model.PackCommit) (model.Snapshot, error) {
 		return scanDup(candidate, fold.Answer,
-			func() ([]model.Answer, error) { return s.ListAnswers(ctx, false, false) },
+			func(_ model.Answer) ([]model.Answer, error) { return s.ListAnswers(ctx, false, false) },
 			func(a model.Answer) bool { return a.StaleAt == 0 }, sameAnswerContent)
 	},
 }
@@ -127,7 +145,7 @@ func (s *Store) findDuplicate(ctx context.Context, kind model.Kind, pack model.P
 func scanDup[S model.Snapshot](
 	candidate []model.PackCommit,
 	foldCand func([]model.PackCommit) (S, error),
-	list func() ([]S, error),
+	list func(S) ([]S, error),
 	live func(S) bool,
 	same func(a, b S) bool,
 ) (model.Snapshot, error) {
@@ -135,7 +153,7 @@ func scanDup[S model.Snapshot](
 	if err != nil {
 		return nil, err
 	}
-	items, err := list()
+	items, err := list(cand)
 	if err != nil {
 		return nil, err
 	}

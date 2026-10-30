@@ -207,7 +207,7 @@ func TestDedupePlanLiveSkipsDeleted(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := scanDup(candidate, fold.Plan,
-				func() ([]model.Plan, error) { return []model.Plan{tc.live}, nil },
+				func(_ model.Plan) ([]model.Plan, error) { return []model.Plan{tc.live}, nil },
 				livePlan, samePlanContent)
 			if err != nil {
 				t.Fatalf("scanDup: %v", err)
