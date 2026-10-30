@@ -1,6 +1,7 @@
 package gitobj
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -139,6 +140,35 @@ func TestPackIndexLandingDecodesOnlyTheNewPack(t *testing.T) {
 	}
 	assertIndexedCommit(t, second, firstHash)
 	assertIndexedCommit(t, second, secondHash)
+}
+
+func TestPackIndexCancelledBuildKeepsFinishedPacks(t *testing.T) {
+	dir, commonDir, firstHash := indexedCommitFixture(t)
+	gittest.Git(t, dir, "commit", "--allow-empty", "-qm", "second")
+	secondHash := plumbing.NewHash(gittest.Git(t, dir, "rev-parse", "HEAD"))
+	gittest.Git(t, dir, "repack", "-dq")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	interrupted, _ := testPackIndex(t, commonDir)
+	var opened []string
+	interrupted.dir = dotgit.New(packIndexOpenFS{Filesystem: interrupted.dir.Fs(), indexOpen: func(path string) {
+		opened = append(opened, path)
+		if len(opened) == 2 {
+			cancel()
+		}
+	}})
+	if err := interrupted.prepare(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted prepare = %v, want Canceled", err)
+	}
+	resumed, reads := testPackIndex(t, commonDir)
+	if err := resumed.prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(reads) != 1 || reads[opened[0]] != 0 {
+		t.Fatalf("resumed index reads = %v, want only the pack after %s", reads, opened[0])
+	}
+	assertIndexedCommit(t, resumed, firstHash)
+	assertIndexedCommit(t, resumed, secondHash)
 }
 
 func TestPackIndexRejectsCorruptionAndRecoversInPlace(t *testing.T) {
