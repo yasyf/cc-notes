@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -159,14 +160,20 @@ func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, 
 			return nil, fmt.Errorf("referenced attachments: %w", err)
 		}
 		s = pinned
+	} else if err := s.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("referenced attachments: %w", err)
 	}
-	var entries []tipEntry
-	for _, prefix := range []string{refs.Root(model.KindNote), refs.Root(model.KindDoc), refs.Root(model.KindLog), refs.Root(model.KindAnswer)} {
-		children, err := s.children(ctx, prefix)
-		if err != nil {
-			return nil, fmt.Errorf("referenced attachments: %w", err)
+	prefixes := [...]string{refs.Root(model.KindNote), refs.Root(model.KindDoc), refs.Root(model.KindLog), refs.Root(model.KindAnswer)}
+	entries := make([]tipEntry, 0, len(s.pins))
+	for ref, tip := range s.pins {
+		parent, child := path.Split(ref)
+		if child == "" {
+			continue
 		}
-		entries = append(entries, children...)
+		switch parent {
+		case prefixes[0], prefixes[1], prefixes[2], prefixes[3]:
+			entries = append(entries, tipEntry{ref: ref, tip: tip})
+		}
 	}
 	index := s.readAttachIndex()
 	perRef := make([]refAttachments, len(entries))
