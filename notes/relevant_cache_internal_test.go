@@ -876,7 +876,7 @@ func TestRelevantCachedNeverCachesARoutedEnvironment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "relevant-v3")); err != nil {
+			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "relevant-v4")); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv(tc.name, tc.value)
