@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -153,13 +154,26 @@ func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
 // accelerates the snapshot half of those. The result is sorted by oid with
 // sorted uses, so transfer errors name entities deterministically.
 func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, error) {
-	var entries []tipEntry
-	for _, prefix := range []string{refs.Root(model.KindNote), refs.Root(model.KindDoc), refs.Root(model.KindLog), refs.Root(model.KindAnswer)} {
-		children, err := s.children(ctx, prefix)
+	if s.pins == nil {
+		pinned, err := s.PinnedKinds(ctx, model.KindNote, model.KindDoc, model.KindLog, model.KindAnswer)
 		if err != nil {
 			return nil, fmt.Errorf("referenced attachments: %w", err)
 		}
-		entries = append(entries, children...)
+		s = pinned
+	} else if err := s.CheckRecords(); err != nil {
+		return nil, fmt.Errorf("referenced attachments: %w", err)
+	}
+	prefixes := [...]string{refs.Root(model.KindNote), refs.Root(model.KindDoc), refs.Root(model.KindLog), refs.Root(model.KindAnswer)}
+	entries := make([]tipEntry, 0, len(s.pins))
+	for ref, tip := range s.pins {
+		parent, child := path.Split(ref)
+		if child == "" {
+			continue
+		}
+		switch parent {
+		case prefixes[0], prefixes[1], prefixes[2], prefixes[3]:
+			entries = append(entries, tipEntry{ref: ref, tip: tip})
+		}
 	}
 	index := s.readAttachIndex()
 	perRef := make([]refAttachments, len(entries))

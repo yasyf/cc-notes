@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
@@ -397,5 +398,53 @@ func TestReferencedAttachmentsIndex(t *testing.T) {
 	}
 	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
 		t.Fatalf("referenced after the ref moved = %+v, want the folded set %+v", got, want)
+	}
+}
+
+func TestReferencedAttachmentsPinnedAndFresh(t *testing.T) {
+	s := initStore(t)
+	note, err := s.Create(t.Context(), noteOps("pinned attachments"))
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	ref := refs.For(model.KindNote, note.EntityID())
+	attach(t, s, ref, "a.bin", oidA, 5)
+	pinned, err := s.PinnedKinds(t.Context(), model.KindNote, model.KindDoc, model.KindLog, model.KindAnswer)
+	if err != nil {
+		t.Fatalf("pin attachment refs: %v", err)
+	}
+	attach(t, s, ref, "b.bin", oidB, 9)
+	want := []ReferencedObject{
+		{OID: oidA, Size: 5, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "a.bin"}}},
+		{OID: oidB, Size: 9, Uses: []AttachmentUse{{Kind: model.KindNote, Entity: note.EntityID(), Name: "b.bin"}}},
+	}
+	if got := referenced(t, pinned); !reflect.DeepEqual(got, want[:1]) {
+		t.Fatalf("pinned referenced = %+v, want %+v", got, want[:1])
+	}
+	tip := pinned.pins[ref]
+	filtered := s.Pinned(map[string]model.SHA{
+		ref:                                 tip,
+		ref + "/nested":                     tip,
+		refs.Root(model.KindNote):           tip,
+		refs.Root(model.KindTask) + "other": tip,
+	})
+	if got := referenced(t, filtered); !reflect.DeepEqual(got, want[:1]) {
+		t.Fatalf("mixed pinned referenced = %+v, want %+v", got, want[:1])
+	}
+	if got := referenced(t, s.Pinned(map[string]model.SHA{})); len(got) != 0 {
+		t.Fatalf("empty pinned referenced = %+v, want none", got)
+	}
+	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
+		t.Fatalf("fresh referenced = %+v, want %+v", got, want)
+	}
+	broken := filepath.Join(s.recordsCommonDir, refs.Root(model.KindNote), "broken")
+	if err := os.WriteFile(broken, nil, 0o600); err != nil {
+		t.Fatalf("write empty selected ref: %v", err)
+	}
+	if got := referenced(t, pinned); !reflect.DeepEqual(got, want[:1]) {
+		t.Fatalf("pinned referenced with an unrelated empty ref = %+v, want %+v", got, want[:1])
+	}
+	if _, err := s.ReferencedAttachments(t.Context()); !errors.Is(err, dotgit.ErrEmptyRefFile) {
+		t.Fatalf("fresh referenced with an empty selected ref = %v, want dotgit.ErrEmptyRefFile", err)
 	}
 }
