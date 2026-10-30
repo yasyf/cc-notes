@@ -13,6 +13,16 @@ permissions:
   contents: read
 
 jobs:
+  task-dedupe-cost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Install syscall accounting
+        run: sudo apt-get update && sudo apt-get install -y strace
+      - name: Fresh CLI task deduplication payload reads, cold and warm
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLICost$' ./internal/cli
+
   attachment-ref-passes:
     runs-on: ubuntu-latest
     steps:

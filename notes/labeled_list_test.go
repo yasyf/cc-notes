@@ -144,7 +144,11 @@ func TestLabeledListsKeepUnavailableIndexAndCancellationBehavior(t *testing.T) {
 	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation} {
 		t.Run(string(kind), func(t *testing.T) {
 			c, _, ids := labeledListFixture(t, kind)
-			if err := os.WriteFile(filepath.Join(c.s.CommonDir(), "cc-notes-query"), []byte("unavailable"), 0o600); err != nil {
+			indexPath := filepath.Join(c.s.CommonDir(), "cc-notes-query")
+			if err := os.RemoveAll(indexPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(indexPath, []byte("unavailable"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			got, err := labeledListIDs(t.Context(), c, kind, []string{"a", "b"})

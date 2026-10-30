@@ -229,7 +229,7 @@ func TestDedupeRunbookLiveSkipsDeleted(t *testing.T) {
 	}}}}
 	deleted := model.Runbook{ID: "rbdead", Title: "Deploy", Deleted: true}
 	got, err := scanDup(candidate, fold.Runbook,
-		func() ([]model.Runbook, error) { return []model.Runbook{deleted}, nil },
+		func(_ model.Runbook) ([]model.Runbook, error) { return []model.Runbook{deleted}, nil },
 		liveRunbook, sameRunbookContent)
 	if err != nil {
 		t.Fatalf("scanDup: %v", err)
