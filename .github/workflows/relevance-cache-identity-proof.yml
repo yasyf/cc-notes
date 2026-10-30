@@ -1,0 +1,17 @@
+name: Relevance executable path baseline proof
+
+on:
+  push:
+    branches: [proof/relevance-executable-path-baseline]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Alternate executable paths in one synthetic repository
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestRelevantCachedKeepsExecutablePathsIndependent$' ./notes
