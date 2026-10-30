@@ -89,14 +89,9 @@ func (c *foldCache) getEntry(tip model.SHA, entry cacheEntry) (model.Snapshot, b
 }
 
 func (c *foldCache) put(tip model.SHA, snap model.Snapshot, top, floor model.Lamport) {
-	if snap.Meta().SkippedOps > 0 {
-		return
+	if value := foldPublication(tip, snap, top, floor); value != nil {
+		c.write(value.name, value.data)
 	}
-	data, ok := encodeFoldEntry(snap, top, floor)
-	if !ok {
-		return
-	}
-	c.write(string(tip), data)
 }
 
 func (c *foldCache) putChain(tip model.SHA, snap model.Snapshot, chain []model.PackCommit) {

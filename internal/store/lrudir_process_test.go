@@ -59,6 +59,15 @@ func TestLRUDirProcessHelper(t *testing.T) {
 	}
 	l := &lruDir{capacity: request.Capacity, dir: request.Dir}
 	switch request.Mode {
+	case "batch", "batch-commit":
+		values := make([]cachePublication, len(request.Names))
+		for i, name := range request.Names {
+			values[i] = cachePublication{name: name, data: []byte(request.Data + name)}
+		}
+		l.writeBatch(values)
+		if request.Mode == "batch-commit" {
+			homeguard.ChildExit(77)
+		}
 	case "write":
 		l.write(request.Name, []byte(request.Data))
 	case "commit":
@@ -78,7 +87,7 @@ func TestLRUDirProcessHelper(t *testing.T) {
 		if err := json.NewEncoder(os.Stdout).Encode(values); err != nil {
 			t.Fatal(err)
 		}
-	case "pending", "rename", "hold":
+	case "pending", "rename", "hold", "batch-rename":
 		lock, ok := l.lockWriter()
 		if !ok {
 			t.Fatal("acquire publication lock")
@@ -102,6 +111,33 @@ func TestLRUDirProcessHelper(t *testing.T) {
 			}
 			if value, err := input.ReadByte(); !errors.Is(err, io.EOF) {
 				t.Fatalf("crash barrier = %q, %v; want EOF", value, err)
+			}
+			homeguard.ChildExit(77)
+		}
+		if request.Mode == "batch-rename" {
+			var rank int64
+			if err := tx.QueryRow("SELECT rank FROM cache_meta WHERE id = 1").Scan(&rank); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range request.Names {
+				slot, err := l.allocate(tx, name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var token [cacheTokenSize]byte
+				key := sha256.Sum256([]byte(name))
+				copy(token[:32], key[:])
+				if _, err := rand.Read(token[32:]); err != nil {
+					t.Fatal(err)
+				}
+				data := []byte(request.Data + name)
+				if !l.publish(slot, token[:], data) {
+					t.Fatal("batch prefix publication failed")
+				}
+				rank++
+				if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank, size=excluded.size", name, slot, token[:], rank, len(data)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			homeguard.ChildExit(77)
 		}
@@ -287,6 +323,64 @@ func TestLRUDirProcessCrashPublication(t *testing.T) {
 			requireCacheSlotBound(t, l)
 		})
 	}
+}
+
+func TestLRUDirProcessBatchCrashAndGC(t *testing.T) {
+	for _, mode := range []string{"batch-rename", "batch-commit"} {
+		t.Run(mode, func(t *testing.T) {
+			l := newProcessCache(t, 3)
+			a, b, c := "old:a", "old:b", strings.Repeat("old:c", cacheChunkSize)
+			l.writeBatch([]cachePublication{{"a", []byte(a)}, {"b", []byte(b)}, {"c", []byte(c)}})
+			runCacheProcess(t, cacheProcessRequest{Mode: mode, Dir: l.dir, Capacity: l.capacity, Names: []string{"a", "b"}, Data: "new:"}, 77)
+			want := map[string]*string{"a": nil, "b": nil, "c": &c}
+			if mode == "batch-commit" {
+				a, b = "new:a", "new:b"
+				want["a"], want["b"] = &a, &b
+			}
+			requireCacheProcessValues(t, l, want)
+			reader, ok := l.open("c")
+			if !ok {
+				t.Fatal("held batch stream missing")
+			}
+			defer func() { _ = reader.Close() }()
+			l.remove("c")
+			runCacheProcess(t, cacheProcessRequest{Mode: "batch", Dir: l.dir, Capacity: l.capacity, Names: []string{"d", "e"}, Data: "after:"}, 0)
+			d, e := "after:d", "after:e"
+			requireCacheProcessValues(t, l, map[string]*string{"d": &d, "e": &e})
+			data, err := io.ReadAll(reader)
+			if err != nil || string(data) != c {
+				t.Fatalf("held batch stream after GC/reuse = %d, %v", len(data), err)
+			}
+			requireCacheSlotBound(t, l)
+		})
+	}
+}
+
+func TestLRUDirCompetingPublicationBatches(t *testing.T) {
+	l := newProcessCache(t, 3)
+	for _, name := range []string{"base-a", "base-b", "base-c"} {
+		l.write(name, []byte("payload:"+name))
+	}
+	var processes []*cacheProcess
+	for i := range 4 {
+		processes = append(processes, startCacheProcess(t, cacheProcessRequest{Mode: "batch", Dir: l.dir, Capacity: l.capacity, Names: []string{fmt.Sprintf("batch-%d-a", i), fmt.Sprintf("batch-%d-b", i)}, Data: "payload:"}))
+	}
+	for _, process := range processes {
+		process.release(t)
+	}
+	for _, process := range processes {
+		process.wait(t, 0)
+	}
+	if names := l.names(); len(names) != l.capacity {
+		t.Fatalf("competing batch capacity = %v", names)
+	} else {
+		for _, name := range names {
+			if data, ok := l.read(name); !ok || string(data) != "payload:"+name {
+				t.Fatalf("competing batch value %s = %q, %v", name, data, ok)
+			}
+		}
+	}
+	requireCacheSlotBound(t, l)
 }
 
 func TestLRUDirProcessesShareCapacity(t *testing.T) {

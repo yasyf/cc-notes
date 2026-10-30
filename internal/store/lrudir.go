@@ -293,7 +293,11 @@ func (l *lruDir) close() error {
 }
 
 func (l *lruDir) write(name string, data []byte) {
-	if l.capacity <= 0 {
+	l.writeBatch([]cachePublication{{name: name, data: data}})
+}
+
+func (l *lruDir) writeBatch(values []cachePublication) {
+	if l.capacity <= 0 || len(values) == 0 {
 		return
 	}
 	l.writer.Lock()
@@ -323,22 +327,24 @@ func (l *lruDir) write(name string, data []byte) {
 			return
 		}
 	}
-	slot, err := l.allocate(tx, name)
-	if err != nil {
-		return
-	}
-	key := sha256.Sum256([]byte(name))
-	var token [cacheTokenSize]byte
-	copy(token[:32], key[:])
-	if _, err := rand.Read(token[32:]); err != nil {
-		return
-	}
-	if !l.publish(slot, token[:], data) {
-		return
-	}
-	rank++
-	if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank, size=excluded.size", name, slot, token[:], rank, len(data)); err != nil {
-		return
+	for _, value := range values {
+		slot, err := l.allocate(tx, value.name)
+		if err != nil {
+			return
+		}
+		key := sha256.Sum256([]byte(value.name))
+		var token [cacheTokenSize]byte
+		copy(token[:32], key[:])
+		if _, err := rand.Read(token[32:]); err != nil {
+			return
+		}
+		if !l.publish(slot, token[:], value.data) {
+			return
+		}
+		rank++
+		if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank, size=excluded.size", value.name, slot, token[:], rank, len(value.data)); err != nil {
+			return
+		}
 	}
 	if _, err := tx.Exec("UPDATE cache_meta SET rank = ? WHERE id = 1", rank); err != nil {
 		return

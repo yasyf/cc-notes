@@ -37,6 +37,17 @@ func TestLRUDirCostHelper(t *testing.T) {
 		if got := len(l.names()); got != count {
 			t.Fatalf("populated %d, want %d", got, count)
 		}
+	case "populate-batch":
+		cache := newFoldCache(dir, count)
+		l = &cache.lruDir
+		batch := newFoldPublicationBatch(t.Context(), cache)
+		for i := range count {
+			batch.add(&cachePublication{name: fmt.Sprintf("%064d", i), data: []byte("cached payload")})
+		}
+		batch.flush()
+		if got := len(l.names()); got != count {
+			t.Fatalf("batch populated %d, want %d", got, count)
+		}
 	case "write":
 		l.write("new", []byte("new payload"))
 		if data, ok := l.read("new"); !ok || string(data) != "new payload" {
@@ -100,7 +111,14 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			dir := t.TempDir()
 			baseline := cacheCostProcess(t, "baseline", dir, count, true)
-			cacheCostProcess(t, "populate", dir, count, true)
+			populated := cacheCostProcess(t, "populate", dir, count, true)
+			batch := cacheCostProcess(t, "populate-batch", t.TempDir(), count, true)
+			if batch["pwrite64"]*2 >= populated["pwrite64"] {
+				t.Errorf("bulk publication did not reduce metadata writes: point=%v batch=%v", populated, batch)
+			}
+			if batch["fsync"]+batch["fdatasync"] > populated["fsync"]+populated["fdatasync"] {
+				t.Errorf("bulk publication added sync calls: point=%v batch=%v", populated, batch)
+			}
 			requested := cacheCostProcess(t, "requested", dir, count, true)
 			requests = append(requests, requested)
 			for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat"} {

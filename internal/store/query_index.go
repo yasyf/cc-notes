@@ -101,16 +101,21 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 				return err
 			}
 			complete := true
+			batch := newFoldPublicationBatch(ctx, q.store.cache)
+			defer batch.discard()
 			if err := applyQueryMetadataDelta(ctx, tx, q.binding, q.kind, q.tips, func(ctx context.Context, id model.EntityID, tip model.SHA) (queryMetadata, error) {
-				row, err := q.load(ctx, id, tip)
+				row, publication, err := q.load(ctx, id, tip)
 				complete = complete && row.SkippedOps == 0
 				if err != nil {
 					authorityErr = err
+					return row, err
 				}
-				return row, err
+				batch.add(publication)
+				return row, nil
 			}); err != nil {
 				return err
 			}
+			batch.flush()
 			if q.generation != "" && complete {
 				generation, err := q.currentGeneration(ctx)
 				if err != nil {
