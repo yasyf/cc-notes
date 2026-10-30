@@ -1,1 +1,1 @@
-{"v":1,"lamport":9,"ops":[{"kind":"add_comment","body":"PR130 normally merged as c9db543 after current changed-Python/all-Linux checks passed and unchanged native Mac gates were bound to actual full-PASS .19 CI41109674509 under explicit root direction. Effective branch checks are not required; no admin bypass. Exact reviewed tree/file hashes match merged source. Normal lightweight v0.74.20 tag pushed to c9db543; public publisher/artifact/plugin proof and guarded installation remain pending. Fixed CI watcher retained."}]}
+{"v":1,"lamport":10,"ops":[{"kind":"renew"}]}
