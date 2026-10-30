@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	cachePublicationRows  = 1024
+	cachePublicationRows  = 4096
 	cachePublicationBytes = 8 << 20
 )
 
