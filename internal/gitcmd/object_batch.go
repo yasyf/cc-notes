@@ -43,6 +43,7 @@ func (g Git) ObjectBatch(ctx context.Context) (*ObjectBatch, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	batch := &ObjectBatch{ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	args := append([]string{"--no-replace-objects", "--no-optional-locks", "--no-lazy-fetch"}, g.argv("cat-file", "--batch-command")...)
+	//nolint:gosec // G204: git and cat-file mode are fixed; repository paths use the selected backend argv.
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = g.environ(append(os.Environ(), noLazyFetchEnv))
 	stderr, err := unlinkedTemp()

@@ -64,8 +64,8 @@ func TestNativeLargeBlobStreamSurvivesReadScopeRelease(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		cancel()
-		<-ended
-		t.Fatal("scope release waited for the held stream")
+		releaseErr := <-ended
+		t.Fatalf("scope release waited for the held stream; cancellation returned %v", releaseErr)
 	}
 	if _, err := encoded.Reader(); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("new stream after scope release=%v", err)
@@ -180,8 +180,8 @@ func TestNativeSimultaneousStreamsRemainIndependentAfterScopeRelease(t *testing.
 		}
 	case <-time.After(2 * time.Second):
 		cancel()
-		<-released
-		t.Fatal("scope release waited for simultaneous held streams")
+		releaseErr := <-released
+		t.Fatalf("scope release waited for simultaneous held streams; cancellation returned %v", releaseErr)
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)

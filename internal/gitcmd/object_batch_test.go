@@ -56,8 +56,13 @@ func TestObjectBatchStreamsAndReusesOwnedChild(t *testing.T) {
 		if err := reader.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(actual.Bytes(), want) || !batch.Idle() || batch.cmd.ProcessState != nil {
-			t.Fatal("stream differs or batch child was not retained for reuse")
+		if !bytes.Equal(actual.Bytes(), want) || !batch.Idle() {
+			t.Fatal("stream differs or batch was not retained for reuse")
+		}
+		select {
+		case <-batch.done:
+			t.Fatal("batch child exited before owner release")
+		default:
 		}
 	}
 	if err := batch.Close(); err != nil {
