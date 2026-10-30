@@ -65,7 +65,7 @@ func TestTaskQueryIndexConsecutiveWork(t *testing.T) {
 			}
 			createProbe := func(ctx context.Context, title string) {
 				t.Helper()
-				s, err := Open(dir)
+				s, err := OpenContext(ctx, dir)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -80,7 +80,7 @@ func TestTaskQueryIndexConsecutiveWork(t *testing.T) {
 			}
 			createProbe(t.Context(), "cold probe")
 			time.Sleep(2100 * time.Millisecond)
-			s, err := Open(dir)
+			s, err := OpenContext(t.Context(), dir)
 			if err != nil {
 				t.Fatal(err)
 			}

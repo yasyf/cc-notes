@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,13 +24,36 @@ type taskIOBytes struct {
 	QueryBytes map[string]int64
 }
 
+func TestTaskDedupeColdCLIBytes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("syscall accounting requires Linux strace")
+	}
+	for _, candidate := range []struct{ name, binary string }{
+		{"candidate", os.Getenv("CCN_PRODUCTIONLIKE_CLI")},
+		{"legacy", os.Getenv("CCN_LEGACY_BASELINE_CLI")},
+	} {
+		if candidate.binary == "" {
+			t.Fatalf("%s binary is required", candidate.name)
+		}
+		t.Run(candidate.name, func(t *testing.T) {
+			for _, count := range []int{32, 10000} {
+				t.Run(strconv.Itoa(count), func(t *testing.T) {
+					dir := taskDedupeFixture(t, count)
+					t.Logf("byte_phase=cold cli=%q unrelated=%d", candidate.binary, count)
+					tracedTaskCreateBytes(t, dir, candidate.binary, count, 0)
+				})
+			}
+		})
+	}
+}
+
 func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), binTimeout)
 	defer cancel()
 	report := filepath.Join(t.TempDir(), "byte-syscalls.txt")
 	title := fmt.Sprintf("byte probe %d", ordinal)
-	args := []string{"-f", "-qq", "-yy", "-s", "1", "-o", report, "-e", "trace=read,pread64,write,pwrite64", binary, "task", "add", title, "--backlog", "--label", "target", "--no-validation-criteria"}
+	args := []string{"-f", "-qq", "-yy", "-s", "1", "-o", report, "-e", "trace=read,pread64,write,pwrite64", "--status=successful", binary, "task", "add", title, "--backlog", "--label", "target", "--no-validation-criteria"}
 	cmd := exec.CommandContext(ctx, "strace", args...)
 	cmd.Dir = dir
 	cmd.Env = binEnv(actorA)
@@ -58,7 +82,7 @@ func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal 
 	if work.Calls["read"] == 0 || work.Bytes["read"] == 0 {
 		t.Fatalf("missing returned-byte accounting: %+v", work)
 	}
-	t.Logf("unrelated=%d byte_create=%d elapsed_ms=%.3f syscall_calls=%v restarted_zero_bytes=%v returned_bytes=%v query_db_returned_bytes=%v user_cpu=%v system_cpu=%v raw_traced_wrapper_rusage=%+v", unrelated, ordinal, float64(elapsed)/float64(time.Millisecond), work.Calls, work.Restarted, work.Bytes, work.QueryBytes, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState.SysUsage())
+	t.Logf("unrelated=%d byte_create=%d elapsed_ms=%.3f successful_return_calls=%v restarted_zero_bytes=%v returned_bytes=%v query_db_returned_bytes=%v user_cpu=%v system_cpu=%v raw_traced_wrapper_rusage=%+v", unrelated, ordinal, float64(elapsed)/float64(time.Millisecond), work.Calls, work.Restarted, work.Bytes, work.QueryBytes, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState.SysUsage())
 }
 
 func parseTaskIOBytes(r io.Reader) (taskIOBytes, error) {
@@ -148,6 +172,7 @@ func TestTaskIOBytesTraceAccounting(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 	for _, bad := range []string{
+		"4388  ???( <detached ...>\n",
 		"101 <... read resumed>\"x\", 1) = 1\n",
 		"101 read(3, <unfinished ...>\n",
 		"101 read(3, \"x\", 1) = ?\n",

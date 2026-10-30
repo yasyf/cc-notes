@@ -124,7 +124,7 @@ func (l *lruDir) readEntries(ctx context.Context, db *sql.DB, names []string, en
 		args[i] = name
 	}
 	query := "SELECT name, slot, token, size FROM cache_entries WHERE name IN (" + strings.TrimSuffix(strings.Repeat("?,", len(names)), ",") + ")" //nolint:gosec // G202: SQL combines only fixed text and a placeholder count.
-	rows, err := db.QueryContext(ctx, query, args...) //nolint:gosec // G701: Every key is passed as a bound argument.
+	rows, err := db.QueryContext(ctx, query, args...)                                                                                              //nolint:gosec // G701: Every key is passed as a bound argument.
 	if err != nil {
 		return err
 	}
@@ -175,10 +175,10 @@ func (l *lruDir) ensure() bool {
 }
 
 func (l *lruDir) writerFile() (*os.File, error) {
-	if err := os.MkdirAll(l.dir, 0o750); err != nil {
+	if err := os.MkdirAll(l.dir, 0o750); err != nil { //nolint:gosec // G703: The directory belongs to this store's derived cache, never a cache key.
 		return nil, err
 	}
-	return os.OpenFile(l.dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	return os.OpenFile(l.dir+".lock", os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G703: The sibling lock derives only from the store's cache directory.
 }
 
 func (l *lruDir) lockWriter() (*os.File, bool) {
@@ -204,7 +204,7 @@ func (l *lruDir) database(access cacheAccess) (*sql.DB, error) {
 		if access == cacheLookup {
 			return l.db, nil
 		}
-		info, err := os.Stat(path)
+		info, err := os.Stat(path) //nolint:gosec // G703: path is the fixed metadata file inside the store's cache directory.
 		if err == nil && os.SameFile(info, l.dbInfo) {
 			return l.db, nil
 		}

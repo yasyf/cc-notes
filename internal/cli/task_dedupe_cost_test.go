@@ -69,32 +69,7 @@ func taskDedupeFreshCLIWorkFor(t *testing.T, binary string) []map[string]int {
 	var consecutiveCounts [][3]map[string]int
 	for _, count := range []int{32, 10000} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
-			dir := initRepo(t)
-			gitDir := filepath.Join(dir, ".git")
-			repo, err := gitobj.Open(gitDir, gitDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			sig := gitobj.Signature{Name: "Fixture", Email: "fixture@example.com", When: time.Unix(1700000000, 0)}
-			var packed []string
-			for i := range count + 1 {
-				label := "other"
-				if i == 0 {
-					label = "target"
-				}
-				sha, err := repo.WriteOpsCommit(t.Context(), nil, sig, "task fixture", model.Pack{
-					Lamport: 1,
-					Ops:     []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: fmt.Sprintf("fixture %d", i), Type: model.TypeTask, Priority: 2, Labels: []string{label}}},
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				packed = append(packed, string(sha)+" "+refs.For(model.KindTask, model.EntityID(sha)))
-			}
-			slices.Sort(packed)
-			if err := os.WriteFile(filepath.Join(gitDir, "packed-refs"), []byte(strings.Join(packed, "\n")+"\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			dir := taskDedupeFixture(t, count)
 			cold := tracedTaskCreate(t, dir, binary, "cold probe")
 			time.Sleep(2100 * time.Millisecond)
 			tracedTaskCLI(t, dir, binary, "task", "list", "--all", "--label", "target")
@@ -138,6 +113,37 @@ func taskDedupeFreshCLIWorkFor(t *testing.T, binary string) []map[string]int {
 		}
 	}
 	return warmCounts
+}
+
+func taskDedupeFixture(t *testing.T, count int) string {
+	t.Helper()
+	dir := initRepo(t)
+	gitDir := filepath.Join(dir, ".git")
+	repo, err := gitobj.Open(gitDir, gitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := gitobj.Signature{Name: "Fixture", Email: "fixture@example.com", When: time.Unix(1700000000, 0)}
+	var packed []string
+	for i := range count + 1 {
+		label := "other"
+		if i == 0 {
+			label = "target"
+		}
+		sha, err := repo.WriteOpsCommit(t.Context(), nil, sig, "task fixture", model.Pack{
+			Lamport: 1,
+			Ops:     []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: fmt.Sprintf("fixture %d", i), Type: model.TypeTask, Priority: 2, Labels: []string{label}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		packed = append(packed, string(sha)+" "+refs.For(model.KindTask, model.EntityID(sha)))
+	}
+	slices.Sort(packed)
+	if err := os.WriteFile(filepath.Join(gitDir, "packed-refs"), []byte(strings.Join(packed, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func tracedTaskCreate(t *testing.T, dir, binary, title string) map[string]int {

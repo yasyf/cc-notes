@@ -48,23 +48,78 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Build the release web frontend
-        working-directory: web
+      - name: Build and record both pinned release-style variants
+        id: build_variants
+        env:
+          CCN_ROWS1024_SHA: 9de12f6be2dad6b7f8019dbf5b2fc748d931568a
+          CCN_ROWS4096_SHA: 1ddb0a0118fddea0f03c0c2d69c6506a3bc3d1c7
         run: |
-          npm ci
-          npm run build
-      - name: Build and record the production-like candidate
-        run: |
-          ccn_perf_cli="$RUNNER_TEMP/ccn-productionlike"
-          ccn_perf_ldflags="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=v0.74.19-perf-proof -X github.com/yasyf/cc-notes/internal/version.Commit=${GITHUB_SHA}"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags webui -ldflags "$ccn_perf_ldflags" -o "$ccn_perf_cli" ./cmd/cc-notes
-          go version -m "$ccn_perf_cli"
+          git fetch --no-tags origin "$CCN_ROWS1024_SHA" "$CCN_ROWS4096_SHA"
+          git diff --exit-code "$CCN_ROWS1024_SHA" "$CCN_ROWS4096_SHA" -- . ':!internal/store/cache_publication.go'
+          for ccn_rows in 1024 4096; do
+            if [ "$ccn_rows" = 1024 ]; then
+              ccn_variant_sha="$CCN_ROWS1024_SHA"
+              ccn_runtime_hash=fec3fd9849f4229ff031b1c6f36885237d7589191ccae1a163cbcf3d1b5b9b95
+            else
+              ccn_variant_sha="$CCN_ROWS4096_SHA"
+              ccn_runtime_hash=9a1262ace7f743abad2b38e63e3699aaa8ae04be9d27ad592373c70fe41f7550
+            fi
+            ccn_variant_source="$RUNNER_TEMP/ccn-rows-$ccn_rows-source"
+            ccn_variant_cli="$RUNNER_TEMP/ccn-rows-$ccn_rows"
+            git worktree add --detach "$ccn_variant_source" "$ccn_variant_sha"
+            test "$(git -C "$ccn_variant_source" rev-parse HEAD)" = "$ccn_variant_sha"
+            printf '%s  %s\n' "$ccn_runtime_hash" "$ccn_variant_source/internal/store/cache_publication.go" | sha256sum --check --strict -
+            printf '%s  %s\n' 209751b3801fef5227125790929e702b6242f238fbc8c2d8ffd17f67172a1fe7 "$ccn_variant_source/internal/store/cache_publication_test.go" | sha256sum --check --strict -
+            (
+              cd "$ccn_variant_source/web"
+              npm ci
+              npm run build
+            )
+            ccn_perf_ldflags="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=v0.74.19-perf-proof -X github.com/yasyf/cc-notes/internal/version.Commit=$ccn_variant_sha"
+            (
+              cd "$ccn_variant_source"
+              CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags webui -ldflags "$ccn_perf_ldflags" -o "$ccn_variant_cli" ./cmd/cc-notes
+            )
+            printf 'rows=%s source=%s binary=%s\n' "$ccn_rows" "$ccn_variant_sha" "$ccn_variant_cli"
+            go version -m "$ccn_variant_cli"
+            sha256sum "$ccn_variant_cli"
+            echo "CCN_ROWS${ccn_rows}_CLI=$ccn_variant_cli" >> "$GITHUB_ENV"
+            echo "CCN_ROWS${ccn_rows}_SOURCE=$ccn_variant_source" >> "$GITHUB_ENV"
+          done
           go version -m "$CCN_LEGACY_BASELINE_CLI"
-          sha256sum "$ccn_perf_cli" "$CCN_LEGACY_BASELINE_CLI"
-          echo "CCN_PRODUCTIONLIKE_CLI=$ccn_perf_cli" >> "$GITHUB_ENV"
-      - name: Composed task payload, metadata and legacy full-list comparison
+          sha256sum "$CCN_LEGACY_BASELINE_CLI"
+      - name: Rows 1024 original payload metadata and legacy comparison
+        if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
+        env:
+          CCN_PRODUCTIONLIKE_CLI: ${{ env.CCN_ROWS1024_CLI }}
         run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)|TestTaskIOBytesTraceAccounting)$' ./internal/cli
+      - name: Rows 4096 original payload metadata and legacy comparison
+        if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
+        env:
+          CCN_PRODUCTIONLIKE_CLI: ${{ env.CCN_ROWS4096_CLI }}
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)|TestTaskIOBytesTraceAccounting)$' ./internal/cli
+      - name: Rows 1024 separate cold returned-byte comparison
+        if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
+        env:
+          CCN_PRODUCTIONLIKE_CLI: ${{ env.CCN_ROWS1024_CLI }}
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeColdCLIBytes$' ./internal/cli
+      - name: Rows 1024 publication contracts and initialized flush duration
+        if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
+        run: |
+          cd "$CCN_ROWS1024_SOURCE"
+          ./scripts/test.sh -count=1 -v -run '^(TestLRUDirPublicationBatch|TestLRUDirProcessBatchCrashAndGC$|TestLRUDirCompetingPublicationBatches$|TestLRUDirProcessCrashPublication$|TestLRUDirProcessesShareCapacity$|TestLRUDirFoldAllPublishesTailAfterWait$|TestLRUDirQueryRefreshPublishesUnselectedTail$|TestLRUDirPointLoadAtStillPublishesImmediately$)' ./internal/store
+      - name: Rows 4096 separate cold returned-byte comparison
+        if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
+        env:
+          CCN_PRODUCTIONLIKE_CLI: ${{ env.CCN_ROWS4096_CLI }}
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeColdCLIBytes$' ./internal/cli
+      - name: Rows 4096 publication contracts and initialized flush duration
+        if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
+        run: |
+          cd "$CCN_ROWS4096_SOURCE"
+          ./scripts/test.sh -count=1 -v -run '^(TestLRUDirPublicationBatch|TestLRUDirProcessBatchCrashAndGC$|TestLRUDirCompetingPublicationBatches$|TestLRUDirProcessCrashPublication$|TestLRUDirProcessesShareCapacity$|TestLRUDirFoldAllPublishesTailAfterWait$|TestLRUDirQueryRefreshPublishesUnselectedTail$|TestLRUDirPointLoadAtStillPublishesImmediately$)' ./internal/store
       - name: Query mutation work accounting
+        if: ${{ !cancelled() && steps.build_variants.outcome == 'success' }}
         run: ./scripts/test.sh -count=1 -v -run '^(TestTaskQueryIndexConsecutiveWork|TestQueryMutationWorkContextCallsites)$' ./internal/store
 
   attachment-ref-passes:

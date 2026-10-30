@@ -361,7 +361,7 @@ func TestLRUDirCompetingPublicationBatches(t *testing.T) {
 	for _, name := range []string{"base-a", "base-b", "base-c"} {
 		l.write(name, []byte("payload:"+name))
 	}
-	var processes []*cacheProcess
+	processes := make([]*cacheProcess, 0, 4)
 	for i := range 4 {
 		processes = append(processes, startCacheProcess(t, cacheProcessRequest{Mode: "batch", Dir: l.dir, Capacity: l.capacity, Names: []string{fmt.Sprintf("batch-%d-a", i), fmt.Sprintf("batch-%d-b", i)}, Data: "payload:"}))
 	}
