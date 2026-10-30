@@ -423,9 +423,9 @@ func TestReferencedAttachmentsPinnedAndFresh(t *testing.T) {
 	}
 	tip := pinned.pins[ref]
 	filtered := s.Pinned(map[string]model.SHA{
-		ref:                               tip,
-		ref + "/nested":                   tip,
-		refs.Root(model.KindNote):          tip,
+		ref:                                 tip,
+		ref + "/nested":                     tip,
+		refs.Root(model.KindNote):           tip,
 		refs.Root(model.KindTask) + "other": tip,
 	})
 	if got := referenced(t, filtered); !reflect.DeepEqual(got, want[:1]) {
