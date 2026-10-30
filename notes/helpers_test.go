@@ -22,6 +22,7 @@ func newWBClient(t *testing.T) (*Client, string) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	return c, dir
 }
 

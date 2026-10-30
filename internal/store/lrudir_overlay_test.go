@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -136,5 +137,34 @@ func TestLRUDirLargeOpenStreamsAfterHeader(t *testing.T) {
 	got := make([]byte, 11)
 	if _, err := io.ReadFull(f, got); err != nil || !bytes.Equal(got, data[:11]) {
 		t.Fatalf("stream prefix = %q, %v", got, err)
+	}
+}
+
+func TestLRUDirRemoveReclaimsPayloadBeforeSlotReuse(t *testing.T) {
+	l := &lruDir{capacity: 1, dir: t.TempDir()}
+	t.Cleanup(func() { _ = l.close() })
+	l.write("old", []byte("old payload"))
+	f, ok := l.open("old")
+	if !ok {
+		t.Fatal("old payload missing")
+	}
+	defer func() { _ = f.Close() }()
+	path := f.Name()
+	l.remove("old")
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed payload remains: %v", err)
+	}
+	if _, ok := l.read("old"); ok {
+		t.Fatal("removed metadata still readable")
+	}
+	l.write("new", []byte("new payload"))
+	if next := cacheEntryPath(t, l, "new"); next != path {
+		t.Fatalf("slot not reused: %q, want %q", next, path)
+	}
+	if data, err := io.ReadAll(f); err != nil || string(data) != "old payload" {
+		t.Fatalf("opened removed payload = %q, %v", data, err)
+	}
+	if data, ok := l.read("new"); !ok || string(data) != "new payload" {
+		t.Fatalf("replacement payload = %q, %v", data, ok)
 	}
 }

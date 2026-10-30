@@ -420,12 +420,14 @@ func (l *lruDir) remove(name string) {
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec("INSERT INTO cache_free SELECT slot FROM cache_entries WHERE name = ?", name); err != nil {
+	var slot int
+	if tx.QueryRow("DELETE FROM cache_entries WHERE name = ? RETURNING slot", name).Scan(&slot) != nil {
 		return
 	}
-	if _, err := tx.Exec("DELETE FROM cache_entries WHERE name = ?", name); err != nil {
+	if _, err := tx.Exec("INSERT INTO cache_free VALUES (?)", slot); err != nil {
 		return
 	}
+	_ = os.Remove(l.slotPath(slot))
 	if tx.Commit() != nil {
 		return
 	}
