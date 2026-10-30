@@ -1038,6 +1038,42 @@ func TestOpenWorktreeConfigExtension(t *testing.T) {
 	}
 }
 
+func TestOpenIgnoresUnrelatedBranchConfig(t *testing.T) {
+	for _, linked := range []bool{false, true} {
+		for _, setting := range []struct {
+			name, key, value string
+		}{
+			{"tag merge", "merge", "refs/tags/release"},
+			{"merge-preserving rebase", "rebase", "merges"},
+		} {
+			t.Run(fmt.Sprintf("linked=%t/%s", linked, setting.name), func(t *testing.T) {
+				dir := initRepo(t)
+				git(t, dir, "commit", "--allow-empty", "-q", "-m", "base")
+				sha := write(t, open(t, dir), nil, t0, createPack)
+				ref := "refs/cc-notes/notes/" + string(sha)
+				git(t, dir, "update-ref", ref, string(sha))
+				git(t, dir, "config", "branch.unrelated.remote", "origin")
+				git(t, dir, "config", "branch.unrelated."+setting.key, setting.value)
+				if got := git(t, dir, "config", "--get", "branch.unrelated."+setting.key); got != setting.value {
+					t.Fatalf("git config = %q, want %q", got, setting.value)
+				}
+				if linked {
+					worktree := filepath.Join(t.TempDir(), "worktree")
+					git(t, dir, "worktree", "add", "-q", "-b", "reader", worktree)
+					dir = worktree
+				}
+				got, err := open(t, dir).Tip(t.Context(), ref)
+				if err != nil {
+					t.Fatalf("Tip: %v", err)
+				}
+				if got != sha {
+					t.Fatalf("Tip = %s, want %s", got, sha)
+				}
+			})
+		}
+	}
+}
+
 func TestOpenRejectsUnsupportedLayout(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1084,6 +1120,16 @@ func TestOpenRejectsUnsupportedLayout(t *testing.T) {
 			name:   "repository format version",
 			config: "",
 			want:   "core.repositoryformatversion",
+		},
+		{
+			name:   "malformed config syntax",
+			config: "[broken\n",
+			want:   "read repository config",
+		},
+		{
+			name:   "unsupported layout with unrelated tag merge",
+			config: "[branch \"unrelated\"]\n\tmerge = refs/tags/release\n[extensions]\n\tobjectformat = sha256\n",
+			want:   "extensions.objectformat",
 		},
 	}
 	for _, tc := range tests {
