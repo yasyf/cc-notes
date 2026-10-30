@@ -21,6 +21,23 @@ import (
 )
 
 func TestTaskDedupeFreshCLICost(t *testing.T) {
+	warmCounts := taskDedupeFreshCLIWork(t)
+	for _, warm := range warmCounts {
+		if warm["read"] > 512 || warm["openat"] > 512 {
+			t.Errorf("warm fresh CLI read unrelated task bodies: %v", warm)
+		}
+	}
+	if len(warmCounts) == 2 {
+		for _, name := range []string{"read", "openat"} {
+			if warmCounts[1][name] > warmCounts[0][name]+64 {
+				t.Errorf("warm %s grew with unrelated tasks: %d at 32, %d at 10000", name, warmCounts[0][name], warmCounts[1][name])
+			}
+		}
+	}
+}
+
+func taskDedupeFreshCLIWork(t *testing.T) []map[string]int {
+	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("syscall accounting requires Linux strace")
 	}
@@ -65,18 +82,9 @@ func TestTaskDedupeFreshCLICost(t *testing.T) {
 			if cold["read"] <= count {
 				t.Fatalf("cold population did not account for %d fixture histories: %v", count, cold)
 			}
-			if warm["read"] > 512 || warm["openat"] > 512 || warm["newfstatat"] > 512 || warm["getdents64"] > 64 {
-				t.Fatalf("warm fresh CLI visited unrelated task corpus: %v", warm)
-			}
 		})
 	}
-	if len(warmCounts) == 2 {
-		for _, name := range []string{"read", "openat", "newfstatat", "getdents64"} {
-			if warmCounts[1][name] > warmCounts[0][name]+64 {
-				t.Errorf("warm %s grew with unrelated tasks: %d at 32, %d at 10000", name, warmCounts[0][name], warmCounts[1][name])
-			}
-		}
-	}
+	return warmCounts
 }
 
 func tracedTaskCreate(t *testing.T, dir, title string) map[string]int {

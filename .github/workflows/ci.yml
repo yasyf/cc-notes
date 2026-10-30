@@ -20,7 +20,7 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Install syscall accounting
         run: sudo apt-get update && sudo apt-get install -y strace
-      - name: Fresh CLI task deduplication cold and warm work
+      - name: Fresh CLI task deduplication payload reads, cold and warm
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLICost$' ./internal/cli
 
   attachment-ref-passes:
