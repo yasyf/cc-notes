@@ -14,10 +14,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: baseline
-            ref: 7789b89307d1c5ef5ab3e4e2f2149a0f0110adfe
-          - label: candidate
-            ref: 90e69f8d07275304b4566ccd11e212976621ed97
+          - label: baseline-with-test
+            ref: bee03b49ab6ece102be7376ac6c1b2036af44e52
     name: clean-cache-lint-${{ matrix.label }}
     env:
       GOOS: darwin
