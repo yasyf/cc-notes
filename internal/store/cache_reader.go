@@ -98,7 +98,7 @@ func cacheBlockDigest(token []byte, size int64, index uint64, data []byte) [sha2
 	var input [prefix + cacheChunkSize]byte
 	position := copy(input[:], cacheChunkDomain)
 	position += copy(input[position:], token)
-	binary.BigEndian.PutUint64(input[position:position+8], uint64(size))
+	binary.BigEndian.PutUint64(input[position:position+8], uint64(size)) //nolint:gosec // Metadata sizes are nonnegative before opening; writes use slice lengths.
 	binary.BigEndian.PutUint64(input[position+8:position+16], index)
 	copy(input[prefix:], data)
 	return sha256.Sum256(input[:prefix+len(data)])

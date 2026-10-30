@@ -43,6 +43,25 @@ jobs:
           chmod +x cc-notes_linux_amd64
           ./cc-notes_linux_amd64 --version
           echo "CCN_LEGACY_BASELINE_CLI=$ccn_legacy_dir/cc-notes_linux_amd64" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the release web frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Build and record the production-like candidate
+        run: |
+          ccn_perf_cli="$RUNNER_TEMP/ccn-productionlike"
+          ccn_perf_ldflags="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=v0.74.19-perf-proof -X github.com/yasyf/cc-notes/internal/version.Commit=${GITHUB_SHA}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags webui -ldflags "$ccn_perf_ldflags" -o "$ccn_perf_cli" ./cmd/cc-notes
+          go version -m "$ccn_perf_cli"
+          go version -m "$CCN_LEGACY_BASELINE_CLI"
+          sha256sum "$ccn_perf_cli" "$CCN_LEGACY_BASELINE_CLI"
+          echo "CCN_PRODUCTIONLIKE_CLI=$ccn_perf_cli" >> "$GITHUB_ENV"
       - name: Composed task payload, metadata and legacy full-list comparison
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)$' ./internal/cli
 

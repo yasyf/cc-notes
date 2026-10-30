@@ -38,7 +38,19 @@ func TestTaskDedupeFreshCLICost(t *testing.T) {
 
 func taskDedupeFreshCLIWork(t *testing.T) []map[string]int {
 	t.Helper()
-	return taskDedupeFreshCLIWorkFor(t, cli.TestBinary)
+	if runtime.GOOS != "linux" {
+		t.Skip("syscall accounting requires Linux strace")
+	}
+	binary := os.Getenv("CCN_PRODUCTIONLIKE_CLI")
+	if binary == "" {
+		t.Fatal("production-like candidate binary is required")
+	}
+	info, err := exec.Command("go", "version", "-m", cli.TestBinary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("functional test binary build info: %v; %s", err, info)
+	}
+	t.Logf("functional_test_binary=%s build_info=%s", cli.TestBinary, info)
+	return taskDedupeFreshCLIWorkFor(t, binary)
 }
 
 func taskDedupeFreshCLIWorkFor(t *testing.T, binary string) []map[string]int {
@@ -97,7 +109,7 @@ func taskDedupeFreshCLIWorkFor(t *testing.T, binary string) []map[string]int {
 			if cold["read"] <= count {
 				t.Fatalf("cold population did not account for %d fixture histories: %v", count, cold)
 			}
-			if binary == cli.TestBinary {
+			if binary == os.Getenv("CCN_PRODUCTIONLIKE_CLI") {
 				var consecutive [3]map[string]int
 				for i := range consecutive {
 					consecutive[i] = tracedTaskCreate(t, dir, binary, fmt.Sprintf("consecutive probe %d", i+1))
