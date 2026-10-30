@@ -269,12 +269,17 @@ func validateActivation(activation deploy.Activation, appPath, marketingVersion 
 }
 
 func validateReadiness(build string, generation uint64, digest deploy.SHA256, appPath string) error {
-	want, err := bundle.ShortVersion(appPath)
+	marketingVersion, err := bundle.ShortVersion(appPath)
 	if err != nil {
 		return fmt.Errorf("cc-notes helper: read installed bundle version: %w", err)
 	}
+	info, err := os.Stat(bundle.ExePath(appPath, helperclient.ExecutableName))
+	if err != nil {
+		return fmt.Errorf("cc-notes helper: inspect installed helper executable: %w", err)
+	}
+	want := fmt.Sprintf("%s+%d", marketingVersion, info.ModTime().UnixNano())
 	if build != want || generation == 0 || digest == (deploy.SHA256{}) {
-		return fmt.Errorf("cc-notes helper: daemonkit returned an inexact readiness proof (build %q, want bundle version %q)", build, want)
+		return fmt.Errorf("cc-notes helper: daemonkit returned an inexact readiness proof (build %q, want bundle build %q)", build, want)
 	}
 	return nil
 }
