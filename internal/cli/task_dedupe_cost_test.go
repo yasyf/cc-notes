@@ -51,6 +51,7 @@ func taskDedupeFreshCLIWorkFor(t *testing.T, binary string) []map[string]int {
 		t.Fatal(err)
 	}
 	var warmCounts []map[string]int
+	var consecutiveCounts [][3]map[string]int
 	for _, count := range []int{32, 10000} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			dir := initRepo(t)
@@ -96,7 +97,27 @@ func taskDedupeFreshCLIWorkFor(t *testing.T, binary string) []map[string]int {
 			if cold["read"] <= count {
 				t.Fatalf("cold population did not account for %d fixture histories: %v", count, cold)
 			}
+			if binary == cli.TestBinary {
+				var consecutive [3]map[string]int
+				for i := range consecutive {
+					consecutive[i] = tracedTaskCreate(t, dir, binary, fmt.Sprintf("consecutive probe %d", i+1))
+					if consecutive[i]["read"] > 512 || consecutive[i]["openat"] > 512 {
+						t.Errorf("consecutive fresh CLI %d read unrelated task bodies: %v", i+1, consecutive[i])
+					}
+				}
+				consecutiveCounts = append(consecutiveCounts, consecutive)
+				t.Logf("unrelated=%d consecutive_without_reprime=%v", count, consecutive)
+			}
 		})
+	}
+	if len(consecutiveCounts) == 2 {
+		for i := range consecutiveCounts[0] {
+			for _, name := range []string{"read", "openat"} {
+				if consecutiveCounts[1][i][name] > consecutiveCounts[0][i][name]+64 {
+					t.Errorf("consecutive %d %s grew with unrelated tasks: %d at 32, %d at 10000", i+1, name, consecutiveCounts[0][i][name], consecutiveCounts[1][i][name])
+				}
+			}
+		}
 	}
 	return warmCounts
 }
