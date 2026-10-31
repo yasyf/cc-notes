@@ -1,1 +1,1 @@
-{"v":1,"lamport":4,"ops":[{"kind":"remove_criterion","id":"2899c5f05e9476759fb34e4b36ec70f5"}]}
+{"v":1,"lamport":5,"ops":[{"kind":"add_criterion","id":"09e29ab2b6854b815884b623d7efc298","text":"ONE normal-push Mac-only CI actually runs immutable-old intended failure and candidate passing regression, with all fixture children ended; preserve standing no-Linux/Windows fork scope.","script":""}]}
