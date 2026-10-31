@@ -110,7 +110,7 @@ jobs:
 
   smoke-macos:
     name: smoke macos (pure, no live mount)
-    runs-on: macos-latest
+    runs-on: macos-15
     needs: [pure]
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
