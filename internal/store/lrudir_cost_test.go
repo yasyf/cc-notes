@@ -32,7 +32,7 @@ func TestLRUDirCostHelper(t *testing.T) {
 		capacity = foldCacheCap
 	}
 	l := &lruDir{capacity: capacity, dir: dir}
-	var metadataOpens, payloadOpens, validated, rankSum int64
+	var metadataOpens, inlineOpens, payloadOpens, validated, rankSum int64
 	var hits, misses int64
 	started := time.Now()
 	switch mode {
@@ -75,7 +75,7 @@ func TestLRUDirCostHelper(t *testing.T) {
 			}
 		}
 	case "owned", "per-access":
-		var previousIndex *os.File
+		var previousIndex, previousData *os.File
 		for i := range count {
 			name := fmt.Sprintf("%064d", i)
 			entry, ok := l.entry(name)
@@ -90,7 +90,13 @@ func TestLRUDirCostHelper(t *testing.T) {
 			if !ok {
 				t.Fatalf("payload %s missing", name)
 			}
-			payloadOpens++
+			if reader.file != nil {
+				payloadOpens++
+			}
+			if l.data != previousData {
+				inlineOpens++
+				previousData = l.data
+			}
 			data, readErr := io.ReadAll(reader)
 			closeErr := reader.Close()
 			if readErr != nil || closeErr != nil || string(data) != "cached payload" {
@@ -103,6 +109,9 @@ func TestLRUDirCostHelper(t *testing.T) {
 				}
 				if _, err := previousIndex.Stat(); !errors.Is(err, os.ErrClosed) {
 					t.Fatalf("closed metadata handle = %v", err)
+				}
+				if _, err := previousData.Stat(); !errors.Is(err, os.ErrClosed) {
+					t.Fatalf("closed inline handle = %v", err)
 				}
 				l = &lruDir{capacity: capacity, dir: dir}
 			}
@@ -120,7 +129,9 @@ func TestLRUDirCostHelper(t *testing.T) {
 				misses++
 				continue
 			}
-			payloadOpens++
+			if reader.file != nil {
+				payloadOpens++
+			}
 			data, readErr := io.ReadAll(reader)
 			closeErr := reader.Close()
 			if readErr != nil || closeErr != nil || string(data) != "cached payload" {
@@ -130,6 +141,9 @@ func TestLRUDirCostHelper(t *testing.T) {
 		}
 		if l.index != nil {
 			metadataOpens = 1
+		}
+		if l.data != nil {
+			inlineOpens = 1
 		}
 	default:
 		t.Fatalf("unknown cost mode %q", mode)
@@ -162,7 +176,7 @@ func TestLRUDirCostHelper(t *testing.T) {
 	result := map[string]int64{
 		"elapsed_ns": time.Since(started).Nanoseconds(), "work_elapsed_ns": workElapsed,
 		"close_elapsed_ns": closeElapsed, "index_bytes_before_close": indexBefore, "index_bytes_after_close": indexAfter,
-		"capacity": int64(capacity), "owner_fd_acquisitions": metadataOpens, "payload_fd_acquisitions": payloadOpens,
+		"capacity": int64(capacity), "owner_fd_acquisitions": metadataOpens, "payload_fd_acquisitions": payloadOpens, "inline_fd_acquisitions": inlineOpens,
 		"validated_population_entries": validated, "hint_rank_sum": rankSum,
 		"cache_hits": hits, "cache_misses": misses,
 	}
@@ -216,7 +230,7 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 			}
 			ownedOpens := owned["open"] + owned["openat"]
 			perAccessOpens := perAccess["open"] + perAccess["openat"]
-			if ownedOpens > count+64 || perAccessOpens-ownedOpens != count-1 || owned["owner_fd_acquisitions"] != 1 || perAccess["owner_fd_acquisitions"] != count || owned["payload_fd_acquisitions"] != count || perAccess["payload_fd_acquisitions"] != count {
+			if ownedOpens > 64 || perAccessOpens-ownedOpens != 2*(count-1) || owned["owner_fd_acquisitions"] != 1 || perAccess["owner_fd_acquisitions"] != count || owned["inline_fd_acquisitions"] != 1 || perAccess["inline_fd_acquisitions"] != count || owned["payload_fd_acquisitions"] != 0 || perAccess["payload_fd_acquisitions"] != 0 {
 				t.Fatalf("owned handle reopened per hit: owned=%v per-access=%v", owned, perAccess)
 			}
 			if owned["write"] > 8 || owned["pwrite64"] > 8 || owned["fsync"]+owned["fdatasync"] != 0 {
@@ -292,7 +306,7 @@ func TestLRUDirDefaultCapacityHitRate(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "cache")
 			cacheCostProcess(t, "populate-default", dir, count, false)
 			read := cacheCostProcess(t, "default-rate", dir, count, true)
-			if read["capacity"] != foldCacheCap || read["cache_hits"]+read["cache_misses"] != count || read["payload_fd_acquisitions"] != read["cache_hits"] {
+			if read["capacity"] != foldCacheCap || read["cache_hits"]+read["cache_misses"] != count || read["payload_fd_acquisitions"] != 0 || read["inline_fd_acquisitions"] != 1 {
 				t.Fatalf("default-capacity hit accounting = %v", read)
 			}
 			if count == 32 && read["cache_hits"] != count {
@@ -323,7 +337,7 @@ func cacheCostProcess(t *testing.T, mode, dir string, count int, trace bool) map
 		t.Fatalf("cache cost result: %v: %q", err, out)
 	}
 	counts := map[string]int{"elapsed_ns": int(result["elapsed_ns"])}
-	for _, name := range []string{"capacity", "owner_fd_acquisitions", "payload_fd_acquisitions", "validated_population_entries", "hint_rank_sum", "cache_hits", "cache_misses"} {
+	for _, name := range []string{"capacity", "owner_fd_acquisitions", "payload_fd_acquisitions", "inline_fd_acquisitions", "validated_population_entries", "hint_rank_sum", "cache_hits", "cache_misses"} {
 		counts[name] = int(result[name])
 	}
 	if trace {

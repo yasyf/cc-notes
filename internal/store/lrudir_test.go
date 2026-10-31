@@ -1,6 +1,11 @@
 package store
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"errors"
+	"io"
+	"os"
 	"slices"
 	"sync"
 	"testing"
@@ -57,14 +62,105 @@ func TestLRUDirRacingFirstWritesEvictTheOldestPersistedEntries(t *testing.T) {
 }
 
 func cacheEntryPath(t *testing.T, l *lruDir, name string) string {
+	return cacheEntryFrame(t, l, name).path
+}
+
+type cacheFrameLocation struct {
+	path     string
+	slotPath string
+	offset   int64
+	size     int
+	inline   bool
+}
+
+func cacheEntryFrame(t *testing.T, l *lruDir, name string) cacheFrameLocation {
 	t.Helper()
-	f, ok := l.open(name)
+	entry, ok := l.entry(name)
 	if !ok {
 		t.Fatalf("cache entry %s missing", name)
 	}
-	path := f.Name()
+	f, ok := l.openEntry(entry)
+	if !ok {
+		t.Fatalf("cache entry %s missing", name)
+	}
+	location := cacheFrameLocation{path: f.Name(), slotPath: l.slotPath(entry.slot), inline: entry.inline}
+	if entry.inline {
+		location.offset = int64(entry.slot) * cacheInlineStride
+		location.size = cacheTokenSize + 1 + len(name) + sha256.Size + int(entry.size)
+	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	return location
+}
+
+func (p cacheFrameLocation) read(t *testing.T) []byte {
+	t.Helper()
+	if !p.inline {
+		data, err := os.ReadFile(p.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	f, err := os.Open(p.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	data := make([]byte, p.size)
+	if _, err := f.ReadAt(data, p.offset); err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func (p cacheFrameLocation) write(t *testing.T, data []byte) {
+	t.Helper()
+	if !p.inline {
+		if err := os.WriteFile(p.path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	var record [cacheInlineStride]byte
+	if len(data) > len(record) {
+		t.Fatalf("inline fixture frame has %d bytes", len(data))
+	}
+	copy(record[:], data)
+	f, err := os.OpenFile(p.path, os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteAt(record[:], p.offset); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (p cacheFrameLocation) assertErased(t *testing.T) {
+	t.Helper()
+	if _, err := os.Stat(p.slotPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed external payload remains: %v", err)
+	}
+	if p.inline {
+		p.assertRecordZero(t)
+	}
+}
+
+func (p cacheFrameLocation) assertRecordZero(t *testing.T) {
+	t.Helper()
+	f, err := os.Open(p.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	var record [cacheInlineStride]byte
+	n, err := f.ReadAt(record[:], p.offset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(record[:n], make([]byte, n)) {
+		t.Fatal("removed inline payload remains")
+	}
 }

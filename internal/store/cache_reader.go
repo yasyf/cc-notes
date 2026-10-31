@@ -17,9 +17,10 @@ const (
 var errCacheIntegrity = errors.New("cache payload integrity mismatch")
 
 // CacheReader verifies publication-bound blocks before exposing their bytes.
-// It owns its file independently of the store's metadata handle.
+// Its verified bytes and streamed file remain valid independently of the store.
 type CacheReader struct {
 	file      *os.File
+	name      string
 	token     [cacheTokenSize]byte
 	size      int64
 	remaining int64
@@ -30,13 +31,22 @@ type CacheReader struct {
 }
 
 func newCacheReader(file *os.File, entry cacheEntry) (*CacheReader, error) {
+	reader, err := readCacheFirstBlock(file, entry)
+	if err != nil {
+		return nil, err
+	}
+	reader.file, reader.name = file, file.Name()
+	return reader, nil
+}
+
+func readCacheFirstBlock(source io.Reader, entry cacheEntry) (*CacheReader, error) {
 	if !entry.valid(entry.name) {
 		return nil, errCacheIntegrity
 	}
 	first := int(min(entry.size, int64(cacheChunkSize)))
 	prefix := cacheTokenSize + 1 + len(entry.name)
 	buffer := make([]byte, prefix+sha256.Size+first)
-	if _, err := io.ReadFull(file, buffer); err != nil {
+	if _, err := io.ReadFull(source, buffer); err != nil {
 		return nil, err
 	}
 	if !bytes.Equal(buffer[:cacheTokenSize], entry.token) || int(buffer[cacheTokenSize]) != len(entry.name) || !bytes.Equal(buffer[cacheTokenSize+1:prefix], []byte(entry.name)) {
@@ -47,7 +57,7 @@ func newCacheReader(file *os.File, entry cacheEntry) (*CacheReader, error) {
 	if !bytes.Equal(buffer[prefix:prefix+sha256.Size], digest[:]) {
 		return nil, errCacheIntegrity
 	}
-	reader := &CacheReader{file: file, size: entry.size, remaining: entry.size - int64(first), index: 1, buffer: buffer, chunk: chunk}
+	reader := &CacheReader{size: entry.size, remaining: entry.size - int64(first), index: 1, buffer: buffer, chunk: chunk}
 	copy(reader.token[:], entry.token)
 	return reader, nil
 }
@@ -87,13 +97,16 @@ func (r *CacheReader) Size() int64 {
 	return r.size
 }
 
-// Name identifies the opened backing slot, including after replacement.
+// Name identifies the backing payload file, including after replacement.
 func (r *CacheReader) Name() string {
-	return r.file.Name()
+	return r.name
 }
 
 // Close releases this reader's file without changing the store's lifetime.
 func (r *CacheReader) Close() error {
+	if r.file == nil {
+		return nil
+	}
 	return r.file.Close()
 }
 
@@ -108,7 +121,7 @@ func cacheBlockDigest(token []byte, size int64, index uint64, data []byte) [sha2
 	return sha256.Sum256(input[:prefix+len(data)])
 }
 
-func writeCachePayload(file *os.File, name string, token, data []byte) error {
+func writeCachePayload(file io.Writer, name string, token, data []byte) error {
 	var buffer [cacheTokenSize + 1 + cacheKeyMax + sha256.Size + cacheChunkSize]byte
 	copy(buffer[:], token)
 	buffer[cacheTokenSize] = byte(len(name))

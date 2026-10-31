@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"math"
 	"os"
@@ -16,14 +17,17 @@ const (
 	cacheHintFile       = "index.bin"
 )
 
-var cacheHintMagic = [8]byte{'C', 'C', 'N', 'H', 'I', 'N', 'T', 1}
+var cacheHintMagic = [8]byte{'C', 'C', 'N', 'H', 'I', 'N', 'T', 2}
+
+const cacheHintInlineFlag uint64 = 1 << 63
 
 type cacheHint struct {
-	tag   uint64
-	size  int64
-	rank  uint64
-	nonce [32]byte
-	empty bool
+	tag    uint64
+	size   int64
+	rank   uint64
+	nonce  [32]byte
+	inline bool
+	empty  bool
 }
 
 type cacheHintSlot struct {
@@ -41,13 +45,21 @@ func decodeCacheHint(data []byte) (cacheHint, error) {
 	if size == 0 {
 		return cacheHint{empty: true}, nil
 	}
+	inline := size > cacheHintInlineFlag
+	if inline {
+		size -= cacheHintInlineFlag
+	}
 	if size-1 > math.MaxInt64 {
 		return cacheHint{}, errCacheIntegrity
 	}
+	if inline && size-1 > cacheInlineStride-cacheTokenSize-1-sha256.Size {
+		return cacheHint{}, errCacheIntegrity
+	}
 	hint := cacheHint{
-		tag:  binary.BigEndian.Uint64(data[:8]),
-		size: int64(size - 1),
-		rank: binary.BigEndian.Uint64(data[16:24]),
+		tag:    binary.BigEndian.Uint64(data[:8]),
+		size:   int64(size - 1),
+		rank:   binary.BigEndian.Uint64(data[16:24]),
+		inline: inline,
 	}
 	copy(hint.nonce[:], data[24:])
 	return hint, nil
@@ -57,7 +69,11 @@ func encodeCacheHint(hint cacheHint) [cacheHintRecordSize]byte {
 	var data [cacheHintRecordSize]byte
 	if !hint.empty {
 		binary.BigEndian.PutUint64(data[:8], hint.tag)
-		binary.BigEndian.PutUint64(data[8:16], uint64(hint.size)+1)
+		size := uint64(hint.size) + 1
+		if hint.inline {
+			size += cacheHintInlineFlag
+		}
+		binary.BigEndian.PutUint64(data[8:16], size)
 		binary.BigEndian.PutUint64(data[16:24], hint.rank)
 		copy(data[24:], hint.nonce[:])
 	}

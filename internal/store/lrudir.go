@@ -24,14 +24,16 @@ const (
 	cacheLookup cacheAccess = iota
 	cacheEnumerate
 	cacheWrite
+	cacheErase
 )
 
 type cacheEntry struct {
-	name  string
-	slot  int
-	token []byte
-	size  int64
-	rank  uint64
+	name   string
+	slot   int
+	token  []byte
+	size   int64
+	rank   uint64
+	inline bool
 }
 
 type cacheHit struct {
@@ -55,6 +57,10 @@ type lruDir struct {
 	indexInfo     os.FileInfo
 	indexWritable bool
 	lookupMissing bool
+	data          *os.File
+	dataInfo      os.FileInfo
+	dataWritable  bool
+	dataMissing   bool
 	closed        bool
 }
 
@@ -68,12 +74,12 @@ func (slot cacheHintSlot) entry(name string) cacheEntry {
 	token := make([]byte, cacheTokenSize)
 	copy(token, key[:])
 	copy(token[32:], slot.nonce[:])
-	return cacheEntry{name: name, slot: slot.slot, token: token, size: slot.size, rank: slot.rank}
+	return cacheEntry{name: name, slot: slot.slot, token: token, size: slot.size, rank: slot.rank, inline: slot.inline}
 }
 
 func (entry cacheEntry) valid(name string) bool {
 	key := sha256.Sum256([]byte(name))
-	return len(name) <= cacheKeyMax && entry.name == name && entry.size >= 0 && len(entry.token) == cacheTokenSize && bytes.Equal(entry.token[:32], key[:])
+	return len(name) <= cacheKeyMax && entry.name == name && entry.size >= 0 && (!entry.inline || cacheInlineFits(name, entry.size)) && len(entry.token) == cacheTokenSize && bytes.Equal(entry.token[:32], key[:])
 }
 
 func (l *lruDir) read(name string) ([]byte, bool) {
@@ -161,6 +167,18 @@ func (l *lruDir) openEntry(entry cacheEntry) (*CacheReader, bool) {
 	if !entry.valid(entry.name) {
 		return nil, false
 	}
+	if entry.inline {
+		file, err := l.payloadFile(cacheLookup)
+		if err != nil {
+			return nil, false
+		}
+		reader, err := readCacheFirstBlock(io.NewSectionReader(file, int64(entry.slot)*cacheInlineStride, cacheInlineStride), entry)
+		if err != nil {
+			return nil, false
+		}
+		reader.name = file.Name()
+		return reader, true
+	}
 	file, err := os.Open(l.slotPath(entry.slot))
 	if err != nil {
 		return nil, false
@@ -211,6 +229,7 @@ func (l *lruDir) hintFile(access cacheAccess) (*os.File, error) {
 	}
 	if access != cacheLookup {
 		l.lookupMissing = false
+		l.dataMissing = false
 	}
 	path := filepath.Join(l.dir, cacheHintFile)
 	if l.index != nil {
@@ -227,6 +246,9 @@ func (l *lruDir) hintFile(access cacheAccess) (*os.File, error) {
 		}
 		l.index = nil
 		if !same {
+			if err := l.closePayloadLocked(); err != nil {
+				return nil, err
+			}
 			l.mu.Lock()
 			clear(l.hits)
 			l.mu.Unlock()
@@ -276,10 +298,11 @@ func (l *lruDir) close() error {
 	l.active = false
 	l.hits = nil
 	l.mu.Unlock()
-	if l.index == nil {
-		return nil
+	var indexErr error
+	if l.index != nil {
+		indexErr = l.index.Close()
 	}
-	return l.index.Close()
+	return errors.Join(indexErr, l.closePayloadLocked())
 }
 
 func (l *lruDir) write(name string, data []byte) {
@@ -312,6 +335,7 @@ func (l *lruDir) writeBatch(values []cachePublication) {
 		}
 	}()
 	pages := cacheHintPages{file: file, capacity: l.capacity}
+	payload := cachePayloadWriter{cache: l}
 	for _, value := range values {
 		if len(value.name) > cacheKeyMax {
 			return
@@ -321,7 +345,8 @@ func (l *lruDir) writeBatch(values []cachePublication) {
 		if err != nil {
 			return
 		}
-		slot := l.chooseSlot(window, tag)
+		previous := l.chooseSlot(window, tag)
+		slot := previous.slot
 		for _, candidate := range window.slots[:window.count] {
 			if !candidate.empty {
 				rank = max(rank, candidate.rank)
@@ -333,13 +358,14 @@ func (l *lruDir) writeBatch(values []cachePublication) {
 		if _, err := rand.Read(token[32:]); err != nil {
 			return
 		}
-		if !l.publish(slot, value.name, token[:], value.data) {
+		inline := cacheInlineFits(value.name, int64(len(value.data)))
+		if !payload.publish(previous, value.name, token[:], value.data) {
 			return
 		}
 		l.mu.Lock()
 		rank = max(rank, l.rank) + 1
 		l.mu.Unlock()
-		hint := cacheHint{tag: tag, size: int64(len(value.data)), rank: rank}
+		hint := cacheHint{tag: tag, size: int64(len(value.data)), rank: rank, inline: inline}
 		copy(hint.nonce[:], token[32:])
 		if err := writeCacheHint(file, slot, hint); err != nil {
 			return
@@ -357,27 +383,27 @@ func (l *lruDir) writeBatch(values []cachePublication) {
 	}
 }
 
-func (l *lruDir) chooseSlot(window cacheHintWindow, tag uint64) int {
+func (l *lruDir) chooseSlot(window cacheHintWindow, tag uint64) cacheHintSlot {
 	for _, candidate := range window.slots[:window.count] {
 		if !candidate.empty && candidate.tag == tag {
-			return candidate.slot
+			return candidate
 		}
 	}
 	for _, candidate := range window.slots[:window.count] {
 		if candidate.empty {
-			return candidate.slot
+			return candidate
 		}
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	victim, oldest := window.slots[0].slot, ^uint64(0)
+	victim, oldest := window.slots[0], ^uint64(0)
 	for _, candidate := range window.slots[:window.count] {
 		rank := candidate.rank
 		if hit, ok := l.hits[candidate.slot]; ok && hit.nonce == candidate.nonce && hit.diskRank == candidate.rank {
 			rank = max(rank, hit.rank)
 		}
 		if rank < oldest {
-			victim, oldest = candidate.slot, rank
+			victim, oldest = candidate, rank
 		}
 	}
 	return victim
@@ -438,29 +464,19 @@ func (l *lruDir) rememberHit(entry cacheEntry) {
 }
 
 func (l *lruDir) hintName(slot cacheHintSlot) (string, bool) {
+	if slot.inline {
+		file, err := l.payloadFile(cacheEnumerate)
+		if err != nil {
+			return "", false
+		}
+		return cachePayloadName(io.NewSectionReader(file, int64(slot.slot)*cacheInlineStride, cacheInlineStride), slot)
+	}
 	file, err := os.Open(l.slotPath(slot.slot))
 	if err != nil {
 		return "", false
 	}
 	defer func() { _ = file.Close() }()
-	var prefix [cacheTokenSize + 1]byte
-	if _, err := io.ReadFull(file, prefix[:]); err != nil {
-		return "", false
-	}
-	name := make([]byte, int(prefix[cacheTokenSize]))
-	if _, err := io.ReadFull(file, name); err != nil {
-		return "", false
-	}
-	if cacheNameTag(string(name)) != slot.tag {
-		return "", false
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return "", false
-	}
-	if _, err := newCacheReader(file, slot.entry(string(name))); err != nil {
-		return "", false
-	}
-	return string(name), true
+	return cachePayloadName(file, slot)
 }
 
 func (l *lruDir) names() []string {
@@ -516,6 +532,9 @@ func (l *lruDir) remove(name string) {
 		}
 		if found, ok := l.hintName(candidate); ok && found != name {
 			continue
+		}
+		if payload, err := l.payloadFile(cacheErase); err == nil {
+			_ = eraseInlineCachePayload(payload, candidate.slot)
 		}
 		_ = os.Remove(l.slotPath(candidate.slot))
 		_ = writeCacheHint(file, candidate.slot, cacheHint{empty: true})

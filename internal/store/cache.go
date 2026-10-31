@@ -24,7 +24,7 @@ const (
 	foldCacheCap = 1 << 14
 	// foldCacheSubdir is the path under the git common dir where entries live;
 	// it is never a ref, so it is never pushed or synced.
-	foldCacheSubdir = "cc-notes/folds-v4"
+	foldCacheSubdir = "cc-notes/folds-v5"
 )
 
 // foldCacheGeneration tags every entry with the op vocabulary of the binary that
