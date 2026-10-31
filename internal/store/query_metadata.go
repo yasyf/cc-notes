@@ -6,7 +6,7 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-const queryMetadataVersion = 4
+const queryMetadataVersion = 5
 
 type queryMetadata struct {
 	Version             int                       `json:"version"`

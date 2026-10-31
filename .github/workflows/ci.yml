@@ -38,6 +38,22 @@ jobs:
           cat "$RUNNER_TEMP/ccn-147-negative.log"
           test "$result" -ne 0
           test "$(grep -c 'COLD_DUPLICATE_REGRESSION:' "$RUNNER_TEMP/ccn-147-negative.log")" -eq 6
+      - name: Query metadata semantic generation contracts
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestQueryMetadata(ExecutableIndependentReuse|SemanticGenerationIsolation)$' ./internal/store
+      - name: Reject executable-bound metadata rebuilds
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-query-executable-negative"
+          git fetch --no-tags --depth=1 origin f7a3371d7d2318a591cc38a8b39df79c92e6f910
+          git worktree add --detach "$baseline" f7a3371d7d2318a591cc38a8b39df79c92e6f910
+          cp internal/store/query_identity_test.go "$baseline/internal/store/"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestQueryMetadataExecutableIndependentReuse$' ./internal/store) > "$RUNNER_TEMP/ccn-query-executable-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-query-executable-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'EXECUTABLE_METADATA_REBUILD:' "$RUNNER_TEMP/ccn-query-executable-negative.log")" -eq 2
 
   release-monotonic:
     runs-on: ubuntu-latest
