@@ -185,7 +185,6 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)
 	}
-	dir := s.cache.dir
 	tip, err := s.Repo.Tip(ctx, ref)
 	if err != nil {
 		t.Fatalf("Tip: %v", err)
@@ -194,9 +193,7 @@ func TestFoldCacheRebuildAfterDelete(t *testing.T) {
 		t.Fatalf("entry not written after Load: %v", statErr)
 	}
 
-	if err := os.RemoveAll(dir); err != nil {
-		t.Fatalf("remove cache dir: %v", err)
-	}
+	wipeCache(t, s)
 
 	loaded, err := s.Load(ctx, ref)
 	if err != nil {
