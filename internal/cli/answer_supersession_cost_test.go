@@ -60,8 +60,13 @@ func TestAnswerShowFreshCLICost(t *testing.T) {
 			for i, id := range ids {
 				packed = append(packed, string(tips[i])+" "+refs.For(model.KindAnswer, id))
 			}
-			slices.Sort(packed)
-			if err := os.WriteFile(filepath.Join(gitDir, "packed-refs"), []byte(strings.Join(packed, "\n")+"\n"), 0o600); err != nil {
+			slices.SortFunc(packed, func(a, b string) int {
+				_, aRef, _ := strings.Cut(a, " ")
+				_, bRef, _ := strings.Cut(b, " ")
+				return strings.Compare(aRef, bRef)
+			})
+			data := "# pack-refs with: peeled fully-peeled sorted \n" + strings.Join(packed, "\n") + "\n"
+			if err := os.WriteFile(filepath.Join(gitDir, "packed-refs"), []byte(data), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			for attempt := range 2 {
