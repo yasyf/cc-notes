@@ -219,6 +219,9 @@ func (c *Client) AnswerVerdict(ctx context.Context, a model.Answer, staleAfter t
 
 // AnswerSuperseders returns the ids of answers that supersede id, sorted.
 func (c *Client) AnswerSuperseders(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	if incoming, hit, err := c.s.IndexedSuperseders(ctx, model.KindAnswer, id); err != nil || hit {
+		return incoming, err
+	}
 	all, err := c.s.ListAnswers(ctx, false, true)
 	if err != nil {
 		return nil, err
@@ -229,11 +232,27 @@ func (c *Client) AnswerSuperseders(ctx context.Context, id model.EntityID) ([]mo
 // AnswerSupersedeHeads walks the answer supersede edge transitively from id,
 // mirroring NoteSupersedeHeads.
 func (c *Client) AnswerSupersedeHeads(ctx context.Context, id model.EntityID) ([]model.EntityID, error) {
+	if heads, hit, err := c.s.IndexedSupersedeHeads(ctx, model.KindAnswer, id); err != nil || hit {
+		return heads, err
+	}
 	all, err := c.s.ListAnswers(ctx, false, true)
 	if err != nil {
 		return nil, err
 	}
 	return supersedeHeads(all, answerSupersedeEdge, id), nil
+}
+
+// AnswerSupersession returns the sorted incoming superseders and terminal
+// supersede targets from one capture of the live and superseded answers.
+func (c *Client) AnswerSupersession(ctx context.Context, id model.EntityID) ([]model.EntityID, []model.EntityID, error) {
+	if incoming, heads, hit, err := c.s.IndexedSupersession(ctx, model.KindAnswer, id); err != nil || hit {
+		return incoming, heads, err
+	}
+	all, err := c.s.ListAnswers(ctx, false, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	return superseders(all, answerSupersedeEdge, id), supersedeHeads(all, answerSupersedeEdge, id), nil
 }
 
 func answerSupersedeEdge(a model.Answer) (model.EntityID, []model.EntityID) {

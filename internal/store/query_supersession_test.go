@@ -16,7 +16,7 @@ import (
 )
 
 func TestIndexedSupersessionGraphSemantics(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindNote, model.KindDoc} {
+	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindAnswer} {
 		t.Run(string(kind), func(t *testing.T) {
 			s := initStore(t)
 			ids := make(map[string]model.EntityID)
@@ -24,6 +24,8 @@ func TestIndexedSupersessionGraphSemantics(t *testing.T) {
 				ops := noteOps(name)
 				if kind == model.KindDoc {
 					ops = docOps(name)
+				} else if kind == model.KindAnswer {
+					ops = []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: name}}
 				}
 				ids[name] = create(t, s, ops).EntityID()
 			}
