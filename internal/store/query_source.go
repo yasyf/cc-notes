@@ -27,15 +27,11 @@ func queryMetadataIdentity(ctx context.Context, s *Store, kind model.Kind) (quer
 	if err := s.CheckRecords(); err != nil {
 		return queryMetadataSource{}, err
 	}
-	identity, err := executableIdentity()
-	if err != nil {
-		return queryMetadataSource{}, fmt.Errorf("identify executable for the %s query metadata: %w", kind, err)
-	}
 	return queryMetadataSource{
 		store:   s,
 		pinned:  s.pins != nil,
 		kind:    kind,
-		binding: s.listCacheName(kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, identity),
+		binding: s.listCacheName(kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, ""),
 	}, nil
 }
 
