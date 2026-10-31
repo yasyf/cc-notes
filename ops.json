@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf/attachment-ref-batch"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"e52d81395354b00c894c446890ecad91","status":"met","note":"SourcePASSaf69 exact6506 explicitcurrentgate/immutableoldAPI, zero-writeasserts unchanged; allproductionbytes unchanged; workflowstepblocks/commands/refs/guards/counts identical, onlyorder moved."}]}
