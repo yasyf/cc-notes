@@ -1,34 +1,21 @@
-name: Native combined proof
+name: Native Mac oracle proof
 
 on:
   pull_request:
     branches: [fix/foreground-pack-index]
 
 concurrency:
-  group: native-combined-${{ github.ref }}
+  group: native-oracle-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  task-dedupe-cost:
-    runs-on: ubuntu-latest
+  native-mac-oracles:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-      - name: Install syscall accounting
-        run: sudo apt-get update && sudo apt-get install -y strace
-      - name: Fresh CLI task deduplication payload reads, cold and warm
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLICost$' ./internal/cli
-      - name: Selected-task JSON blocking cost
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskBlockingFreshCLICost$' ./internal/cli
-      - name: Selected-task reverse-posting work
-        run: ./scripts/test.sh -count=1 -v -run '^TestQueryTaskBlockingBatchWork$' ./internal/store
-      - name: Query metadata cardinality contracts and work
-        run: ./scripts/test.sh -count=1 -v -run '^TestQueryMetadataCardinality' ./internal/store
-      - name: Native packed read ownership and corpus contracts
-        run: ./scripts/test.sh -race -count=1 -v -run '^Test(Native|ObjectBatch)' ./internal/gitobj ./internal/gitcmd
-      - name: Fresh CLI packed ledger read beside a legacy object-index writer
-        if: ${{ !cancelled() }}
-        run: ./scripts/test.sh -count=1 -v -run '^TestPackedObjectIndexFreshCLICost$' ./internal/cli
+      - name: Native missing index and removed object database contracts
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestNative(MissingIndexReloadsOnceItsSymlinkTargetIsRestored|PathOIDMemoServesRepeatedAnchors)$' ./internal/gitobj
