@@ -25,7 +25,8 @@ type Config struct {
 	// result carries the same way forward the CLI prints to stderr.
 	Hint func(error) string
 	// Store, when set, is the retained store every tool call runs against;
-	// unset, each call opens the repository itself.
+	// unset, each call opens the repository itself. The caller closes a supplied
+	// retained owner after the server finishes.
 	Store *store.Retained
 }
 
@@ -82,11 +83,13 @@ func Serve(ctx context.Context, dir string, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = retained.Close() }()
 	s, err := retained.Store(ctx)
 	if err != nil {
 		return err
 	}
 	markerDir := filepath.Join(s.CommonDir(), "cc-notes", "mcp")
+	_ = s.Close()
 	if err := WriteMarker(markerDir); err != nil {
 		return err
 	}

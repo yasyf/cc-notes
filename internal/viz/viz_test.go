@@ -174,6 +174,7 @@ func (r *gitRepo) openStore() *store.Store {
 	if err != nil {
 		r.t.Fatalf("open store: %v", err)
 	}
+	r.t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 

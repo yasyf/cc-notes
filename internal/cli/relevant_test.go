@@ -65,6 +65,7 @@ func commitFileAs(t *testing.T, dir, email, path, content string) model.SHA {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	head, err := resolveHead(t.Context(), s)
 	if err != nil {
 		t.Fatalf("resolveHead: %v", err)
@@ -80,6 +81,7 @@ func makeNote(t *testing.T, dir, title string, anchors ...model.Anchor) model.En
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	snap, err := s.Create(t.Context(), []model.Op{model.CreateNote{
 		Nonce:   model.NewNonce(),
 		Title:   title,
@@ -100,6 +102,7 @@ func makeDoc(t *testing.T, dir, title, when string, anchors ...model.Anchor) mod
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	snap, err := s.Create(t.Context(), []model.Op{model.CreateDoc{
 		Nonce:   model.NewNonce(),
 		Title:   title,
@@ -120,6 +123,7 @@ func makeLog(t *testing.T, dir, title, entry string, anchors ...model.Anchor) mo
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	ctx := t.Context()
 	snap, err := s.Create(ctx, []model.Op{model.CreateLog{
 		Nonce:   model.NewNonce(),
@@ -146,6 +150,7 @@ func verifyNote(t *testing.T, dir string, id model.EntityID) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	ctx := t.Context()
 	_, note, err := noteSpec.load(ctx, s, string(id))
 	if err != nil {

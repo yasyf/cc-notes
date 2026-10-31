@@ -486,6 +486,7 @@ func boundClone(t *testing.T) (thin, source string, s *store.Store) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", thin, err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	if _, bound := s.Binding(); !bound {
 		t.Fatal("fixture invalid: the clone opened unbound")
 	}

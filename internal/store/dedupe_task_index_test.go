@@ -30,6 +30,7 @@ func TestTaskDedupeWarmReadsAvoidUnrelatedCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = fresh.Close() })
 			ctx := &queryWorkContext{Context: t.Context()}
 			_, err = fresh.Create(ctx, ops("selected", "target"))
 			var dup *DuplicateError

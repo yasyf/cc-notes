@@ -244,6 +244,7 @@ func TestVerdictBoundReadsContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", thin, err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	if _, bound := c.s.Binding(); !bound {
 		t.Fatal("fixture invalid: the clone opened unbound")
 	}

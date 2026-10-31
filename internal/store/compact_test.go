@@ -134,6 +134,7 @@ func TestCompactFreshCloneFoldsIdentically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open clone: %v", err)
 	}
+	t.Cleanup(func() { _ = cs.Close() })
 	got, err := cs.Load(ctx, ref)
 	if err != nil {
 		t.Fatalf("Load clone: %v", err)

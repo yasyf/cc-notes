@@ -351,6 +351,7 @@ func TestRelevantCachedServesABareRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", bare, err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	makeNote(t, c, "handler", notes.AnchorSpec{Paths: []string{"svc/handler.go"}, Dirs: []string{"svc"}})
 	makeNote(t, c, "service", notes.AnchorSpec{Dirs: []string{"svc"}})
 

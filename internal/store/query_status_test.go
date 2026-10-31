@@ -29,7 +29,7 @@ func TestStatusMetadataSourcesRetainOneUniverse(t *testing.T) {
 		if source.store != pinned || len(source.tips) != 1 || source.tips[id] == "" || source.pinned {
 			t.Fatalf("kind source %d = %+v", i, source)
 		}
-		row, err := source.load(t.Context(), id, source.tips[id])
+		row, _, err := source.load(t.Context(), id, source.tips[id])
 		if err != nil {
 			t.Fatal(err)
 		}

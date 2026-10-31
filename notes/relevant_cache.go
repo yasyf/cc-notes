@@ -16,6 +16,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -176,15 +177,11 @@ func (e relevantCacheEntry) encode() ([]byte, error) {
 	return slices.Concat(header, []byte{'\n'}, e.Output, deps), nil
 }
 
-func readRelevantCacheEntry(f *os.File, now time.Time) (e relevantCacheEntry, hit, ok bool) {
+func readRelevantCacheEntry(f *store.CacheReader, now time.Time) (e relevantCacheEntry, hit, ok bool) {
 	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return relevantCacheEntry{}, false, false
-	}
 	r := bufio.NewReader(f)
 	h, n, ok := readRelevantCacheHeader(r)
-	if !ok || !h.readOutput(r, info.Size()-int64(n)) {
+	if !ok || !h.readOutput(r, f.Size()-int64(n)) {
 		return relevantCacheEntry{}, false, false
 	}
 	if h.hit(now) {

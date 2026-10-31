@@ -598,6 +598,7 @@ func TestRelevantFromAProjectSubdirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = sub.Close() })
 
 	e := findEntry(t, mustRelevant(t, sub, dir, filepath.Join(dir, "api", "entry.go"), notes.RelevantFilter{}), id)
 	if !slices.Contains(e.Reasons, "path") {
