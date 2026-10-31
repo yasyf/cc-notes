@@ -147,6 +147,42 @@ func listOf[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind, fo
 	if err != nil {
 		return nil, err
 	}
+	return listed(all, opts), nil
+}
+
+func listCached[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind) ([]T, error) {
+	entries, err := s.children(ctx, refs.Root(kind))
+	if err != nil {
+		return nil, err
+	}
+	cached := make([]T, len(entries))
+	hit := make([]bool, len(entries))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(listConcurrency)
+	for i, e := range entries {
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			if snap, ok := s.cache.get(e.tip); ok {
+				cached[i], hit[i] = snap.(T)
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	all := make([]T, 0, len(cached))
+	for i, v := range cached {
+		if hit[i] {
+			all = append(all, v)
+		}
+	}
+	return listed(all, ListOpts{}), nil
+}
+
+func listed[T model.Snapshot](all []T, opts ListOpts) []T {
 	out := make([]T, 0, len(all))
 	for _, v := range all {
 		if keepInList(v.Meta(), opts) {
@@ -160,7 +196,7 @@ func listOf[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind, fo
 		}
 		return cmp.Compare(a.EntityID(), b.EntityID())
 	})
-	return out, nil
+	return out
 }
 
 // ListSnapshots folds every entity of kind, applying the same inclusion filter
