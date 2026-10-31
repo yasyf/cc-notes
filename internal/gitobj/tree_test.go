@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -541,7 +542,7 @@ func TestPathOIDSharedSubtreeDecode(t *testing.T) {
 // this package replaced, or a subtree cache the walk cannot hit — fails here
 // rather than quietly costing three orders of magnitude more. The rev the memo
 // never warmed is the control: it has to fail, or the deletion proved nothing.
-func TestPathOIDMemoServesRepeatedAnchors(t *testing.T) {
+func TestNativePathOIDMemoServesRepeatedAnchors(t *testing.T) {
 	dir := initRepo(t)
 	warmed := commitFiles(t, dir, "first", map[string]string{
 		"internal/fold/fold.go": "package fold\n",
@@ -585,8 +586,11 @@ func TestPathOIDMemoServesRepeatedAnchors(t *testing.T) {
 			t.Errorf("PathOID(%s, %s) = %s, want the memoized %s", warmed, anchor, got, want[anchor])
 		}
 	}
-	if _, err := repo.PathOID(t.Context(), cold, "README.md"); !errors.Is(err, gitobj.ErrCommitNotFound) {
-		t.Errorf("PathOID(%s, README.md) with the object database gone = %v, want gitobj.ErrCommitNotFound: the deletion left the unwarmed rev readable", cold, err)
+	if _, verdict := gitPathOID(t, dir, cold, "README.md"); verdict != gitFatals {
+		t.Fatalf("native lookup with the object database gone=%v, want fatal", verdict)
+	}
+	if got, err := repo.PathOID(t.Context(), cold, "README.md"); got != "" || err == nil || errors.Is(err, gitobj.ErrCommitNotFound) || errors.Is(err, plumbing.ErrObjectNotFound) {
+		t.Errorf("PathOID(%s, README.md) with the object database gone = %s, %v, want an empty oid and non-miss failure", cold, got, err)
 	}
 }
 

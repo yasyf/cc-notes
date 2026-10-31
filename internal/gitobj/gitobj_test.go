@@ -646,7 +646,7 @@ func TestFailedFirstIndexLoadReloadsOnceTheIndexIsRestoredInPlace(t *testing.T) 
 	}
 }
 
-func TestMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
+func TestNativeMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
 	dir, c1 := packedRepo(t)
 	_, commonDir := gittest.Dirs(t, dir)
 	indexes := packIndexes(t, filepath.Join(commonDir, "objects", "pack"))
@@ -668,8 +668,11 @@ func TestMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
 	settlePacks(t, dir)
 	repo := open(t, dir)
 
-	if _, err := repo.Ancestry(t.Context(), c1, c1); !errors.Is(err, dotgit.ErrPackfileNotFound) {
-		t.Fatalf("Ancestry(c1, c1) through a dangling index symlink = %v, want ErrPackfileNotFound", err)
+	if got := gitStdin(t, dir, string(c1)+"\n", "--no-replace-objects", "--no-lazy-fetch", "cat-file", "--batch-check"); got != string(c1)+" missing" {
+		t.Fatalf("native dangling index lookup=%q, want clean missing", got)
+	}
+	if _, err := repo.Ancestry(t.Context(), c1, c1); !errors.Is(err, gitobj.ErrCommitNotFound) {
+		t.Fatalf("Ancestry(c1, c1) through a dangling index symlink = %v, want native missing", err)
 	}
 	if err := os.Rename(hidden, target); err != nil {
 		t.Fatalf("restore %s: %v", target, err)
