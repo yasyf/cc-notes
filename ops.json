@@ -1,1 +1,1 @@
-{"v":1,"lamport":9,"ops":[{"kind":"set_criterion_status","id":"d26988fa48672dbe8d7df0fd815d7721","status":"met","note":"Source/cache ownership FE/landing-cci-native-query-delivery.json; actual current2b575/provider77b CI124379903138 N32/10000 confirms legacy2processes/2feeds versus native0tailprocesses/fourfreshnessrequests, cache/post/resolve/expiry and internal mixed-origin pagination. Raw landing-native-2b575-actual-caller.log. Live CPU/physical IO attribution explicitly UNKNOWN; no runtime recovery claim."}]}
+{"v":1,"lamport":10,"ops":[{"kind":"renew"}]}
