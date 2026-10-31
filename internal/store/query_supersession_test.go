@@ -22,9 +22,10 @@ func TestIndexedSupersessionGraphSemantics(t *testing.T) {
 			ids := make(map[string]model.EntityID)
 			for _, name := range []string{"a", "b", "c", "d", "e", "f", "deleted", "incoming", "self"} {
 				ops := noteOps(name)
-				if kind == model.KindDoc {
+				switch kind {
+				case model.KindDoc:
 					ops = docOps(name)
-				} else if kind == model.KindAnswer {
+				case model.KindAnswer:
 					ops = []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: name}}
 				}
 				ids[name] = create(t, s, ops).EntityID()
@@ -107,6 +108,7 @@ func TestIndexedSupersessionAvoidsUnchangedCorpusBodies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = fresh.Close() })
 			if incoming, heads, hit, err := fresh.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || incoming != nil || !slices.Equal(heads, []model.EntityID{b}) {
 				t.Fatalf("unchanged with unreadable bodies = %v %v %v %v", incoming, heads, hit, err)
 			}

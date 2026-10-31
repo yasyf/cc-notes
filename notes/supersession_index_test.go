@@ -28,13 +28,14 @@ func TestSupersessionUsesIndexedEdgesWithoutCorpusBodies(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v2")); err != nil {
+			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v4")); err != nil {
 				t.Fatal(err)
 			}
 			fresh, err := Open(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = fresh.Close() })
 			assertSupersessionPair(t, fresh, kind, a, b)
 			switch kind {
 			case model.KindDoc:
@@ -100,9 +101,10 @@ func createSupersessionPair(t *testing.T, s *store.Store, kind model.Kind) (mode
 	ids := make([]model.EntityID, 0, 2)
 	for _, title := range []string{"a", "b"} {
 		var op model.Op = model.CreateNote{Nonce: model.NewNonce(), Title: title}
-		if kind == model.KindDoc {
+		switch kind {
+		case model.KindDoc:
 			op = model.CreateDoc{Nonce: model.NewNonce(), Title: title}
-		} else if kind == model.KindAnswer {
+		case model.KindAnswer:
 			op = model.CreateAnswer{Nonce: model.NewNonce(), Title: title}
 		}
 		snapshot, err := s.Create(t.Context(), []model.Op{op})
@@ -121,7 +123,8 @@ func assertSupersessionPair(t *testing.T, c *Client, kind model.Kind, a, b model
 	t.Helper()
 	var incoming, heads []model.EntityID
 	var err error
-	if kind == model.KindDoc {
+	switch kind {
+	case model.KindDoc:
 		incoming, err = c.DocSuperseders(t.Context(), b)
 		if err != nil {
 			t.Fatal(err)
@@ -134,7 +137,7 @@ func assertSupersessionPair(t *testing.T, c *Client, kind model.Kind, a, b model
 		if err != nil || gotIncoming != nil || !slices.Equal(gotHeads, []model.EntityID{b}) {
 			t.Fatalf("combined = %v %v %v", gotIncoming, gotHeads, err)
 		}
-	} else if kind == model.KindAnswer {
+	case model.KindAnswer:
 		incoming, err = c.AnswerSuperseders(t.Context(), b)
 		if err != nil {
 			t.Fatal(err)
@@ -147,7 +150,7 @@ func assertSupersessionPair(t *testing.T, c *Client, kind model.Kind, a, b model
 		if err != nil || gotIncoming != nil || !slices.Equal(gotHeads, []model.EntityID{b}) {
 			t.Fatalf("combined = %v %v %v", gotIncoming, gotHeads, err)
 		}
-	} else {
+	default:
 		incoming, err = c.NoteSuperseders(t.Context(), b)
 		if err != nil {
 			t.Fatal(err)

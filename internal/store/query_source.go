@@ -93,23 +93,26 @@ func (q queryMetadataSource) capture(ctx context.Context) (queryMetadataSource, 
 	return q, nil
 }
 
-func (q queryMetadataSource) load(ctx context.Context, id model.EntityID, tip model.SHA) (queryMetadata, error) {
+func (q queryMetadataSource) load(ctx context.Context, id model.EntityID, tip model.SHA) (queryMetadata, *cachePublication, error) {
 	if err := ctx.Err(); err != nil {
-		return queryMetadata{}, err
+		return queryMetadata{}, nil, err
 	}
 	if q.tips[id] != tip || tip == "" {
-		return queryMetadata{}, fmt.Errorf("query metadata tip differs from captured %s %s", q.kind, id)
+		return queryMetadata{}, nil, fmt.Errorf("query metadata tip differs from captured %s %s", q.kind, id)
 	}
-	snapshot, err := q.store.LoadAt(ctx, tip)
+	snapshot, chain, err := q.store.loadAt(ctx, tip)
 	if err != nil {
-		return queryMetadata{}, err
+		return queryMetadata{}, nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return queryMetadata{}, err
+		return queryMetadata{}, nil, err
 	}
 	row := projectQueryMetadata(q.binding, tip, snapshot)
 	if row.ID != id || row.Kind != q.kind {
-		return queryMetadata{}, fmt.Errorf("query metadata snapshot differs from captured %s %s", q.kind, id)
+		return queryMetadata{}, nil, fmt.Errorf("query metadata snapshot differs from captured %s %s", q.kind, id)
 	}
-	return row, nil
+	if len(chain) == 0 {
+		return row, nil, nil
+	}
+	return row, foldChainPublication(tip, snapshot, chain), nil
 }

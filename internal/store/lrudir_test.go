@@ -1,12 +1,9 @@
 package store
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestLRUDirHitPromotes(t *testing.T) {
@@ -19,9 +16,11 @@ func TestLRUDirHitPromotes(t *testing.T) {
 		{"a hit on the oldest keeps it", []string{"a"}, []string{"a", "c", "d"}},
 		{"later hits rank above earlier ones", []string{"b", "a"}, []string{"a", "b", "d"}},
 		{"a hit on an unknown name changes nothing", []string{"z"}, []string{"b", "c", "d"}},
+		{"unknown hits cannot displace a real hit", []string{"a", "w", "x", "y", "z"}, []string{"a", "c", "d"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l := &lruDir{capacity: 3, dir: t.TempDir()}
+			t.Cleanup(func() { _ = l.close() })
 			for _, name := range []string{"a", "b", "c"} {
 				l.write(name, []byte(name))
 			}
@@ -36,28 +35,36 @@ func TestLRUDirHitPromotes(t *testing.T) {
 	}
 }
 
-func TestLRUDirRacingFirstRecordsEvictTheOldestSeededEntries(t *testing.T) {
+func TestLRUDirRacingFirstWritesEvictTheOldestPersistedEntries(t *testing.T) {
 	dir := t.TempDir()
-	oldest := time.Now().Add(-time.Hour)
-	for i, name := range []string{"a", "b", "c", "d", "w", "x", "y"} {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-		at := oldest.Add(time.Duration(i) * time.Minute)
-		if err := os.Chtimes(path, at, at); err != nil {
-			t.Fatalf("age %s: %v", name, err)
-		}
+	seed := &lruDir{capacity: 4, dir: dir}
+	for _, name := range []string{"a", "b", "c", "d"} {
+		seed.write(name, []byte(name))
+	}
+	if err := seed.close(); err != nil {
+		t.Fatal(err)
 	}
 	l := &lruDir{capacity: 4, dir: dir}
-
+	t.Cleanup(func() { _ = l.close() })
 	var wg sync.WaitGroup
 	for _, name := range []string{"w", "x", "y"} {
-		wg.Go(func() { l.record(name) })
+		wg.Go(func() { l.write(name, []byte(name)) })
 	}
 	wg.Wait()
-
-	if got, want := slices.Sorted(slices.Values(l.names())), []string{"d", "w", "x", "y"}; !slices.Equal(got, want) {
+	if got, want := l.names(), []string{"d", "w", "x", "y"}; !slices.Equal(got, want) {
 		t.Fatalf("entries = %v, want %v", got, want)
 	}
+}
+
+func cacheEntryPath(t *testing.T, l *lruDir, name string) string {
+	t.Helper()
+	f, ok := l.open(name)
+	if !ok {
+		t.Fatalf("cache entry %s missing", name)
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

@@ -24,7 +24,7 @@ const (
 	foldCacheCap = 1 << 14
 	// foldCacheSubdir is the path under the git common dir where entries live;
 	// it is never a ref, so it is never pushed or synced.
-	foldCacheSubdir = "cc-notes/folds-v2"
+	foldCacheSubdir = "cc-notes/folds-v4"
 )
 
 // foldCacheGeneration tags every entry with the op vocabulary of the binary that
@@ -44,15 +44,6 @@ func foldGeneration(opKinds []string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// foldCache is a persistent, local, tip-keyed snapshot cache: a pure
-// accelerator derived from the object database that lets short-lived CLI
-// processes skip re-folding cold chains. The file name is the chain tip sha,
-// which is immutable, so a present entry of this binary's fold generation is
-// always valid — there is no staleness logic. The cache is best-effort by
-// design: every I/O error degrades to a miss (get) or a no-op (put) and is
-// never propagated. This is the one intentional error-swallow in the package —
-// the cache is a derived artifact, rebuildable by deleting the directory, not
-// state whose loss is a failure.
 type foldCache struct {
 	lruDir
 }
@@ -72,7 +63,11 @@ func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
 }
 
 func (c *foldCache) getTop(tip model.SHA) (model.Snapshot, model.Lamport, model.Lamport, bool) {
-	data, ok := c.read(string(tip))
+	entry, ok := c.entry(string(tip))
+	if !ok {
+		return nil, 0, 0, false
+	}
+	data, ok := c.readEntry(entry)
 	if !ok {
 		return nil, 0, 0, false
 	}
@@ -80,19 +75,30 @@ func (c *foldCache) getTop(tip model.SHA) (model.Snapshot, model.Lamport, model.
 	if !ok {
 		return nil, 0, 0, false
 	}
-	c.touch(string(tip))
+	c.rememberHit(entry)
 	return snap, top, floor, true
 }
 
-func (c *foldCache) put(tip model.SHA, snap model.Snapshot, top, floor model.Lamport) {
-	if snap.Meta().SkippedOps > 0 {
-		return
+func (c *foldCache) getEntry(tip model.SHA, entry cacheEntry) (model.Snapshot, bool) {
+	if !entry.valid(string(tip)) {
+		return nil, false
 	}
-	data, ok := encodeFoldEntry(snap, top, floor)
+	data, ok := c.readEntry(entry)
 	if !ok {
-		return
+		return nil, false
 	}
-	c.write(string(tip), data)
+	snap, _, _, ok := decodeFoldEntry(data)
+	if !ok {
+		return nil, false
+	}
+	c.rememberHit(entry)
+	return snap, true
+}
+
+func (c *foldCache) put(tip model.SHA, snap model.Snapshot, top, floor model.Lamport) {
+	if value := foldPublication(tip, snap, top, floor); value != nil {
+		c.write(value.name, value.data)
+	}
 }
 
 func (c *foldCache) putChain(tip model.SHA, snap model.Snapshot, chain []model.PackCommit) {

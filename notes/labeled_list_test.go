@@ -186,13 +186,14 @@ func TestLabeledListsReportSelectedObjectFailures(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v2")); err != nil {
+				if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v4")); err != nil {
 					t.Fatal(err)
 				}
 				fresh, err := Open(dir)
 				if err != nil {
 					t.Fatal(err)
 				}
+				t.Cleanup(func() { _ = fresh.Close() })
 				got, err := labeledListIDs(t.Context(), fresh, kind, []string{"target"})
 				if got != nil {
 					t.Fatalf("%s selected object = %v; want nil", broken, got)

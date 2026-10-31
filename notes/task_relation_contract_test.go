@@ -189,6 +189,7 @@ func TestTaskRelationsPreservePinnedAndUnavailableCacheViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = fresh.Close() })
 	path := filepath.Join(fresh.s.CommonDir(), "cc-notes-query")
 	if err := os.RemoveAll(path); err != nil {
 		t.Fatal(err)
@@ -238,6 +239,7 @@ func TestTaskRunsUnreadableSelectedBodyIsAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = fresh.Close() })
 	if got, err := fresh.TaskRuns(t.Context(), target); got != nil || !errors.Is(err, gitobj.ErrIncompleteChain) {
 		t.Fatalf("unreadable selected runbook = %#v, %v; want incomplete-chain error", got, err)
 	}

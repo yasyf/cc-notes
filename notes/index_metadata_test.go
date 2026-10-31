@@ -61,6 +61,7 @@ func TestTaskRelationsDoNotReadUnrelatedBodies(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				t.Cleanup(func() { _ = fresh.Close() })
 				if _, err := fresh.s.ListTasks(t.Context()); err == nil {
 					t.Fatal("unrelated task corpus unexpectedly readable")
 				}

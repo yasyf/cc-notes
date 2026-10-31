@@ -36,6 +36,7 @@ func TestRelevantCachedKeepsExecutablePathsIndependent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = c.Close() })
 		wantRenders, err := strconv.Atoi(os.Getenv("CCN_RELEVANT_EXPECT_RENDERS"))
 		if err != nil {
 			t.Fatal(err)

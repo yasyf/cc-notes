@@ -22,9 +22,17 @@ type Retained struct {
 	dir  string
 	open func(context.Context, string) (*Store, error)
 
-	mu    sync.Mutex
-	store *Store
-	fence fence
+	mu       sync.Mutex
+	reopenMu sync.Mutex
+	current  *retainedStore
+	fence    fence
+	closed   bool
+}
+
+type retainedStore struct {
+	store   *Store
+	views   int
+	retired bool
 }
 
 type fence struct {
@@ -68,39 +76,108 @@ func Retain(ctx context.Context, dir string) (*Retained, error) {
 
 func retain(ctx context.Context, dir string, open func(context.Context, string) (*Store, error)) (*Retained, error) {
 	r := &Retained{dir: dir, open: open}
-	if _, err := r.reopen(ctx); err != nil {
+	s, err := r.reopen(ctx)
+	if err != nil {
 		return nil, err
 	}
+	_ = s.Close()
 	return r, nil
 }
 
 // Store returns a view of the retained store for one operation. The view
 // resolves Root and LocalPolicy afresh, as a newly opened store would; the
-// object, pack, and fold caches carry over from earlier operations.
+// object, pack, and fold caches carry over from earlier operations. The caller
+// closes the returned view after the operation finishes.
 func (r *Retained) Store(ctx context.Context) (*Store, error) {
 	r.mu.Lock()
-	s, opened := r.store, r.fence
+	if r.closed {
+		r.mu.Unlock()
+		return nil, fs.ErrClosed
+	}
+	entry, opened := r.current, r.fence
+	s := r.borrow(entry)
 	r.mu.Unlock()
 	if live, err := fenceOf(s, r.dir); err == nil && live.equal(opened) {
-		return s.operation(), nil
+		return s, nil
 	}
+	_ = s.Close()
 	return r.reopen(ctx)
 }
 
 func (r *Retained) reopen(ctx context.Context) (*Store, error) {
+	r.reopenMu.Lock()
+	defer r.reopenMu.Unlock()
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil, fs.ErrClosed
+	}
 	s, err := r.open(ctx, r.dir)
 	if err != nil {
 		return nil, err
 	}
 	f, err := fenceOf(s, r.dir)
 	if err != nil {
+		_ = s.Close()
 		return nil, err
 	}
 	f.repo.config, f.repo.backendConfig = s.storage.stamps()
 	r.mu.Lock()
-	r.store, r.fence = s, f
+	if r.closed {
+		r.mu.Unlock()
+		_ = s.Close()
+		return nil, fs.ErrClosed
+	}
+	prior := r.current
+	if prior != nil {
+		prior.retired = true
+	}
+	r.current, r.fence = &retainedStore{store: s}, f
+	view := r.borrow(r.current)
+	closePrior := prior != nil && prior.views == 0
 	r.mu.Unlock()
-	return s.operation(), nil
+	if closePrior {
+		_ = prior.store.Close()
+	}
+	return view, nil
+}
+
+func (r *Retained) borrow(entry *retainedStore) *Store {
+	entry.views++
+	view := entry.store.operation()
+	view.lease = &storeLease{release: func() error { return r.release(entry) }}
+	return view
+}
+
+func (r *Retained) release(entry *retainedStore) error {
+	r.mu.Lock()
+	entry.views--
+	closeStore := entry.retired && entry.views == 0
+	r.mu.Unlock()
+	if closeStore {
+		return entry.store.Close()
+	}
+	return nil
+}
+
+// Close releases the retained owner. Outstanding operation leases keep their
+// cache handles until the final operation closes its view.
+func (r *Retained) Close() error {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil
+	}
+	r.closed = true
+	entry := r.current
+	entry.retired = true
+	closeStore := entry.views == 0
+	r.mu.Unlock()
+	if closeStore {
+		return entry.store.Close()
+	}
+	return nil
 }
 
 // WithRetained returns ctx carrying r: commands run under it take their store

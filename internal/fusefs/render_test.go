@@ -1665,6 +1665,7 @@ func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	snapshot, err := s.Load(t.Context(), refs.For(model.KindTask, model.EntityID(id)))
 	if err != nil {
 		t.Fatalf("load task: %v", err)
@@ -1689,6 +1690,7 @@ func TestRenderTaskKeepsEveryCommentPastShowCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	snapshot, err := s.Load(t.Context(), refs.For(model.KindTask, model.EntityID(id)))
 	if err != nil {
 		t.Fatalf("load task: %v", err)
@@ -1733,6 +1735,7 @@ func TestRenderSprintMatchesCLIJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	snapshot, err := s.Load(t.Context(), refs.For(model.KindSprint, model.EntityID(id)))
 	if err != nil {
 		t.Fatalf("load sprint: %v", err)
@@ -1764,6 +1767,7 @@ func TestRenderProjectMatchesCLIJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	snapshot, err := s.Load(t.Context(), refs.For(model.KindProject, model.EntityID(id)))
 	if err != nil {
 		t.Fatalf("load project: %v", err)

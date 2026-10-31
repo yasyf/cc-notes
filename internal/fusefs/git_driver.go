@@ -192,10 +192,11 @@ func (d *GitDriver) DeclareTargetSet(
 
 // Refresh seals the current entity-ref manifest as one immutable revision.
 func (d *GitDriver) Refresh(ctx context.Context, authority causal.SourceAuthorityID) (sourcedriver.Head, error) {
-	_, index, err := d.open(ctx, authority)
+	source, index, err := d.open(ctx, authority)
 	if err != nil {
 		return sourcedriver.Head{}, err
 	}
+	defer func() { _ = source.Close() }()
 	revision, err := index.Refresh(ctx)
 	if err != nil {
 		return sourcedriver.Head{}, err
@@ -225,6 +226,7 @@ func (d *GitDriver) Snapshot(
 	if err != nil {
 		return sourcedriver.SnapshotPage{}, err
 	}
+	defer func() { _ = source.Close() }()
 	snapshot, err := d.loadSnapshot(ctx, source, index, request.Revision)
 	if err != nil {
 		return sourcedriver.SnapshotPage{}, err
@@ -261,6 +263,7 @@ func (d *GitDriver) ChangesSince(
 	if err != nil {
 		return sourcedriver.ChangePage{}, err
 	}
+	defer func() { _ = source.Close() }()
 	from, err := sourceSHA(request.From)
 	if err != nil {
 		return sourcedriver.ChangePage{}, err
@@ -311,6 +314,7 @@ func (d *GitDriver) OpenContent(
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = source.Close() }()
 	if ref.Tenant != tenant.ID || ref.Generation != causal.Generation(tenant.Generation) {
 		return nil, sourcedriver.ErrNotFound
 	}

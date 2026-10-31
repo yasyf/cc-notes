@@ -743,6 +743,7 @@ func TestRelevantInputsGitCwdMatchesNativeGit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Open(%s): %v", dir, err)
 			}
+			t.Cleanup(func() { _ = c.Close() })
 			in := &relevantInputs{client: c, watched: make(map[string]fileStamp), guarded: make(map[string]fileStamp)}
 			got, ok := in.gitCwd(t.Context())
 			if ok != tc.wantOK {
@@ -876,7 +877,7 @@ func TestRelevantCachedNeverCachesARoutedEnvironment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "relevant-v3")); err != nil {
+			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "relevant-v5")); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv(tc.name, tc.value)
@@ -905,6 +906,7 @@ func TestRelevantCacheDriftInputsResolveAttributePathsAgainstGit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", sub, err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	t.Chdir(t.TempDir())
 	in := &relevantInputs{client: c, watched: make(map[string]fileStamp), guarded: make(map[string]fileStamp), vars: map[string]string{"GIT_ATTR_GLOBAL": filepath.FromSlash("xdgrel/git/attributes")}}
 	entries := []RelevantEntry{{Kind: model.KindNote, Note: model.Note{VerifiedAt: 1, Anchors: []model.Anchor{{Kind: model.AnchorPath, Value: "svc/handler.go"}}}}}
@@ -1175,6 +1177,8 @@ func TestRelevantCachedFollowsWorktreeQualifiedBases(t *testing.T) {
 				if client, err = Open(linked); err != nil {
 					t.Fatalf("Open(%s): %v", linked, err)
 				}
+				ownedLinked := client
+				t.Cleanup(func() { _ = ownedLinked.Close() })
 			}
 			filter := RelevantFilter{Base: tc.base}
 			renders := 0
