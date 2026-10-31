@@ -69,7 +69,7 @@ func encodeCacheHint(hint cacheHint) [cacheHintRecordSize]byte {
 	var data [cacheHintRecordSize]byte
 	if !hint.empty {
 		binary.BigEndian.PutUint64(data[:8], hint.tag)
-		size := uint64(hint.size) + 1
+		size := uint64(hint.size) + 1 //nolint:gosec // G115: Live hint sizes come from nonnegative payload slice lengths.
 		if hint.inline {
 			size += cacheHintInlineFlag
 		}
@@ -85,7 +85,7 @@ func readCacheHintHeader(file *os.File, capacity int) (uint64, error) {
 	if _, err := file.ReadAt(data[:], 0); err != nil {
 		return 0, err
 	}
-	if !bytes.Equal(data[:8], cacheHintMagic[:]) || binary.BigEndian.Uint64(data[8:16]) != uint64(capacity) {
+	if !bytes.Equal(data[:8], cacheHintMagic[:]) || binary.BigEndian.Uint64(data[8:16]) != uint64(capacity) { //nolint:gosec // G115: Cache operations reject nonpositive capacity before opening routing metadata.
 		return 0, errCacheIntegrity
 	}
 	return binary.BigEndian.Uint64(data[16:]), nil
@@ -97,7 +97,7 @@ func initializeCacheHints(file *os.File, capacity int) error {
 	}
 	var data [cacheHintHeaderSize]byte
 	copy(data[:8], cacheHintMagic[:])
-	binary.BigEndian.PutUint64(data[8:16], uint64(capacity))
+	binary.BigEndian.PutUint64(data[8:16], uint64(capacity)) //nolint:gosec // G115: Cache operations reject nonpositive capacity before initializing routing metadata.
 	_, err := file.WriteAt(data[:], 0)
 	return err
 }
@@ -140,7 +140,7 @@ func (p *cacheHintPages) read(data []byte, offset int64) error {
 func (p *cacheHintPages) window(tag uint64) (cacheHintWindow, error) {
 	var window cacheHintWindow
 	window.count = min(p.capacity, cacheProbeLimit)
-	start := int(tag % uint64(p.capacity))
+	start := int(tag % uint64(p.capacity)) //nolint:gosec // G115: Callers reject nonpositive capacity; the remainder is below capacity.
 	beforeWrap := min(window.count, p.capacity-start)
 	var data [cacheProbeLimit * cacheHintRecordSize]byte
 	if err := p.read(data[:beforeWrap*cacheHintRecordSize], cacheHintHeaderSize+int64(start)*cacheHintRecordSize); err != nil {
