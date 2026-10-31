@@ -80,6 +80,7 @@ type Repo struct {
 	mu           sync.Mutex
 	storage      *objectStorage
 	fs           *dotgit.RepositoryFilesystem
+	refDirectory string
 	reaches      map[plumbing.Hash]*reach
 	reachOrder   []plumbing.Hash
 	treeRev      model.SHA
@@ -110,10 +111,11 @@ func Open(gitDir, commonDir string) (*Repo, error) {
 		return nil, err
 	}
 	r := &Repo{
-		storage:  &objectStorage{Storage: storage, dir: dotgit.New(fs), backend: gitcmd.Backend(commonDir, commonDir), objects: objects},
-		fs:       fs,
-		reaches:  make(map[plumbing.Hash]*reach, reachCap),
-		subtrees: make(map[plumbing.Hash]*treeIndex),
+		storage:      &objectStorage{Storage: storage, dir: dotgit.New(fs), backend: gitcmd.Backend(commonDir, commonDir), objects: objects},
+		fs:           fs,
+		refDirectory: commonDir,
+		reaches:      make(map[plumbing.Hash]*reach, reachCap),
+		subtrees:     make(map[plumbing.Hash]*treeIndex),
 	}
 	if err := r.refreshGraft(); err != nil {
 		return nil, err

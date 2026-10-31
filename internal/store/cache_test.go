@@ -506,6 +506,11 @@ func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 func TestFoldCacheHoldsTheLiveRefsOfALargeStore(t *testing.T) {
 	const live = 20000
 	c := newFoldCache(t.TempDir(), foldCacheCap)
+	t.Cleanup(func() {
+		if err := c.close(); err != nil {
+			t.Error(err)
+		}
+	})
 	tips := make([]model.SHA, live)
 	for i := range tips {
 		tips[i] = model.SHA(fmt.Sprintf("%040x", i+1))

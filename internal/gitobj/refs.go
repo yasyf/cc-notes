@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -52,23 +53,32 @@ type ReferenceGeneration struct {
 }
 
 type referenceStamp struct {
-	device, inode uint64
-	ctime, mtime  int64
-	size          int64
+	device, inode             uint64
+	ctime, mtime              int64
+	size                      int64
+	writeCounter              uint32
+	nativeKnown, nativeStable bool
 }
 
 // Key encodes the generation for a persisted derived index.
 func (g ReferenceGeneration) Key() string {
-	return fmt.Sprintf("refs-v1 %q %d:%d:%d:%d:%d %d:%d:%d:%d:%d", g.directory,
-		g.packed.device, g.packed.inode, g.packed.ctime, g.packed.mtime, g.packed.size,
-		g.loose.device, g.loose.inode, g.loose.ctime, g.loose.mtime, g.loose.size)
+	return fmt.Sprintf("refs-v2 %q %d:%d:%d:%d:%d:%t:%d %d:%d:%d:%d:%d:%t:%d", g.directory,
+		g.packed.device, g.packed.inode, g.packed.ctime, g.packed.mtime, g.packed.size, g.packed.nativeKnown, g.packed.writeCounter,
+		g.loose.device, g.loose.inode, g.loose.ctime, g.loose.mtime, g.loose.size, g.loose.nativeKnown, g.loose.writeCounter)
 }
 
-// SettledAt reports whether the metadata predates the filesystem write window.
+// SettledAt reports whether a stable native counter or the filesystem write
+// window qualifies the generation.
 // taken is sampled before RefGeneration reads its metadata.
 func (g ReferenceGeneration) SettledAt(taken time.Time) bool {
-	latest := max(g.packed.ctime, g.packed.mtime, g.loose.ctime, g.loose.mtime)
-	return taken.Sub(time.Unix(0, latest)) >= packsRacyWindow
+	return g.packed.settledAt(taken) && g.loose.settledAt(taken)
+}
+
+func (s referenceStamp) settledAt(taken time.Time) bool {
+	if s.nativeKnown {
+		return s.nativeStable
+	}
+	return taken.Sub(time.Unix(0, max(s.ctime, s.mtime))) >= packsRacyWindow
 }
 
 // RefGeneration detects atomic ref updates without enumerating the namespace.
@@ -100,13 +110,29 @@ func (r *Repo) RefGeneration(ctx context.Context, prefix string) (ReferenceGener
 }
 
 func (r *Repo) referenceStamp(name string) (referenceStamp, error) {
+	before, beforeSupported, err := r.referenceCounter(name)
+	if err != nil {
+		return referenceStamp{}, err
+	}
 	info, err := r.fs.Stat(name)
+	if err != nil {
+		return referenceStamp{}, err
+	}
+	after, afterSupported, err := r.referenceCounter(name)
 	if err != nil {
 		return referenceStamp{}, err
 	}
 	device, inode := FileID(info)
 	ctime, _ := StatIdentity(info)
-	return referenceStamp{device: device, inode: inode, ctime: ctime, mtime: info.ModTime().UnixNano(), size: info.Size()}, nil
+	return referenceStamp{device: device, inode: inode, ctime: ctime, mtime: info.ModTime().UnixNano(), size: info.Size(), writeCounter: after, nativeKnown: beforeSupported || afterSupported, nativeStable: beforeSupported && afterSupported && before == after}, nil
+}
+
+func (r *Repo) referenceCounter(name string) (uint32, bool, error) {
+	switch name {
+	case ".", "refs/bisect", "refs/rewritten", "refs/worktree":
+		return 0, false, nil
+	}
+	return nativeReferenceCounter(filepath.Join(r.refDirectory, name))
 }
 
 func openPackedReferences(reader io.ReaderAt, size int64) (*packedReferences, error) {

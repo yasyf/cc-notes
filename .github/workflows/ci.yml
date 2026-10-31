@@ -125,6 +125,10 @@ jobs:
       # file is invisible to the ubuntu test job.
       - name: Home-discipline contract over the darwin file set
         run: ./scripts/test.sh -race -count=1 ./internal/homeguard
+      - name: Native reference generations and rapid query authority
+        env:
+          CCN_REQUIRE_NATIVE_REF_COUNTER: "1"
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(Reference|Query|Settled)' ./internal/gitobj ./internal/store
       - name: Prove the ordinary CLI has no FuseKit child dispatcher
         run: |
           CGO_ENABLED=0 go build -o /tmp/cc-notes ./cmd/cc-notes
