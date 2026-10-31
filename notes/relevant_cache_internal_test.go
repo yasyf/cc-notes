@@ -877,9 +877,7 @@ func TestRelevantCachedNeverCachesARoutedEnvironment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "relevant-v5")); err != nil {
-				t.Fatal(err)
-			}
+			clearClientCache(t, c, "relevant-v6")
 			t.Setenv(tc.name, tc.value)
 			want := fresh(t)
 			for _, call := range []string{"first", "second"} {
@@ -966,6 +964,8 @@ func TestRelevantCachedPersistsAColdBuildInAnUnfoldedRepository(t *testing.T) {
 	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
 		t.Fatalf("CreateNote: %v", err)
 	}
+	clearClientCache(t, c, "folds-v5")
+	clearClientCache(t, c, "relevant-v6")
 	if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes")); err != nil {
 		t.Fatal(err)
 	}

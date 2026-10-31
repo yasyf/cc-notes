@@ -28,9 +28,7 @@ func TestSupersessionUsesIndexedEdgesWithoutCorpusBodies(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v4")); err != nil {
-				t.Fatal(err)
-			}
+			clearClientCache(t, c, "folds-v5")
 			fresh, err := Open(dir)
 			if err != nil {
 				t.Fatal(err)

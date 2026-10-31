@@ -96,23 +96,18 @@ func TestLRUDirCorruptMetadataAndTokensMiss(t *testing.T) {
 			l := &lruDir{capacity: 1, dir: t.TempDir()}
 			t.Cleanup(func() { _ = l.close() })
 			l.write("a", []byte("a"))
-			path := cacheEntryPath(t, l, "a")
+			location := cacheEntryFrame(t, l, "a")
 			switch mode {
 			case "token", "key":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
+				data := location.read(t)
 				at := 32
 				if mode == "key" {
 					at = 0
 				}
 				data[at] ^= 1
-				if err := os.WriteFile(path, data, 0o600); err != nil {
-					t.Fatal(err)
-				}
+				location.write(t, data)
 			case "truncated":
-				if err := os.WriteFile(path, []byte("bad"), 0o600); err != nil {
+				if err := os.Truncate(location.path, location.offset+3); err != nil {
 					t.Fatal(err)
 				}
 			case "metadata", "capacity":
@@ -165,17 +160,15 @@ func TestLRUDirRemoveReclaimsPayloadBeforeSlotReuse(t *testing.T) {
 		t.Fatal("old payload missing")
 	}
 	defer func() { _ = f.Close() }()
-	path := f.Name()
+	location := cacheEntryFrame(t, l, "old")
 	l.remove("old")
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("removed payload remains: %v", err)
-	}
+	location.assertErased(t)
 	if _, ok := l.read("old"); ok {
 		t.Fatal("removed metadata still readable")
 	}
 	l.write("new", []byte("new payload"))
-	if next := cacheEntryPath(t, l, "new"); next != path {
-		t.Fatalf("slot not reused: %q, want %q", next, path)
+	if next := cacheEntryFrame(t, l, "new"); next.path != location.path || next.offset != location.offset {
+		t.Fatalf("slot not reused: %+v, want %+v", next, location)
 	}
 	if data, err := io.ReadAll(f); err != nil || string(data) != "old payload" {
 		t.Fatalf("opened removed payload = %q, %v", data, err)

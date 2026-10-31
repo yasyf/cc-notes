@@ -21,7 +21,7 @@ jobs:
       - name: Install syscall tracer
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: Fresh-process cache cost and crash contracts
-        run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader|TestCacheHint)' ./internal/store
+        run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader|TestCacheHint|TestCacheInline)' ./internal/store
 
   release-monotonic:
     runs-on: ubuntu-latest
@@ -71,7 +71,7 @@ jobs:
       - name: Build and record the exact fixed-hint release-style candidate
         id: build_candidate
         env:
-          CCN_FIXED_HINT_SHA: 76acf9f44e148ba5a7d63454d7d8dd154b1d9558
+          CCN_FIXED_HINT_SHA: 0c90db1343d8fe3436f2c707677dda56691e3e9d
         run: |
           git fetch --no-tags origin "$CCN_FIXED_HINT_SHA"
           git diff --exit-code "$CCN_FIXED_HINT_SHA" HEAD -- . ':!**/*_test.go' ':!.github/workflows/ci.yml'

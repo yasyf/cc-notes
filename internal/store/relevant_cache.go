@@ -2,7 +2,7 @@ package store
 
 const (
 	relevantCacheCap    = 2048
-	relevantCacheSubdir = "cc-notes/relevant-v5"
+	relevantCacheSubdir = "cc-notes/relevant-v6"
 )
 
 // OpenRelevantCache returns a relevance stream whose bytes are verified as

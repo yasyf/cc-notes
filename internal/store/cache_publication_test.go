@@ -156,7 +156,11 @@ func TestLRUDirPublicationBatchCapacityAndRepeatedKeys(t *testing.T) {
 func TestLRUDirPublicationBatchRetainsValidPrefixAfterRenameFailure(t *testing.T) {
 	l := newProcessCache(t, 3)
 	for _, name := range []string{"a", "b", "c"} {
-		l.write(name, []byte("old "+name))
+		data := []byte("old " + name)
+		if name == "b" {
+			data = bytes.Repeat(data, cacheChunkSize)
+		}
+		l.write(name, data)
 	}
 	l.touch("c")
 	blocked := cacheEntryPath(t, l, "b")
@@ -166,7 +170,7 @@ func TestLRUDirPublicationBatchRetainsValidPrefixAfterRenameFailure(t *testing.T
 	if err := os.Mkdir(blocked, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l.writeBatch([]cachePublication{{"a", []byte("new a")}, {"b", []byte("new b")}})
+	l.writeBatch([]cachePublication{{"a", []byte("new a")}, {"b", bytes.Repeat([]byte("new b"), cacheChunkSize)}})
 	if data, ok := l.read("a"); !ok || string(data) != "new a" {
 		t.Fatalf("valid prefix = %q, %v", data, ok)
 	}

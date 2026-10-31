@@ -208,15 +208,10 @@ func TestCacheReaderOwnsMultiBlockStreamAfterReplaceAndClose(t *testing.T) {
 func TestCacheReaderRejectsOldWholePublicationAgainstNewHint(t *testing.T) {
 	l := newProcessCache(t, 1)
 	l.write("entry", []byte("old"))
-	path := cacheEntryPath(t, l, "entry")
-	old, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	location := cacheEntryFrame(t, l, "entry")
+	old := location.read(t)
 	l.write("entry", []byte("new"))
-	if err := os.WriteFile(path, old, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	location.write(t, old)
 	if reader, ok := l.open("entry"); ok {
 		_ = reader.Close()
 		t.Fatal("old whole publication matched a new nonce hint")
