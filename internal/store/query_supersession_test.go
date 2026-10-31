@@ -16,14 +16,17 @@ import (
 )
 
 func TestIndexedSupersessionGraphSemantics(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindNote, model.KindDoc} {
+	for _, kind := range []model.Kind{model.KindNote, model.KindDoc, model.KindAnswer} {
 		t.Run(string(kind), func(t *testing.T) {
 			s := initStore(t)
 			ids := make(map[string]model.EntityID)
 			for _, name := range []string{"a", "b", "c", "d", "e", "f", "deleted", "incoming", "self"} {
 				ops := noteOps(name)
-				if kind == model.KindDoc {
+				switch kind {
+				case model.KindDoc:
 					ops = docOps(name)
+				case model.KindAnswer:
+					ops = []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: name}}
 				}
 				ids[name] = create(t, s, ops).EntityID()
 			}

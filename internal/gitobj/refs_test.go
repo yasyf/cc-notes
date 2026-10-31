@@ -75,6 +75,75 @@ func TestPackedReferencePrefix(t *testing.T) {
 	}
 }
 
+func TestPackedReferenceProbeReusesBufferedLines(t *testing.T) {
+	for _, peeled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("peeled=%t", peeled), func(t *testing.T) {
+			var data strings.Builder
+			data.WriteString("# pack-refs with: peeled fully-peeled sorted\n")
+			for i := range 100 {
+				fmt.Fprintf(&data, "%s refs/heads/branch-%03d\n", testRefHash, i)
+				if peeled {
+					fmt.Fprintf(&data, "^%s\n", testRefHash)
+				}
+			}
+			packed := data.String()
+			line := fmt.Sprintf("%s refs/heads/branch-050\n", testRefHash)
+			start := strings.Index(packed, line)
+			end := start + len(line)
+			if peeled {
+				end += len(testRefHash) + 2
+			}
+			r := &countedReferenceReader{Reader: bytes.NewReader([]byte(packed))}
+			p, err := openPackedReferences(r, int64(len(packed)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			probes := []struct {
+				at, limit int
+			}{{start + len(line)/2, 2}}
+			if peeled {
+				probes = append(probes, struct{ at, limit int }{start + len(line) + 4, 4})
+			}
+			for _, probe := range probes {
+				r.calls = 0
+				entry, err := p.entryAt(int64(probe.at))
+				if err != nil || entry.name != "refs/heads/branch-050" || entry.hash.String() != testRefHash || entry.start != int64(start) || entry.end != int64(end) {
+					t.Fatalf("probe %d = %+v, %v; want bounds %d:%d", probe.at, entry, err, start, end)
+				}
+				t.Logf("probe=%d underlying_reads=%d limit=%d", probe.at, r.calls, probe.limit)
+				if r.calls > probe.limit {
+					t.Fatalf("probe %d reread buffered lines: calls=%d, limit=%d", probe.at, r.calls, probe.limit)
+				}
+			}
+		})
+	}
+}
+
+func TestPackedReferenceProbeLongLineAndEOF(t *testing.T) {
+	for _, terminated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("terminated=%t", terminated), func(t *testing.T) {
+			name := "refs/heads/" + strings.Repeat("x", refReadBuffer*3)
+			prefix := "# pack-refs with: sorted\n" + testRefHash + " refs/heads/aaa\n"
+			packed := prefix + testRefHash + " " + name
+			if terminated {
+				packed += "\n"
+			}
+			p, err := openPackedReferences(strings.NewReader(packed), int64(len(packed)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, err := p.entryAt(int64(len(prefix) + refReadBuffer))
+			if err != nil || entry.name != name || entry.start != int64(len(prefix)) || entry.end != int64(len(packed)) {
+				t.Fatalf("long final entry = %+v, %v", entry, err)
+			}
+			ref, err := p.find(t.Context(), name)
+			if err != nil || ref.Hash().String() != testRefHash {
+				t.Fatalf("long exact lookup = %v, %v", ref, err)
+			}
+		})
+	}
+}
+
 func TestSortedPackedReferenceReadsAreBounded(t *testing.T) {
 	var data strings.Builder
 	data.WriteString("# pack-refs with: peeled fully-peeled sorted\n")

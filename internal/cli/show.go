@@ -150,11 +150,7 @@ func showAnswer(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix stri
 	if err != nil {
 		return err
 	}
-	supersedes, err := c.AnswerSuperseders(ctx, answer.ID)
-	if err != nil {
-		return err
-	}
-	liveHead, err := c.AnswerSupersedeHeads(ctx, answer.ID)
+	supersedes, liveHead, err := c.AnswerSupersession(ctx, answer.ID)
 	if err != nil {
 		return err
 	}
