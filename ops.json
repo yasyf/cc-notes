@@ -1,1 +1,1 @@
-{"v":1,"lamport":10,"ops":[{"kind":"add_criterion","id":"27647091dd7c639ad37caea13c3de2f8","text":"One actual forward Mac packaging-only CI succeeds on exact60f build/copy/upload-success artifact13044346511/digest plus verified23-image closure and actualA75s evidence, with all23 strict signatures/provenance and no dependency rebuild; whole622 suite stays separately unresolved","script":""}]}
+{"v":1,"lamport":11,"ops":[{"kind":"remove_criterion","id":"2399a4e457db8a2cf9aa71549fa48c76"}]}
