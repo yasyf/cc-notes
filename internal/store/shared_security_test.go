@@ -138,6 +138,7 @@ func TestCheckRecordsBackendRouting(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Open: %v", err)
 			}
+			t.Cleanup(func() { _ = s.Close() })
 			if err := s.CheckRecords(); err != nil {
 				t.Fatalf("CheckRecords before the change: %v", err)
 			}
@@ -152,8 +153,12 @@ func TestCheckRecordsBackendRouting(t *testing.T) {
 				}
 				_ = assertBindingError(t, err, tc.sentinel, f.config(), f.sourceCommon)
 			}
-			if _, err := Open(f.worktreeB); (err == nil) != (tc.sentinel == nil) || (err != nil && !errors.Is(err, tc.sentinel)) {
-				t.Fatalf("Open after the change = %v, want %v", err, tc.sentinel)
+			reopened, openErr := Open(f.worktreeB)
+			if (openErr == nil) != (tc.sentinel == nil) || (openErr != nil && !errors.Is(openErr, tc.sentinel)) {
+				t.Fatalf("Open after the change = %v, want %v", openErr, tc.sentinel)
+			}
+			if openErr == nil {
+				t.Cleanup(func() { _ = reopened.Close() })
 			}
 		})
 	}
@@ -364,6 +369,7 @@ func TestPublishRefRechecksBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	if err := s.CheckRecords(); err != nil {
 		t.Fatalf("CheckRecords: %v", err)
 	}
@@ -391,6 +397,7 @@ func TestSourceIndexPublishRechecksBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	index := sourceindex.Index{Repo: s.Repo, Git: s.RecordsGit, Publish: s.PublishRefs}
 	head, err := index.Refresh(t.Context())
 	if err != nil {

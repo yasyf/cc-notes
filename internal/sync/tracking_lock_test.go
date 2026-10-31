@@ -33,6 +33,7 @@ func TestTrackingLockParentProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	_, err = ccsync.Sync(t.Context(), s, "origin", false)
 	t.Fatalf("Sync returned before its parent was killed: %v", err)
 }
@@ -346,6 +347,7 @@ func TestTrackingLockIsSharedByLinkedWorktrees(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", linkedDir, err)
 	}
+	t.Cleanup(func() { _ = linked.Close() })
 	linkedInfo, err := os.Stat(linked.RecordsCommonDir())
 	if err != nil {
 		t.Fatalf("stat linked RecordsCommonDir: %v", err)

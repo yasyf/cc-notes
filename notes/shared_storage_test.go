@@ -43,6 +43,7 @@ func sharedOpen(t *testing.T, dir string) *notes.Client {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
 
@@ -660,6 +661,7 @@ func TestSharedStorageRelevantBackendFailureNeverServesCache(t *testing.T) {
 			if err != nil {
 				t.Fatalf("fresh Open after %s: %v", tc.name, err)
 			}
+			t.Cleanup(func() { _ = fresh.Close() })
 			out, err := fresh.RelevantCached(t.Context(), "a.go", notes.RelevantFilter{}, "ids", warm.render)
 			if err != nil {
 				t.Fatalf("fresh client after %s: RelevantCached: %v", tc.name, err)

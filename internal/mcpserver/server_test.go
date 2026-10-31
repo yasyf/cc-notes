@@ -896,6 +896,7 @@ func TestRetainedStoreServesToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Retain: %v", err)
 	}
+	t.Cleanup(func() { _ = retained.Close() })
 	cs := connectWith(t, mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message, Hint: cli.Hint, Store: retained})
 	type statusOut struct {
 		Branch string `json:"branch"`

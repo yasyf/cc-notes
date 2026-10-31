@@ -103,6 +103,7 @@ func TestIndexedAnswersWarmReadsAvoidUnrelatedCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = fresh.Close() })
 			_, before := queryIndexGeneration(t, q)
 			ctx := &queryWorkContext{Context: t.Context()}
 			got, hit, err := fresh.IndexedAnswers(ctx, []string{"target"}, ListOpts{})
@@ -146,6 +147,7 @@ func TestIndexedAnswersRefreshesOnlyChangedTips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = fresh.Close() })
 	added := create(t, fresh, append(answerOps("added"), model.AddTag{Tag: "target"})).EntityID()
 	got, hit, err := fresh.IndexedAnswers(t.Context(), []string{"target"}, ListOpts{})
 	if err != nil || !hit || len(got) != 2 {

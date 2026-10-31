@@ -331,6 +331,7 @@ func TestReferencedAttachmentsColdCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
+	t.Cleanup(func() { _ = reopened.Close() })
 	reopened.cache = newFoldCache(t.TempDir(), foldCacheCap)
 	if err := os.Remove(filepath.Join(s.recordsCommonDir, attachIndexSubdir, attachIndexName)); err != nil {
 		t.Fatalf("remove attachment index: %v", err)

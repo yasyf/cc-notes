@@ -58,22 +58,32 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 // the base a file-edit buffer was rendered from — can reconstruct that exact
 // snapshot to diff an edit against. A head whose chain is unreadable fails.
 func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, error) {
+	snapshot, chain, err := s.loadAt(ctx, head)
+	if err != nil {
+		return nil, err
+	}
+	if len(chain) != 0 {
+		s.cache.putChain(head, snapshot, chain)
+	}
+	return snapshot, nil
+}
+
+func (s *Store) loadAt(ctx context.Context, head model.SHA) (model.Snapshot, []model.PackCommit, error) {
 	if err := s.CheckRecords(); err != nil {
-		return nil, fmt.Errorf("load at %s: %w", head, err)
+		return nil, nil, fmt.Errorf("load at %s: %w", head, err)
 	}
 	if snap, ok := s.cache.get(head); ok {
-		return snap, nil
+		return snap, nil, nil
 	}
 	chain, err := s.Repo.ReadChain(ctx, head)
 	if err != nil {
-		return nil, fmt.Errorf("load at %s: %w", head, err)
+		return nil, nil, fmt.Errorf("load at %s: %w", head, err)
 	}
 	snapshot, err := fold.Fold(chain)
 	if err != nil {
-		return nil, fmt.Errorf("load at %s: %w", head, err)
+		return nil, nil, fmt.Errorf("load at %s: %w", head, err)
 	}
-	s.cache.putChain(head, snapshot, chain)
-	return snapshot, nil
+	return snapshot, chain, nil
 }
 
 // LoadRootedAt folds the immutable chain ending at head and returns both its
@@ -382,15 +392,24 @@ func directChildren(prefix string, tips map[string]model.SHA) []tipEntry {
 // foldAll loads and folds every entry's chain, fanning out through an
 // errgroup bounded at listConcurrency.
 func foldAll[T model.Snapshot](ctx context.Context, s *Store, entries []tipEntry, foldFn func([]model.PackCommit) (T, error)) ([]T, error) {
+	names := make([]string, len(entries))
+	for i, entry := range entries {
+		names[i] = string(entry.tip)
+	}
+	cached := s.cache.entries(ctx, names)
+	batch := newFoldPublicationBatch(ctx, s.cache)
+	defer batch.discard()
 	out := make([]T, len(entries))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(listConcurrency)
 	for i, e := range entries {
 		g.Go(func() error {
-			if snap, ok := s.cache.get(e.tip); ok {
-				if t, ok := snap.(T); ok {
-					out[i] = t
-					return nil
+			if entry, ok := cached[string(e.tip)]; ok {
+				if snap, ok := s.cache.getEntry(e.tip, entry); ok {
+					if t, ok := snap.(T); ok {
+						out[i] = t
+						return nil
+					}
 				}
 			}
 			chain, err := s.Repo.ReadChain(gctx, e.tip)
@@ -401,7 +420,7 @@ func foldAll[T model.Snapshot](ctx context.Context, s *Store, entries []tipEntry
 			if err != nil {
 				return fmt.Errorf("fold %s: %w", e.ref, err)
 			}
-			s.cache.putChain(e.tip, snapshot, chain)
+			batch.putChain(e.tip, snapshot, chain)
 			out[i] = snapshot
 			return nil
 		})
@@ -409,5 +428,6 @@ func foldAll[T model.Snapshot](ctx context.Context, s *Store, entries []tipEntry
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+	batch.flush()
 	return out, nil
 }

@@ -130,6 +130,8 @@ func TestStatusMetadataDoesNotReadUnexposedBodies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			initialFresh := fresh
+			t.Cleanup(func() { _ = initialFresh.Close() })
 			got, err := fresh.Status(t.Context())
 			if err != nil || !reflect.DeepEqual(got, want) {
 				t.Fatalf("unreadable unused bodies = %#v, %v; want %#v", got, err, want)
@@ -148,6 +150,8 @@ func TestStatusMetadataDoesNotReadUnexposedBodies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			reopenedFresh := fresh
+			t.Cleanup(func() { _ = reopenedFresh.Close() })
 			if report, err := fresh.Status(t.Context()); err == nil || !reflect.DeepEqual(report, StatusReport{}) {
 				t.Fatalf("unreadable exposed body = %#v, %v", report, err)
 			}
@@ -164,9 +168,7 @@ func removeStatusCommit(t *testing.T, c *Client, tip model.SHA) {
 
 func clearStatusFoldCache(t *testing.T, c *Client) {
 	t.Helper()
-	if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v2")); err != nil {
-		t.Fatal(err)
-	}
+	clearClientCache(t, c, "folds-v5")
 }
 
 func TestStatusMetadataOldAndEmptyPinsAndCacheMiss(t *testing.T) {
@@ -196,6 +198,7 @@ func TestStatusMetadataOldAndEmptyPinsAndCacheMiss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = fresh.Close() })
 	if err := os.RemoveAll(filepath.Join(fresh.s.CommonDir(), "cc-notes-query")); err != nil {
 		t.Fatal(err)
 	}

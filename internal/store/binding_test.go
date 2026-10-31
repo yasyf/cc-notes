@@ -227,6 +227,7 @@ func TestOpenContextBound(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open(%s): %v", dir, err)
 		}
+		t.Cleanup(func() { _ = s.Close() })
 		if s.Repo == s.ContextRepo {
 			t.Fatalf("Open(%s): records and context share one object database", dir)
 		}
@@ -280,6 +281,7 @@ func TestOpenContextBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(worktree): %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	if !strings.HasPrefix(canonical(t, s.GitDir()), filepath.Join(canonical(t, f.thinCommon), "worktrees")+string(filepath.Separator)) {
 		t.Fatalf("worktree GitDir = %q, want one under %s/worktrees", s.GitDir(), f.thinCommon)
 	}
@@ -287,6 +289,7 @@ func TestOpenContextBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(source): %v", err)
 	}
+	t.Cleanup(func() { _ = src.Close() })
 	if src.Repo != src.ContextRepo || src.RecordsGit != src.Git {
 		t.Fatal("the source itself must stay unbound")
 	}
@@ -303,6 +306,7 @@ func TestOpenContextBoundAcrossDeviceRenumber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open with a stale device: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	if s.RecordsCommonDir() != f.sourceCommon {
 		t.Fatalf("RecordsCommonDir = %q, want %q", s.RecordsCommonDir(), f.sourceCommon)
 	}
@@ -542,6 +546,7 @@ func TestCheckRecordsPreOpened(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Open: %v", err)
 			}
+			t.Cleanup(func() { _ = s.Close() })
 			if err := s.CheckRecords(); err != nil {
 				t.Fatalf("CheckRecords before mutation: %v", err)
 			}
@@ -571,6 +576,7 @@ func TestCheckRecordsPreOpened(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
+		t.Cleanup(func() { _ = s.Close() })
 		other := bindingFor(t, filepath.Join(initSourceRepo(t), ".git"))
 		setBindingValue(t, f.config(), other.String())
 		if err := s.CheckRecords(); !errors.Is(err, ErrBindingChanged) {
@@ -580,6 +586,7 @@ func TestCheckRecordsPreOpened(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reopen: %v", err)
 		}
+		t.Cleanup(func() { _ = reopened.Close() })
 		if reopened.RecordsCommonDir() != other.CommonDir {
 			t.Fatalf("reopened RecordsCommonDir = %q, want %q", reopened.RecordsCommonDir(), other.CommonDir)
 		}
@@ -592,6 +599,7 @@ func TestCheckRecordsPreOpened(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
+		t.Cleanup(func() { _ = s.Close() })
 		t.Setenv("PATH", t.TempDir())
 		for range 3 {
 			if err := s.CheckRecords(); err != nil {
