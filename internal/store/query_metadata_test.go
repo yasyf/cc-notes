@@ -47,6 +47,7 @@ func TestQueryMetadataProjection(t *testing.T) {
 				CreatedAt: meta.CreatedAt.Unix(), UpdatedAt: meta.UpdatedAt.Unix(),
 				Deleted: meta.Deleted, Labels: labels, Anchors: tc.anchors,
 				SupersededBy: tc.supersededBy, Branch: tc.branch, SkippedOps: meta.SkippedOps,
+				DuplicateContent: duplicateFingerprint(tc.snapshot),
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("projection = %#v, want %#v", got, want)
@@ -104,25 +105,34 @@ func TestQueryMetadataRoundTripPreservesSkippedOps(t *testing.T) {
 
 func TestQueryMetadataSizeDoesNotDependOnDocumentBody(t *testing.T) {
 	snapshot := model.Doc{ID: "id", Title: "title", Body: "short", When: "trigger"}
-	short, err := json.Marshal(projectQueryMetadata("binding", "tip", snapshot))
+	shortRow := projectQueryMetadata("binding", "tip", snapshot)
+	short, err := json.Marshal(shortRow)
 	if err != nil {
 		t.Fatal(err)
 	}
 	snapshot.Title = strings.Repeat("title", 10000)
 	snapshot.Body = strings.Repeat("body", 1<<18)
 	snapshot.When = strings.Repeat("trigger", 10000)
-	large, err := json.Marshal(projectQueryMetadata("binding", "tip", snapshot))
+	largeRow := projectQueryMetadata("binding", "tip", snapshot)
+	large, err := json.Marshal(largeRow)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(short) != string(large) || len(large) > 512 {
+	if len(short) != len(large) || len(large) > 512 {
 		t.Fatalf("metadata depends on document payload: short=%d large=%d", len(short), len(large))
+	}
+	if len(shortRow.DuplicateContent) != 64 || len(largeRow.DuplicateContent) != 64 || shortRow.DuplicateContent == largeRow.DuplicateContent {
+		t.Fatal("document payload did not produce distinct fixed-size fingerprints")
+	}
+	shortRow.DuplicateContent, largeRow.DuplicateContent = "", ""
+	if !reflect.DeepEqual(shortRow, largeRow) {
+		t.Fatal("document payload changed metadata beyond its fingerprint")
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(large, &fields); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"version", "binding", "tip", "id", "kind", "created_at", "updated_at", "deleted", "labels", "anchors", "superseded_by", "branch", "skipped_ops"}
+	want := []string{"version", "binding", "tip", "id", "kind", "created_at", "updated_at", "deleted", "labels", "anchors", "superseded_by", "branch", "skipped_ops", "duplicate_content"}
 	if len(fields) != len(want) {
 		t.Fatalf("metadata fields = %v, want %v", fields, want)
 	}

@@ -21,6 +21,14 @@ func (q queryMetadataSource) indexPath() string {
 }
 
 func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, read func(*bolt.Tx) (T, error)) (value T, hit bool, err error) {
+	return readQueryMetadataIndexWithTimeout(ctx, q, queryMetadataOpenTimeout, read)
+}
+
+func readQueryMetadataIndexWithoutWait[T any](ctx context.Context, q queryMetadataSource, read func(*bolt.Tx) (T, error)) (value T, hit bool, err error) {
+	return readQueryMetadataIndexWithTimeout(ctx, q, time.Nanosecond, read)
+}
+
+func readQueryMetadataIndexWithTimeout[T any](ctx context.Context, q queryMetadataSource, openTimeout time.Duration, read func(*bolt.Tx) (T, error)) (value T, hit bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return value, false, err
 	}
@@ -163,7 +171,7 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 			cacheOpenErr = err
 			return false
 		}
-		timeout := queryMetadataOpenTimeout
+		timeout := openTimeout
 		if deadline, ok := ctx.Deadline(); ok {
 			timeout = min(timeout, time.Until(deadline))
 			if timeout <= 0 {
@@ -220,7 +228,7 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 }
 
 func queryMetadataBucketsComplete(binding *bolt.Bucket) bool {
-	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket} {
+	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket} {
 		if binding.Bucket(name) == nil {
 			return false
 		}

@@ -101,6 +101,9 @@ func TestQueryMetadataIndexCacheFailuresAreMisses(t *testing.T) {
 			create(t, s, answerOps("a"))
 			source := captureAnswerMetadata(t, s)
 			dir := filepath.Dir(source.indexPath())
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatal(err)
+			}
 			if kind == "unavailable" {
 				if err := os.WriteFile(dir, []byte("not a directory"), 0o600); err != nil {
 					t.Fatal(err)

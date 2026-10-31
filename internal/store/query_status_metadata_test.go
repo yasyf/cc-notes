@@ -97,7 +97,7 @@ func TestStatusMetadataCategoryInputs(t *testing.T) {
 	}
 }
 
-func TestStatusMetadataOwnsWitnessAndIgnoresPayload(t *testing.T) {
+func TestStatusMetadataOwnsWitnessAndLimitsPayloadToFingerprint(t *testing.T) {
 	snapshot := model.Doc{
 		ID: "doc", Title: "title", Body: "body", When: "trigger", StaleReason: "reason",
 		VerifiedAt: 13, StaleAt: 17,
@@ -109,8 +109,12 @@ func TestStatusMetadataOwnsWitnessAndIgnoresPayload(t *testing.T) {
 	snapshot.When = strings.Repeat("trigger", 1<<15)
 	snapshot.StaleReason = strings.Repeat("reason", 1<<15)
 	after := projectQueryMetadata("binding", "tip", snapshot)
+	if len(before.DuplicateContent) != 64 || len(after.DuplicateContent) != 64 || before.DuplicateContent == after.DuplicateContent {
+		t.Fatal("payload fingerprint is not distinct and fixed-size")
+	}
+	before.DuplicateContent, after.DuplicateContent = "", ""
 	if !reflect.DeepEqual(before, after) {
-		t.Fatalf("status metadata depends on unused payload: before=%#v after=%#v", before, after)
+		t.Fatalf("status metadata depends on payload beyond its fingerprint: before=%#v after=%#v", before, after)
 	}
 	snapshot.Witness[0].OID = "mutated"
 	if before.Witness[0].OID != "oid" {

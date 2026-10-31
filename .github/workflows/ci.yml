@@ -24,6 +24,18 @@ jobs:
         run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader|TestCacheHint|TestCacheInline)' ./internal/store
       - name: Exact duplicate contract with cold caches
         run: ./scripts/test.sh -race -count=1 -v -run '^TestCreateExactDuplicateAfterColdCache$' ./internal/store
+      - name: Keyed duplicate content, survivors and held-index fallback
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(DuplicateFingerprint|IndexedDuplicate)' ./internal/store
+      - name: Prior32 metadata and external writer duplicate authority
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-prior32-query-writer"
+          git fetch --no-tags --depth=1 origin 505f85434de0540e539109678448f7dfdd23a3af
+          git worktree add --detach "$baseline" 505f85434de0540e539109678448f7dfdd23a3af
+          cp internal/store/dedupe_prior_writer_process_test.go "$baseline/internal/store/"
+          (cd "$baseline" && go test -c -o "$RUNNER_TEMP/ccn-prior32-query-writer.test" ./internal/store)
+          CCN_PRIOR_QUERY_WRITER="$RUNNER_TEMP/ccn-prior32-query-writer.test" \
+            ./scripts/test.sh -race -count=1 -v -run '^TestIndexedDuplicatePriorSchemaAndWriter$' ./internal/store
       - name: Reject the public 147 regression baseline
         run: |
           set -euo pipefail
@@ -145,6 +157,22 @@ jobs:
         env:
           CCN_REQUIRE_NATIVE_REF_COUNTER: "1"
         run: ./scripts/test.sh -race -count=1 -v -run '^Test(Reference|Query|Settled)' ./internal/gitobj ./internal/store
+      - name: Reject whole-list duplicate discovery on a current index
+        env:
+          CCN_REQUIRE_NATIVE_REF_COUNTER: "1"
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-duplicate-list-negative"
+          git fetch --no-tags --depth=1 origin 829c70ebde41858cf3e55347c94fcee7e4e9e54c
+          git worktree add --detach "$baseline" HEAD
+          git show 829c70ebde41858cf3e55347c94fcee7e4e9e54c:internal/store/dedupe.go > "$baseline/internal/store/dedupe.go"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestQueryDuplicateSelectedWork$' ./internal/store) > "$RUNNER_TEMP/ccn-duplicate-list-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-duplicate-list-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'KEYED_DUPLICATE_WORK:' "$RUNNER_TEMP/ccn-duplicate-list-negative.log")" -eq 2
       - name: Prove the ordinary CLI has no FuseKit child dispatcher
         run: |
           CGO_ENABLED=0 go build -o /tmp/cc-notes ./cmd/cc-notes
