@@ -58,7 +58,7 @@ func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal 
 	if ordinal == 0 && binary == os.Getenv("CCN_PRODUCTIONLIKE_CLI") {
 		hitRoots = taskCacheFixtureRoots(t, dir, unrelated+1)
 	}
-	args := []string{"-f", "-qq", "-yy", "-s", "1", "-o", report, "-e", "trace=read,pread64,write,pwrite64", "--status=successful", binary, "task", "add", title, "--backlog", "--label", "target", "--no-validation-criteria"}
+	args := taskByteTraceArgs(report, binary, "task", "add", title, "--backlog", "--label", "target", "--no-validation-criteria")
 	cmd := exec.CommandContext(ctx, "strace", args...)
 	cmd.Dir = dir
 	cmd.Env = binEnv(actorA)
@@ -96,6 +96,11 @@ func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal 
 		t.Fatalf("missing returned-byte accounting: %+v", work)
 	}
 	t.Logf("unrelated=%d byte_create=%d elapsed_ms=%.3f successful_return_calls=%v restarted_zero_bytes=%v returned_bytes=%v query_db_returned_bytes=%v path_class_returned_bytes=%v user_cpu=%v system_cpu=%v raw_traced_wrapper_rusage=%+v", unrelated, ordinal, float64(elapsed)/float64(time.Millisecond), work.Calls, work.Restarted, work.Bytes, work.QueryBytes, work.PathBytes, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState.SysUsage())
+}
+
+func taskByteTraceArgs(report string, command ...string) []string {
+	args := []string{"-f", "--seccomp-bpf", "-qq", "-yy", "-s", "1", "-o", report, "-e", "trace=read,pread64,write,pwrite64", "--status=successful"}
+	return append(args, command...)
 }
 
 func logTaskByteTraceFailure(t *testing.T, f *os.File) {
