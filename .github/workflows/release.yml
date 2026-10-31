@@ -182,6 +182,8 @@ jobs:
     name: publish release
     runs-on: ubuntu-latest
     needs: [pure, smoke-linux, smoke-macos, sign-darwin, helper-app]
+    outputs:
+      release-id: ${{ steps.stage-release.outputs.release-id }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -251,7 +253,7 @@ jobs:
           tag: ${{ env.RELEASE_TAG }}
           manifest: ${{ runner.temp }}/cc-notes-release-assets.txt
           prerelease: ${{ contains(github.ref_name, '-') }}
-          make-latest: ${{ !contains(github.ref_name, '-') }}
+          make-latest: false
 
   helper-app:
     name: fixed signed helper app
@@ -322,17 +324,13 @@ jobs:
             __SHA_LINUX_ARM64__=${{ steps.shas.outputs.linux_arm64 }}
             __SHA_HELPER__=${{ steps.shas.outputs.helper }}
       - name: Publish the exact CLI to the tap
-        uses: yasyf/homebrew-tap/.github/actions/publish@9525763796fce4d1042cf3393d9479f791908eaa
+        uses: yasyf/homebrew-tap/.github/actions/publish@6a9a9619492f444cf75c8785ba302ad2c92aacd2
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           dir: tap-staging
           message: "cc-notes ${{ github.ref_name }}"
+          monotonic-file: Formula/cc-notes.rb
 
-  # The Claude plugin ships in lockstep with the binary: every tag rewrites
-  # plugin.json's version to the released tag so consumer plugin caches — which
-  # refresh only when the version increases — pick up the matching pack. The
-  # shared plugin autobump guards cc-notes (see .github/workflows/autobump.yml),
-  # leaving the version to this job.
   sync-plugin-version:
     needs: release
     runs-on: ubuntu-latest
@@ -341,39 +339,43 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: main
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Build the pinned release version comparator
+        run: go build -o "$RUNNER_TEMP/release-version" ./scripts/release-version
       - name: Sync plugin.json version to the released tag
         env:
           TAG: ${{ github.ref_name }}
+          RELEASE_VERSION_COMPARE: ${{ runner.temp }}/release-version
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
           FILE=plugin/.claude-plugin/plugin.json
-
-          python3 - "$VERSION" "$FILE" <<'PY'
-          import json, pathlib, re, sys
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            python3 - "$VERSION" "$FILE" <<'PY'
+          import json, os, pathlib, re, subprocess, sys
           target, path = sys.argv[1], pathlib.Path(sys.argv[2])
           text = path.read_text()
-          if json.loads(text)["version"] == target:
+          current = json.loads(text)["version"]
+          comparison = int(subprocess.check_output([os.environ["RELEASE_VERSION_COMPARE"], target, current], text=True))
+          if comparison < 0 or current == target:
               sys.exit(0)
           new = re.sub(r'(^\s*"version":\s*")[^"]*(")', rf'\g<1>{target}\g<2>', text, count=1, flags=re.M)
           assert json.loads(new)["version"] == target, "version substitution did not take"
           path.write_text(new)
           PY
 
-          if git diff --quiet -- "$FILE"; then
-            echo "plugin.json already at $VERSION; nothing to sync"
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$FILE"
-          git commit -m "chore(release): sync plugin.json to $VERSION [skip ci]"
-
-          for attempt in 1 2 3; do
-            git pull --rebase origin main
+            if git diff --quiet -- "$FILE"; then
+              echo "plugin.json already current or newer than $VERSION; nothing to sync"
+              exit 0
+            fi
+            git add "$FILE"
+            git commit -m "chore(release): sync plugin.json to $VERSION [skip ci]"
             if git push origin HEAD:main; then
               echo "pushed plugin.json sync on attempt $attempt"
               exit 0
@@ -382,3 +384,25 @@ jobs:
           done
           echo "::error::failed to push plugin.json sync after 3 attempts"
           exit 1
+
+  promote-latest:
+    needs: [release, helper-app, bump-formula, sync-plugin-version]
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cc-notes-stable-promotion
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: ./.github/actions/setup
+      - name: Build the pinned release version comparator
+        run: go build -o "$RUNNER_TEMP/release-version" ./scripts/release-version
+      - name: Promote the exact stable release without moving latest backward
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release.outputs.release-id }}
+          RELEASE_VERSION_COMPARE: ${{ runner.temp }}/release-version
+        run: python3 scripts/promote_latest.py
