@@ -6,7 +6,7 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-const queryMetadataVersion = 5
+const queryMetadataVersion = 6
 
 type queryMetadata struct {
 	Version             int                       `json:"version"`
@@ -22,6 +22,7 @@ type queryMetadata struct {
 	SupersededBy        []model.EntityID          `json:"superseded_by"`
 	Branch              model.Branch              `json:"branch"`
 	SkippedOps          int                       `json:"skipped_ops"`
+	DuplicateContent    string                    `json:"duplicate_content"`
 	Witness             []model.AnchorWitness     `json:"witness,omitempty"`
 	VerifiedAt          int64                     `json:"verified_at,omitempty"`
 	StaleAt             int64                     `json:"stale_at,omitempty"`
@@ -41,16 +42,17 @@ type queryMetadata struct {
 func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot) queryMetadata {
 	meta := snapshot.Meta()
 	row := queryMetadata{
-		Version:    queryMetadataVersion,
-		Binding:    binding,
-		Tip:        tip,
-		ID:         snapshot.EntityID(),
-		Kind:       meta.Kind,
-		CreatedAt:  meta.CreatedAt.Unix(),
-		UpdatedAt:  meta.UpdatedAt.Unix(),
-		Deleted:    meta.Deleted,
-		Labels:     slices.Clone(meta.Labels),
-		SkippedOps: meta.SkippedOps,
+		Version:          queryMetadataVersion,
+		Binding:          binding,
+		Tip:              tip,
+		ID:               snapshot.EntityID(),
+		Kind:             meta.Kind,
+		CreatedAt:        meta.CreatedAt.Unix(),
+		UpdatedAt:        meta.UpdatedAt.Unix(),
+		Deleted:          meta.Deleted,
+		Labels:           slices.Clone(meta.Labels),
+		SkippedOps:       meta.SkippedOps,
+		DuplicateContent: duplicateFingerprint(snapshot),
 	}
 	var anchors []model.Anchor
 	var supersededBy []model.EntityID

@@ -23,6 +23,7 @@ var (
 	queryMetadataBlockedByBucket   = []byte("blocked-by")
 	queryMetadataParentsBucket     = []byte("parents")
 	queryMetadataRunTasksBucket    = []byte("run-tasks")
+	queryMetadataDuplicatesBucket  = []byte("duplicate-content")
 )
 
 func queryMetadataBinding(tx *bolt.Tx, binding string) *bolt.Bucket {
@@ -42,7 +43,7 @@ func ensureQueryMetadataBinding(tx *bolt.Tx, name string) (*bolt.Bucket, error) 
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket} {
+	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket} {
 		if _, err := binding.CreateBucketIfNotExists(name); err != nil {
 			return nil, err
 		}
@@ -99,6 +100,9 @@ func replaceQueryMetadata(tx *bolt.Tx, row queryMetadata) error {
 			return err
 		}
 	}
+	if err := binding.Bucket(queryMetadataDuplicatesBucket).Put(queryMetadataPostingKey(queryMetadataLabelPrefix(row.Kind, row.DuplicateContent), row), nil); err != nil {
+		return err
+	}
 	return putQueryMetadataTip(binding, row)
 }
 
@@ -151,6 +155,9 @@ func removeQueryMetadataPostings(binding *bolt.Bucket, id model.EntityID) error 
 		if err := binding.Bucket(queryMetadataRunTasksBucket).Delete(queryMetadataPostingKey(queryMetadataSupersedersPrefix(previous.Kind, target), previous)); err != nil {
 			return err
 		}
+	}
+	if err := binding.Bucket(queryMetadataDuplicatesBucket).Delete(queryMetadataPostingKey(queryMetadataLabelPrefix(previous.Kind, previous.DuplicateContent), previous)); err != nil {
+		return err
 	}
 	return deleteQueryMetadataTip(binding, previous)
 }

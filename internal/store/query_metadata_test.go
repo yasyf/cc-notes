@@ -47,6 +47,7 @@ func TestQueryMetadataProjection(t *testing.T) {
 				CreatedAt: meta.CreatedAt.Unix(), UpdatedAt: meta.UpdatedAt.Unix(),
 				Deleted: meta.Deleted, Labels: labels, Anchors: tc.anchors,
 				SupersededBy: tc.supersededBy, Branch: tc.branch, SkippedOps: meta.SkippedOps,
+				DuplicateContent: duplicateFingerprint(tc.snapshot),
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("projection = %#v, want %#v", got, want)
