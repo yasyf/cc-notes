@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   native-mac-oracles:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
