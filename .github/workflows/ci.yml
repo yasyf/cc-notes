@@ -29,9 +29,61 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - name: Install syscall accounting
-        run: sudo apt-get update && sudo apt-get install -y strace
-      - name: Fresh CLI task deduplication payload, metadata and full-list costs
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLI(Cost|MetadataCost)$' ./internal/cli
+        run: sudo apt-get update && sudo apt-get install -y strace && strace --version
+      - name: Download the pinned legacy CLI baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ccn_legacy_dir="$RUNNER_TEMP/ccn-legacy-07418"
+          mkdir -p "$ccn_legacy_dir"
+          gh release download v0.74.18 --repo yasyf/cc-notes --pattern cc-notes_linux_amd64 --pattern SHA256SUMS.txt --dir "$ccn_legacy_dir"
+          cd "$ccn_legacy_dir"
+          printf '%s  %s\n' fce14f9ef1cb764b1ebaed0ccc17db323b972d39d1b26da3f6bd4b05290e76ae SHA256SUMS.txt | sha256sum --check --strict -
+          sha256sum --check --ignore-missing SHA256SUMS.txt
+          chmod +x cc-notes_linux_amd64
+          ./cc-notes_linux_amd64 --version
+          echo "CCN_LEGACY_BASELINE_CLI=$ccn_legacy_dir/cc-notes_linux_amd64" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build and record the exact fixed-hint release-style candidate
+        id: build_candidate
+        env:
+          CCN_FIXED_HINT_SHA: 3a249cc28cac34a5ea235958a47638fe427d350f
+        run: |
+          git fetch --no-tags origin "$CCN_FIXED_HINT_SHA"
+          git diff --exit-code "$CCN_FIXED_HINT_SHA" HEAD -- . ':!**/*_test.go' ':!.github/workflows/ci.yml'
+          ccn_candidate_source="$RUNNER_TEMP/ccn-fixed-hint-source"
+          ccn_candidate_cli="$RUNNER_TEMP/ccn-fixed-hint"
+          git worktree add --detach "$ccn_candidate_source" "$CCN_FIXED_HINT_SHA"
+          test "$(git -C "$ccn_candidate_source" rev-parse HEAD)" = "$CCN_FIXED_HINT_SHA"
+          (
+            cd "$ccn_candidate_source/web"
+            npm ci
+            npm run build
+          )
+          ccn_perf_ldflags="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=v0.74.23-perf-proof -X github.com/yasyf/cc-notes/internal/version.Commit=$CCN_FIXED_HINT_SHA"
+          (
+            cd "$ccn_candidate_source"
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags webui -ldflags "$ccn_perf_ldflags" -o "$ccn_candidate_cli" ./cmd/cc-notes
+          )
+          printf 'source=%s binary=%s\n' "$CCN_FIXED_HINT_SHA" "$ccn_candidate_cli"
+          go version -m "$ccn_candidate_cli"
+          sha256sum "$ccn_candidate_cli"
+          go version -m "$CCN_LEGACY_BASELINE_CLI"
+          sha256sum "$CCN_LEGACY_BASELINE_CLI"
+          echo "CCN_PRODUCTIONLIKE_CLI=$ccn_candidate_cli" >> "$GITHUB_ENV"
+      - name: Original payload metadata full-list and fair legacy comparison
+        if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)|TestTaskIOBytes(TraceAccounting|PathPartition))$' ./internal/cli
+      - name: Separate cold returned-byte comparison
+        if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeColdCLIBytes$' ./internal/cli
+      - name: Query mutation work accounting
+        if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskQueryIndexConsecutiveWork|TestQueryMutationWorkContextCallsites)$' ./internal/store
       - name: Selected-task JSON blocking cost
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskBlockingFreshCLICost$' ./internal/cli
       - name: Selected-task reverse-posting work
