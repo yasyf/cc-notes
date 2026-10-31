@@ -129,9 +129,16 @@ func openPackedReferences(reader io.ReaderAt, size int64) (*packedReferences, er
 	return p, nil
 }
 
+func (p *packedReferences) lineReader(start int64) *bufio.Reader {
+	return bufio.NewReaderSize(io.NewSectionReader(p.reader, start, p.size-start), refReadBuffer)
+}
+
 func (p *packedReferences) line(start int64) (string, int64, error) {
-	r := bufio.NewReaderSize(io.NewSectionReader(p.reader, start, p.size-start), refReadBuffer)
-	line, err := r.ReadString('\n')
+	return readPackedReferenceLine(p.lineReader(start), start)
+}
+
+func readPackedReferenceLine(reader *bufio.Reader, start int64) (string, int64, error) {
+	line, err := reader.ReadString('\n')
 	if errors.Is(err, io.EOF) && len(line) > 0 {
 		err = nil
 	}
@@ -139,7 +146,11 @@ func (p *packedReferences) line(start int64) (string, int64, error) {
 }
 
 func (p *packedReferences) entry(start int64) (packedReference, error) {
-	line, end, err := p.line(start)
+	return p.readEntry(p.lineReader(start), start)
+}
+
+func (p *packedReferences) readEntry(reader *bufio.Reader, start int64) (packedReference, error) {
+	line, end, err := readPackedReferenceLine(reader, start)
 	if err != nil {
 		return packedReference{}, err
 	}
@@ -149,7 +160,7 @@ func (p *packedReferences) entry(start int64) (packedReference, error) {
 	}
 	entry.start, entry.end = start, end
 	if end < p.size {
-		line, end, err = p.line(end)
+		line, end, err = readPackedReferenceLine(reader, end)
 		if err != nil {
 			return packedReference{}, err
 		}
@@ -221,17 +232,19 @@ func (p *packedReferences) entryAt(at int64) (packedReference, error) {
 	if err != nil {
 		return packedReference{}, err
 	}
-	line, _, err := p.line(start)
+	reader := p.lineReader(start)
+	first, err := reader.Peek(1)
 	if err != nil {
 		return packedReference{}, err
 	}
-	if strings.HasPrefix(line, "^") {
+	if first[0] == '^' {
 		start, err = p.lineStart(start - 1)
 		if err != nil {
 			return packedReference{}, err
 		}
+		return p.entry(start)
 	}
-	return p.entry(start)
+	return p.readEntry(reader, start)
 }
 
 func (p *packedReferences) lowerBound(ctx context.Context, name string) (int64, error) {
