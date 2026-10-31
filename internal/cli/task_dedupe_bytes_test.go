@@ -99,7 +99,9 @@ func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal 
 }
 
 func taskByteTraceArgs(report string, command ...string) []string {
-	args := []string{"-f", "--seccomp-bpf", "-qq", "-yy", "-s", "1", "-o", report, "-e", "trace=read,pread64,write,pwrite64", "--status=successful"}
+	prefix := [...]string{"-f", "--seccomp-bpf", "-qq", "-yy", "-s", "1", "-o", report, "-e", "trace=read,pread64,write,pwrite64", "--status=successful"}
+	args := make([]string, 0, len(prefix)+len(command))
+	args = append(args, prefix[:]...)
 	return append(args, command...)
 }
 

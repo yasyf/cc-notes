@@ -67,7 +67,7 @@ func parseTaskCacheLookups(r io.Reader, roots map[string]bool) (map[string]bool,
 		if len(fields) == 0 {
 			return errors.New("empty open result")
 		}
-		if !(len(fields) > 1 && fields[0] == "?" && fields[1] == "ERESTARTSYS") {
+		if len(fields) <= 1 || fields[0] != "?" || fields[1] != "ERESTARTSYS" {
 			if _, err := strconv.ParseInt(fields[0], 10, 64); err != nil {
 				return fmt.Errorf("unknown open result: %w", err)
 			}
