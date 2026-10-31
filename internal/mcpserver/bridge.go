@@ -42,6 +42,8 @@ func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, 
 	if b.retained != nil {
 		ctx = store.WithRetained(ctx, b.retained)
 	}
+	ctx, scope := store.WithScope(ctx)
+	defer func() { _ = scope.Close() }()
 	root := b.newRoot()
 	var out, errBuf bytes.Buffer
 	root.SetOut(&out)

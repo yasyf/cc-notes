@@ -60,14 +60,23 @@ func repoDir(cmd *cobra.Command) (string, error) {
 // directory, or the one named by --repo or $CCN_REPO.
 func openStore(cmd *cobra.Command) (*store.Store, error) {
 	s, retained, err := retainedStore(cmd)
-	if err != nil || retained {
-		return s, err
-	}
-	dir, err := repoDir(cmd)
 	if err != nil {
 		return nil, err
 	}
-	return store.OpenContext(cmd.Context(), dir)
+	if !retained {
+		dir, err := repoDir(cmd)
+		if err != nil {
+			return nil, err
+		}
+		s, err = store.OpenContext(cmd.Context(), dir)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := store.Own(cmd.Context(), s); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // openClient opens the notes.Client for the repository containing the working

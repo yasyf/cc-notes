@@ -65,6 +65,13 @@ func FromStore(s *store.Store) *Client {
 	return &Client{s: s}
 }
 
+// Close releases the cache handles owned by this client. Clients created with
+// FromStore share their store's lifetime, so its owner closes the store or one
+// of its clients after all borrowers finish.
+func (c *Client) Close() error {
+	return c.s.Close()
+}
+
 // HasNotes reports whether the repository holds any cc-notes entity — any ref
 // under refs/cc-notes/. A repository that has never used cc-notes returns
 // false, the signal a caller uses to gate optional cc-notes wiring.

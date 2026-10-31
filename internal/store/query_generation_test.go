@@ -246,11 +246,13 @@ func TestSettledQueryGenerationRechecksRecordsAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = backend.Close() })
 	a := create(t, backend, docOps("a")).EntityID()
 	s, err := Open(f.worktreeA)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	settleSupersession(t, s, a)
 	value, hit, err := indexedMetadataQuery(t.Context(), s, model.KindDoc, func(_ *bolt.Tx, _ queryMetadataSource) ([]model.EntityID, error) {
 		replaceRepo(t, f.source)

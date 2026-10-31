@@ -668,6 +668,7 @@ func TestGitDriverHundredTargetPagingBuildsOneImmutableSnapshotWithBoundedContin
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = source.Close() })
 	createRootedNote(t, source, "Scale", "one immutable body")
 	head := refreshDriver(t, driver, authority)
 	targets := make([]sourcedriver.TargetDeclaration, len(tenants))
@@ -938,6 +939,7 @@ func newGitDriverTest(t *testing.T) (*GitDriver, Tenant, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = source.Close() })
 	return driver, tenant, source
 }
 

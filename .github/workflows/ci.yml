@@ -13,6 +13,16 @@ permissions:
   contents: read
 
 jobs:
+  bounded-cache-cost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Install syscall tracer
+        run: sudo apt-get update && sudo apt-get install -y strace
+      - name: Fresh-process cache cost and crash contracts
+        run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader|TestCacheHint|TestCacheInline)' ./internal/store
+
   release-monotonic:
     runs-on: ubuntu-latest
     steps:
@@ -32,6 +42,7 @@ jobs:
           RELEASE_VERSION_COMPARE="$RUNNER_TEMP/release-version" \
             python3 scripts/test_release_monotonic.py
 
+
   task-dedupe-cost:
     runs-on: ubuntu-latest
     steps:
@@ -39,8 +50,8 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Install syscall accounting
         run: sudo apt-get update && sudo apt-get install -y strace
-      - name: Fresh CLI task deduplication payload reads, cold and warm
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLICost$' ./internal/cli
+      - name: Fresh CLI task deduplication payload, metadata and full-list costs
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLI(Cost|MetadataCost)$' ./internal/cli
       - name: Selected-task JSON blocking cost
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskBlockingFreshCLICost$' ./internal/cli
       - name: Selected-task reverse-posting work

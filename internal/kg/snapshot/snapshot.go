@@ -66,6 +66,7 @@ func Capture(ctx context.Context, dir string, now time.Time) (Corpus, error) {
 	if err != nil {
 		return Corpus{}, fmt.Errorf("open %s: %w", dir, err)
 	}
+	defer func() { _ = c.Close() }()
 	entities, err := eval.LoadCorpus(ctx, c)
 	if err != nil {
 		return Corpus{}, fmt.Errorf("load corpus %s: %w", dir, err)
@@ -74,6 +75,7 @@ func Capture(ctx context.Context, dir string, now time.Time) (Corpus, error) {
 	if err != nil {
 		return Corpus{}, fmt.Errorf("open store %s: %w", dir, err)
 	}
+	defer func() { _ = s.Close() }()
 	g, err := kg.Build(ctx, s)
 	if err != nil {
 		return Corpus{}, fmt.Errorf("build graph %s: %w", dir, err)

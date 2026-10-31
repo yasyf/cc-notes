@@ -1,9 +1,8 @@
 package store
 
 import (
+	"bytes"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
@@ -393,10 +392,9 @@ func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 		t.Fatalf("Tip post: %v", err)
 	}
 
-	dir := s.cache.dir
-	if _, err := os.Stat(filepath.Join(dir, string(oldTip))); err != nil {
-		t.Fatalf("orphaned entry missing before gc: %v", err)
-	}
+	orphan := cacheEntryFrame(t, &s.cache.lruDir, string(oldTip))
+	live := cacheEntryFrame(t, &s.cache.lruDir, string(newTip))
+	liveFrame := live.read(t)
 
 	tidied, err := s.GCLocal(ctx)
 	if err != nil {
@@ -405,10 +403,8 @@ func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 	if tidied != 1 {
 		t.Fatalf("tidied = %d, want 1", tidied)
 	}
-	if _, err := os.Stat(filepath.Join(dir, string(oldTip))); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("orphaned entry survived gc: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, string(newTip))); err != nil {
-		t.Fatalf("live entry removed by gc: %v", err)
+	orphan.assertErased(t)
+	if !bytes.Equal(live.read(t), liveFrame) {
+		t.Fatal("live entry changed by gc")
 	}
 }

@@ -200,11 +200,13 @@ func TestQueryMetadataIndexBindingChangeAfterReaderRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = backend.Close() })
 	create(t, backend, answerOps("a"))
 	bound, err := Open(f.worktreeA)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = bound.Close() })
 	source := captureAnswerMetadata(t, bound)
 	_, hit, err := readQueryMetadataIndex(t.Context(), source, func(_ *bolt.Tx) (bool, error) { replaceRepo(t, f.source); return true, nil })
 	if hit || err == nil {

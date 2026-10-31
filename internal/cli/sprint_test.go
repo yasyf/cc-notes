@@ -90,6 +90,7 @@ func spAppendTask(t *testing.T, dir, taskID string, op model.Op) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	ref, err := s.Resolve(t.Context(), model.KindTask, taskID)
 	if err != nil {
 		t.Fatalf("resolve task %s: %v", taskID, err)
