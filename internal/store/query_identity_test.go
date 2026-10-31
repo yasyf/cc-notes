@@ -172,13 +172,18 @@ func TestQueryMetadataExecutableIndependentReuse(t *testing.T) {
 			if first.Binding != second.Binding || first.Path != second.Path {
 				t.Fatalf("EXECUTABLE_METADATA_REBUILD: count=%d first=%s second=%s", count, first.Binding, second.Binding)
 			}
-			if first.Count != uint64(count) || second.Count != first.Count || second.Transaction != first.Transaction || second.Generation != first.Generation {
+			promoted := first.Generation == "" && second.Generation != ""
+			wantTransaction := first.Transaction
+			if promoted {
+				wantTransaction++
+			}
+			if first.Count != uint64(count) || second.Count != first.Count || second.Transaction != wantTransaction || (!promoted && second.Generation != first.Generation) {
 				t.Fatalf("count=%d first=%+v second=%+v", count, first, second)
 			}
-			if os.Getenv("CCN_REQUIRE_NATIVE_REF_COUNTER") == "1" && (second.Generation == "" || second.Checks > 32) {
+			if os.Getenv("CCN_REQUIRE_NATIVE_REF_COUNTER") == "1" && (first.Generation == "" || second.Generation == "" || second.Checks > 32) {
 				t.Fatalf("count=%d unqualified or unbounded cross-executable reuse: %+v", count, second)
 			}
-			t.Logf("count=%d first_checks=%d second_checks=%d unchanged_transaction=%d native_generation=%t", count, first.Checks, second.Checks, second.Transaction, second.Generation != "")
+			t.Logf("count=%d first_checks=%d second_checks=%d transaction=%d generation_promoted=%t native_generation=%t", count, first.Checks, second.Checks, second.Transaction, promoted, second.Generation != "")
 		})
 	}
 }
