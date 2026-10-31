@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf/attachment-ref-batch"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"ab64a7088f1734fe9933421b3fbaa384","status":"met","note":"Actual immutable baseline and fixed caller receipts in FE/lr-overflow-A711-linux-actual-proof.json and macos counterpart: fixed56 lanes, both N32/N10000; old 58 cold RO opens and 3N+3 DTOs, 0 SQL changes; old two-iteration overflow thread opens[2,4]/closes4. Root sample remains one native stack, not exclusive file/physical attribution."}]}
