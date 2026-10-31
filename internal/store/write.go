@@ -16,11 +16,8 @@ import (
 
 // Create roots a new entity chain from ops (beginning with the create op). An
 // exact duplicate of a live entity of the same kind writes nothing and returns
-// a *DuplicateError carrying the survivor. The scan covers only entities whose
-// fold this clone has cached, which includes everything it wrote or listed, and
-// reads no chain from git, so a cold cache never makes a write fold the whole
-// kind. It is best-effort and takes no lock, so two truly concurrent creates
-// can still both land.
+// a *DuplicateError carrying the survivor; the scan is best-effort and takes no
+// lock, so two truly concurrent creates can still both land.
 func (s *Store) Create(ctx context.Context, ops []model.Op) (model.Snapshot, error) {
 	return s.create(ctx, ops, true)
 }

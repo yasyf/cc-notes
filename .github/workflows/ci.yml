@@ -22,6 +22,22 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: Fresh-process cache cost and crash contracts
         run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader|TestCacheHint|TestCacheInline)' ./internal/store
+      - name: Exact duplicate contract with cold caches
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestCreateExactDuplicateAfterColdCache$' ./internal/store
+      - name: Reject the public 147 regression baseline
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-147-negative"
+          git fetch --no-tags --depth=1 origin d7a2c445078f6da7d77fe5b9e6658096884d0146
+          git worktree add --detach "$baseline" d7a2c445078f6da7d77fe5b9e6658096884d0146
+          cp internal/store/dedupe_cold_contract_test.go "$baseline/internal/store/"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestCreateExactDuplicateAfterColdCache$' ./internal/store) > "$RUNNER_TEMP/ccn-147-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-147-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'COLD_DUPLICATE_REGRESSION:' "$RUNNER_TEMP/ccn-147-negative.log")" -eq 6
 
   release-monotonic:
     runs-on: ubuntu-latest
