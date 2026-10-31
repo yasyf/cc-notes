@@ -2,8 +2,10 @@ package gitobj
 
 import (
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -142,5 +144,22 @@ func TestReferenceCounterPrivateWorktreeRouting(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReferenceCounterMissingPath(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "missing")
+	if _, supported, err := nativeReferenceCounter(name); supported || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing path = supported %v, error %v", supported, err)
+	}
+}
+
+func TestReferenceCounterErrno(t *testing.T) {
+	for _, want := range []syscall.Errno{syscall.ENOENT, syscall.ENOTSUP, syscall.ENOSYS} {
+		for _, code := range []uintptr{uintptr(want), uintptr(want) | 0xfeedface00000000} {
+			if got := referenceCounterErrno(code); got != want {
+				t.Fatalf("errno %#x = %v, want %v", code, got, want)
+			}
+		}
 	}
 }
