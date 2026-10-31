@@ -4832,6 +4832,46 @@ def test_refine_user_answers_anchors_paths_and_relabels(monkeypatch, tmp_path) -
     check("refine: consumes the captured id", evt.ctx.s.load(CapturedAnswers).ids == {}, repr(evt.ctx.s.load(CapturedAnswers).ids))
 
 
+def test_refine_user_answers_prepares_paths_before_model_release(monkeypatch, tmp_path) -> None:
+    import spawnllm
+    from captain_hook import context
+    from captain_hook.context import HookContext
+    from captain_hook.transcripts import LazyTranscript, TranscriptPins
+
+    evt, calls = answer_event(
+        monkeypatch, tmp_path, [question("Which language?", labels=("Go", "Rust"))],
+        {"answers": {"Which language?": "Go"}},
+        candidates=[durable_answer("old0001cccc", title="Which language?", body="Rust")],
+        triage={"durable": binary(0.9)},
+        paths=("/elsewhere/x.go", *(f"src/p{i}.go" for i in range(12)), f"{ANSWER_ROOT}/src/p11.go"),
+    )
+    evt._raw["cwd"] = ANSWER_ROOT
+    transcript = evt.ctx.transcript
+    source = LazyTranscript(TranscriptPins(lambda: transcript), seed=True)
+    evt.ctx.transcript = source
+    monkeypatch.setattr(evt.ctx, "call_llm", HookContext.call_llm.__get__(evt.ctx))
+    monkeypatch.setattr(context, "ready_backend", lambda *args: SimpleNamespace(provider="fixture"))
+    prompts: list[str] = []
+
+    def model(prompt, response_model, **kwargs):
+        assert source.released
+        assert source.pins.pending == 0
+        prompts.append(prompt)
+        assert response_model is SupersedeTriage
+        return supersede_triage("old0001")
+
+    monkeypatch.setattr(spawnllm, "extract_sync", model)
+    captured_then_refined(evt, calls)
+    expected = (
+        "answer", "edit", "ans0001aaaa", "--json", "--rm-label", "scope:ephemeral", "--add-label", "scope:durable",
+        *(arg for i in range(11, 1, -1) for arg in ("--add-path", f"src/p{i}.go")),
+    )
+    check("refine lifetime: bounded relative paths survive release", answer_edits(calls) == [expected], repr(calls))
+    check("refine lifetime: supersede choice survives release", ("answer", "supersede", "old0001cccc", "--by", "ans0001aaaa", "--json") in calls, repr(calls))
+    check("refine lifetime: one model call", len(prompts) == 1, repr(prompts))
+    check("refine lifetime: captured ids consumed", evt.ctx.s.load(CapturedAnswers).ids == {}, repr(evt.ctx.s.load(CapturedAnswers).ids))
+
+
 def test_refine_user_answers_agreeing_triage_without_paths_edits_nothing(monkeypatch, tmp_path) -> None:
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}},
@@ -4855,10 +4895,17 @@ def test_refine_user_answers_durable_floor_and_unjudged_scope(monkeypatch, tmp_p
 
 def test_refine_user_answers_skips_uncaptured(monkeypatch, tmp_path) -> None:
     """A deduped answer was never captured, so the background pass makes no calls."""
+    from captain_hook.transcripts import LazyTranscript, TranscriptPins
+
     evt, calls = answer_event(
         monkeypatch, tmp_path, [question("Q?")], {"answers": {"Q?": "A"}}, recent=[recent_answer("Q?", 1)],
         triage={"durable": binary(0.1)}, supersedes="old0001",
     )
+
+    def unavailable():
+        raise AssertionError("an uncaptured answer must not load the transcript")
+
+    evt.ctx.transcript = LazyTranscript(TranscriptPins(unavailable), seed=True)
     captured_then_refined(evt, calls)
     check("refine uncaptured: no calls", calls == [], repr(calls))
 

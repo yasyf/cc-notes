@@ -11,15 +11,16 @@ import (
 
 const (
 	cacheChunkSize   = 4096
-	cacheChunkDomain = "cc-notes-cache-block-v1"
+	cacheChunkDomain = "cc-notes-cache-block-v2"
 )
 
 var errCacheIntegrity = errors.New("cache payload integrity mismatch")
 
 // CacheReader verifies publication-bound blocks before exposing their bytes.
-// It owns its file independently of the store's metadata connection.
+// Its verified bytes and streamed file remain valid independently of the store.
 type CacheReader struct {
 	file      *os.File
+	name      string
 	token     [cacheTokenSize]byte
 	size      int64
 	remaining int64
@@ -30,20 +31,33 @@ type CacheReader struct {
 }
 
 func newCacheReader(file *os.File, entry cacheEntry) (*CacheReader, error) {
-	first := int(min(entry.size, int64(cacheChunkSize)))
-	buffer := make([]byte, cacheTokenSize+sha256.Size+first)
-	if _, err := io.ReadFull(file, buffer); err != nil {
+	reader, err := readCacheFirstBlock(file, entry)
+	if err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(buffer[:cacheTokenSize], entry.token) {
+	reader.file, reader.name = file, file.Name()
+	return reader, nil
+}
+
+func readCacheFirstBlock(source io.Reader, entry cacheEntry) (*CacheReader, error) {
+	if !entry.valid(entry.name) {
 		return nil, errCacheIntegrity
 	}
-	chunk := buffer[cacheTokenSize+sha256.Size:]
+	first := int(min(entry.size, int64(cacheChunkSize)))
+	prefix := cacheTokenSize + 1 + len(entry.name)
+	buffer := make([]byte, prefix+sha256.Size+first)
+	if _, err := io.ReadFull(source, buffer); err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(buffer[:cacheTokenSize], entry.token) || int(buffer[cacheTokenSize]) != len(entry.name) || !bytes.Equal(buffer[cacheTokenSize+1:prefix], []byte(entry.name)) {
+		return nil, errCacheIntegrity
+	}
+	chunk := buffer[prefix+sha256.Size:]
 	digest := cacheBlockDigest(entry.token, entry.size, 0, chunk)
-	if !bytes.Equal(buffer[cacheTokenSize:cacheTokenSize+sha256.Size], digest[:]) {
+	if !bytes.Equal(buffer[prefix:prefix+sha256.Size], digest[:]) {
 		return nil, errCacheIntegrity
 	}
-	reader := &CacheReader{file: file, size: entry.size, remaining: entry.size - int64(first), index: 1, buffer: buffer, chunk: chunk}
+	reader := &CacheReader{size: entry.size, remaining: entry.size - int64(first), index: 1, buffer: buffer, chunk: chunk}
 	copy(reader.token[:], entry.token)
 	return reader, nil
 }
@@ -83,13 +97,16 @@ func (r *CacheReader) Size() int64 {
 	return r.size
 }
 
-// Name identifies the opened backing slot, including after replacement.
+// Name identifies the backing payload file, including after replacement.
 func (r *CacheReader) Name() string {
-	return r.file.Name()
+	return r.name
 }
 
 // Close releases this reader's file without changing the store's lifetime.
 func (r *CacheReader) Close() error {
+	if r.file == nil {
+		return nil
+	}
 	return r.file.Close()
 }
 
@@ -104,10 +121,12 @@ func cacheBlockDigest(token []byte, size int64, index uint64, data []byte) [sha2
 	return sha256.Sum256(input[:prefix+len(data)])
 }
 
-func writeCachePayload(file *os.File, token, data []byte) error {
-	var buffer [cacheTokenSize + sha256.Size + cacheChunkSize]byte
+func writeCachePayload(file io.Writer, name string, token, data []byte) error {
+	var buffer [cacheTokenSize + 1 + cacheKeyMax + sha256.Size + cacheChunkSize]byte
 	copy(buffer[:], token)
-	size, index, offset := int64(len(data)), uint64(0), cacheTokenSize
+	buffer[cacheTokenSize] = byte(len(name)) //nolint:gosec // G115: Publication rejects keys longer than 255 bytes before framing.
+	copy(buffer[cacheTokenSize+1:], name)
+	size, index, offset := int64(len(data)), uint64(0), cacheTokenSize+1+len(name)
 	for {
 		n := min(len(data), cacheChunkSize)
 		digest := cacheBlockDigest(token, size, index, data[:n])

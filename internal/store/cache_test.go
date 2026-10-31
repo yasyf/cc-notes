@@ -264,7 +264,7 @@ func TestFoldCacheV1NamespaceRebuildsDerivedEntries(t *testing.T) {
 	if !ok {
 		t.Fatal("encode old derived entry")
 	}
-	for _, prior := range []string{"folds", "folds-v1", "folds-v2"} {
+	for _, prior := range []string{"folds", "folds-v1", "folds-v2", "folds-v3"} {
 		oldDir := filepath.Join(common, "cc-notes", prior)
 		if err := os.MkdirAll(oldDir, 0o750); err != nil {
 			t.Fatal(err)
@@ -487,9 +487,7 @@ func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tip: %v", err)
 	}
-	if err := os.WriteFile(cacheEntryPath(t, &s.cache.lruDir, string(tip)), []byte("not a cache entry"), 0o600); err != nil {
-		t.Fatalf("corrupt entry: %v", err)
-	}
+	cacheEntryFrame(t, &s.cache.lruDir, string(tip)).write(t, []byte("not a cache entry"))
 
 	if _, ok := s.cache.get(tip); ok {
 		t.Fatal("get of corrupt entry: want miss")

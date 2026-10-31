@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,28 +27,37 @@ func TestLRUDirCostHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := &lruDir{capacity: count, dir: dir}
+	capacity := count * 4
+	if mode == "populate-default" || mode == "default-rate" {
+		capacity = foldCacheCap
+	}
+	l := &lruDir{capacity: capacity, dir: dir}
+	var metadataOpens, inlineOpens, payloadOpens, validated, rankSum int64
+	var hits, misses int64
 	started := time.Now()
 	switch mode {
 	case "baseline":
+	case "missing":
+		for i := range count {
+			if _, ok := l.entry(fmt.Sprintf("%064d", i)); ok {
+				t.Fatal("missing entry became a hit")
+			}
+		}
+		if !l.lookupMissing || l.index != nil {
+			t.Fatalf("missing owner state: absent=%v index=%v", l.lookupMissing, l.index)
+		}
 	case "populate":
 		for i := range count {
 			l.write(fmt.Sprintf("%064d", i), []byte("cached payload"))
 		}
-		if got := len(l.names()); got != count {
-			t.Fatalf("populated %d, want %d", got, count)
-		}
-	case "populate-batch":
-		cache := newFoldCache(dir, count)
+	case "populate-batch", "populate-default":
+		cache := newFoldCache(dir, capacity)
 		l = &cache.lruDir
 		batch := newFoldPublicationBatch(t.Context(), cache)
 		for i := range count {
 			batch.add(&cachePublication{name: fmt.Sprintf("%064d", i), data: []byte("cached payload")})
 		}
 		batch.flush()
-		if got := len(l.names()); got != count {
-			t.Fatalf("batch populated %d, want %d", got, count)
-		}
 	case "write":
 		l.write("new", []byte("new payload"))
 		if data, ok := l.read("new"); !ok || string(data) != "new payload" {
@@ -65,33 +75,111 @@ func TestLRUDirCostHelper(t *testing.T) {
 			}
 		}
 	case "owned", "per-access":
+		var previousIndex, previousData *os.File
 		for i := range count {
 			name := fmt.Sprintf("%064d", i)
-			if data, ok := l.read(name); !ok || string(data) != "cached payload" {
-				t.Fatalf("payload %s = %q, %v", name, data, ok)
+			entry, ok := l.entry(name)
+			if !ok {
+				t.Fatalf("hint %s missing", name)
 			}
-			l.touch(name)
+			if l.index != previousIndex {
+				metadataOpens++
+				previousIndex = l.index
+			}
+			reader, ok := l.openEntry(entry)
+			if !ok {
+				t.Fatalf("payload %s missing", name)
+			}
+			if reader.file != nil {
+				payloadOpens++
+			}
+			if l.data != previousData {
+				inlineOpens++
+				previousData = l.data
+			}
+			data, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			if readErr != nil || closeErr != nil || string(data) != "cached payload" {
+				t.Fatalf("payload %s = %q, read=%v close=%v", name, data, readErr, closeErr)
+			}
+			l.rememberHit(entry)
 			if mode == "per-access" {
 				if err := l.close(); err != nil {
 					t.Fatal(err)
 				}
-				l = &lruDir{capacity: count, dir: dir}
+				if _, err := previousIndex.Stat(); !errors.Is(err, os.ErrClosed) {
+					t.Fatalf("closed metadata handle = %v", err)
+				}
+				if _, err := previousData.Stat(); !errors.Is(err, os.ErrClosed) {
+					t.Fatalf("closed inline handle = %v", err)
+				}
+				l = &lruDir{capacity: capacity, dir: dir}
 			}
+		}
+	case "default-rate":
+		for i := range count {
+			name := fmt.Sprintf("%064d", i)
+			entry, ok := l.entry(name)
+			if !ok {
+				misses++
+				continue
+			}
+			reader, ok := l.openEntry(entry)
+			if !ok {
+				misses++
+				continue
+			}
+			if reader.file != nil {
+				payloadOpens++
+			}
+			data, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			if readErr != nil || closeErr != nil || string(data) != "cached payload" {
+				t.Fatalf("default-capacity payload %s = %q, read=%v close=%v", name, data, readErr, closeErr)
+			}
+			hits++
+		}
+		if l.index != nil {
+			metadataOpens = 1
+		}
+		if l.data != nil {
+			inlineOpens = 1
 		}
 	default:
 		t.Fatalf("unknown cost mode %q", mode)
 	}
-	walBefore := cacheCostFileSize(t, dir, "index.sqlite-wal")
-	dbBefore := cacheCostFileSize(t, dir, "index.sqlite")
+	if mode == "populate" || mode == "populate-batch" {
+		names := l.names()
+		if len(names) != count {
+			t.Fatalf("population entries=%d want=%d", len(names), count)
+		}
+		for _, name := range names {
+			entry, ok := l.entry(name)
+			if !ok || entry.rank == 0 || entry.rank > uint64(count) {
+				t.Fatalf("population hint %s = %+v, %v", name, entry, ok)
+			}
+			if data, ok := l.readEntry(entry); !ok || string(data) != "cached payload" {
+				t.Fatalf("population payload %s = %q, %v", name, data, ok)
+			}
+			validated++
+			rankSum += int64(entry.rank)
+		}
+	}
+	indexBefore := cacheCostFileSize(t, dir, cacheHintFile)
 	workElapsed := time.Since(started).Nanoseconds()
 	closeStarted := time.Now()
 	if err := l.close(); err != nil {
 		t.Fatal(err)
 	}
 	closeElapsed := time.Since(closeStarted).Nanoseconds()
-	walAfter := cacheCostFileSize(t, dir, "index.sqlite-wal")
-	dbAfter := cacheCostFileSize(t, dir, "index.sqlite")
-	result := map[string]int64{"elapsed_ns": time.Since(started).Nanoseconds(), "work_elapsed_ns": workElapsed, "close_elapsed_ns": closeElapsed, "wal_bytes_before_close": walBefore, "wal_bytes_after_close": walAfter, "db_bytes_before_close": dbBefore, "db_bytes_after_close": dbAfter}
+	indexAfter := cacheCostFileSize(t, dir, cacheHintFile)
+	result := map[string]int64{
+		"elapsed_ns": time.Since(started).Nanoseconds(), "work_elapsed_ns": workElapsed,
+		"close_elapsed_ns": closeElapsed, "index_bytes_before_close": indexBefore, "index_bytes_after_close": indexAfter,
+		"capacity": int64(capacity), "owner_fd_acquisitions": metadataOpens, "payload_fd_acquisitions": payloadOpens, "inline_fd_acquisitions": inlineOpens,
+		"validated_population_entries": validated, "hint_rank_sum": rankSum,
+		"cache_hits": hits, "cache_misses": misses,
+	}
 	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +201,14 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 			baseline := cacheCostProcess(t, "baseline", dir, count, true)
 			populated := cacheCostProcess(t, "populate", dir, count, true)
 			batch := cacheCostProcess(t, "populate-batch", t.TempDir(), count, true)
-			if batch["pwrite64"]*2 >= populated["pwrite64"] {
-				t.Errorf("bulk publication did not reduce metadata writes: point=%v batch=%v", populated, batch)
+			chunks := (count + cachePublicationRows - 1) / cachePublicationRows
+			if populated["pwrite64"]-batch["pwrite64"] != count-chunks {
+				t.Errorf("rank header amortization: point=%v batch=%v want_delta=%d", populated, batch, count-chunks)
+			}
+			for _, result := range []map[string]int{populated, batch} {
+				if result["validated_population_entries"] != count || result["hint_rank_sum"] != count*(count+1)/2 {
+					t.Fatalf("population payload/hint semantics changed: %v", result)
+				}
 			}
 			if batch["fsync"]+batch["fdatasync"] > populated["fsync"]+populated["fdatasync"] {
 				t.Errorf("bulk publication added sync calls: point=%v batch=%v", populated, batch)
@@ -136,7 +230,7 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 			}
 			ownedOpens := owned["open"] + owned["openat"]
 			perAccessOpens := perAccess["open"] + perAccess["openat"]
-			if ownedOpens > count+64 || ownedOpens*2 >= perAccessOpens {
+			if ownedOpens > 64 || perAccessOpens-ownedOpens != 2*(count-1) || owned["owner_fd_acquisitions"] != 1 || perAccess["owner_fd_acquisitions"] != count || owned["inline_fd_acquisitions"] != 1 || perAccess["inline_fd_acquisitions"] != count || owned["payload_fd_acquisitions"] != 0 || perAccess["payload_fd_acquisitions"] != 0 {
 				t.Fatalf("owned handle reopened per hit: owned=%v per-access=%v", owned, perAccess)
 			}
 			if owned["write"] > 8 || owned["pwrite64"] > 8 || owned["fsync"]+owned["fdatasync"] != 0 {
@@ -170,6 +264,59 @@ func TestLRUDirFreshProcessCost(t *testing.T) {
 	}
 }
 
+func TestLRUDirMissingProcessCost(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("syscall accounting requires Linux strace")
+	}
+	var results []map[string]int
+	for _, count := range []int{32, 10000} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			dir := t.TempDir()
+			baseline := cacheCostProcess(t, "baseline", dir, count, true)
+			missing := cacheCostProcess(t, "missing", dir, count, true)
+			results = append(results, missing)
+			for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat"} {
+				if missing[name] > baseline[name]+8 {
+					t.Errorf("missing lookup repeated %s: baseline=%v missing=%v", name, baseline, missing)
+				}
+			}
+			for _, name := range []string{"getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
+				if missing[name] > baseline[name] {
+					t.Errorf("missing lookup enumerated or wrote %s: baseline=%v missing=%v", name, baseline, missing)
+				}
+			}
+		})
+	}
+	for _, name := range []string{"read", "pread64", "open", "openat", "fstat", "newfstatat", "getdents64", "write", "pwrite64", "fsync", "fdatasync"} {
+		if len(results) == 2 && results[1][name] > results[0][name]+64 {
+			t.Errorf("missing lookup %s grew with requested misses: %d to %d", name, results[0][name], results[1][name])
+		}
+	}
+}
+
+func TestLRUDirDefaultCapacityHitRate(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("syscall accounting requires Linux strace")
+	}
+	if _, err := exec.LookPath("strace"); err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []int{32, 10000} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "cache")
+			cacheCostProcess(t, "populate-default", dir, count, false)
+			read := cacheCostProcess(t, "default-rate", dir, count, true)
+			if read["capacity"] != foldCacheCap || read["cache_hits"]+read["cache_misses"] != count || read["payload_fd_acquisitions"] != 0 || read["inline_fd_acquisitions"] != 1 {
+				t.Fatalf("default-capacity hit accounting = %v", read)
+			}
+			if count == 32 && read["cache_hits"] != count {
+				t.Fatalf("small population lost entries: %v", read)
+			}
+			t.Logf("product_capacity=%d population=%d valid_payload_hits=%d misses=%d hit_rate=%.6f", foldCacheCap, count, read["cache_hits"], read["cache_misses"], float64(read["cache_hits"])/float64(count))
+		})
+	}
+}
+
 func cacheCostProcess(t *testing.T, mode, dir string, count int, trace bool) map[string]int {
 	t.Helper()
 	args := []string{"-test.run=^TestLRUDirCostHelper$", "-test.count=1"}
@@ -190,6 +337,9 @@ func cacheCostProcess(t *testing.T, mode, dir string, count int, trace bool) map
 		t.Fatalf("cache cost result: %v: %q", err, out)
 	}
 	counts := map[string]int{"elapsed_ns": int(result["elapsed_ns"])}
+	for _, name := range []string{"capacity", "owner_fd_acquisitions", "payload_fd_acquisitions", "inline_fd_acquisitions", "validated_population_entries", "hint_rank_sum", "cache_hits", "cache_misses"} {
+		counts[name] = int(result[name])
+	}
 	if trace {
 		data, err := os.ReadFile(report)
 		if err != nil {
@@ -206,7 +356,7 @@ func cacheCostProcess(t *testing.T, mode, dir string, count int, trace bool) map
 			}
 		}
 	}
-	t.Logf("cache-cost mode=%s entries=%d elapsed_ns=%d work_ns=%d close_ns=%d wal_before=%d wal_after=%d db_before=%d db_after=%d syscalls=%v", mode, count, result["elapsed_ns"], result["work_elapsed_ns"], result["close_elapsed_ns"], result["wal_bytes_before_close"], result["wal_bytes_after_close"], result["db_bytes_before_close"], result["db_bytes_after_close"], counts)
+	t.Logf("cache-cost mode=%s entries=%d capacity=%d elapsed_ns=%d work_ns=%d close_ns=%d index_before=%d index_after=%d syscalls=%v", mode, count, result["capacity"], result["elapsed_ns"], result["work_elapsed_ns"], result["close_elapsed_ns"], result["index_bytes_before_close"], result["index_bytes_after_close"], counts)
 	return counts
 }
 

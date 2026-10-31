@@ -12,7 +12,7 @@ import (
 
 func TestTaskRelationsDoNotReadUnrelatedBodies(t *testing.T) {
 	for _, count := range []int{8, 80} {
-		for _, relation := range []string{"blocking", "children", "runs"} {
+		for _, relation := range []string{"blocking", "blocking-batch", "children", "runs"} {
 			t.Run(fmt.Sprintf("%s/%d", relation, count), func(t *testing.T) {
 				c, dir := newWBClient(t)
 				gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
@@ -36,6 +36,8 @@ func TestTaskRelationsDoNotReadUnrelatedBodies(t *testing.T) {
 					switch relation {
 					case "blocking":
 						return client.TasksBlocking(ctx, target)
+					case "blocking-batch":
+						return client.TasksBlockingFor(ctx, []model.EntityID{target, target, "unknown"})
 					case "children":
 						return client.TaskChildren(ctx, target)
 					case "runs":
@@ -59,11 +61,17 @@ func TestTaskRelationsDoNotReadUnrelatedBodies(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				t.Cleanup(func() { _ = fresh.Close() })
 				if _, err := fresh.s.ListTasks(t.Context()); err == nil {
 					t.Fatal("unrelated task corpus unexpectedly readable")
 				}
 				if _, err := fresh.s.ListRunbooks(t.Context()); err == nil {
 					t.Fatal("unrelated runbook corpus unexpectedly readable")
+				}
+				if relation == "blocking-batch" {
+					if got, err := fresh.TasksBlockingFor(t.Context(), nil); err != nil || len(got) != 0 {
+						t.Fatalf("empty selection read unrelated corpus: %#v, %v", got, err)
+					}
 				}
 				got, err := read(t.Context(), fresh)
 				if err != nil || !reflect.DeepEqual(got, want) {

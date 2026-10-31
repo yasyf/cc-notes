@@ -12,7 +12,7 @@ import (
 )
 
 func TestLRUDirRequestedEntries(t *testing.T) {
-	l := newProcessCache(t, 260)
+	l := newProcessCache(t, 4096)
 	var names []string
 	for i := range 260 {
 		name := fmt.Sprintf("key-%03d", i)
@@ -38,13 +38,13 @@ func TestLRUDirRequestedEntries(t *testing.T) {
 			}
 		}
 	}
-	if len(l.pending()) != 0 || l.db.Stats().InUse != 0 {
-		t.Fatalf("lookup promoted or retained a SQL cursor: hits=%v stats=%+v", l.pending(), l.db.Stats())
+	if len(l.hits) != 0 {
+		t.Fatal("prefetch promoted entries")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if entries := l.entries(ctx, names); len(entries) != 0 || l.db.Stats().InUse != 0 {
-		t.Fatalf("cancelled lookup = %v, stats=%+v", entries, l.db.Stats())
+	if entries := l.entries(ctx, names); len(entries) != 0 {
+		t.Fatalf("cancelled lookup = %v", entries)
 	}
 }
 
@@ -52,13 +52,7 @@ func TestLRUDirRequestedEntriesRejectWrongKey(t *testing.T) {
 	l := newProcessCache(t, 2)
 	l.write("a", []byte("a"))
 	l.write("b", []byte("b"))
-	db, err := l.database(cacheWrite)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec("UPDATE cache_entries SET token = zeroblob(64) WHERE name = ?", "a"); err != nil {
-		t.Fatal(err)
-	}
+	mutateCacheHint(t, l, "a", func(hint *cacheHint) { hint.tag ^= 1 })
 	entries := l.entries(t.Context(), []string{"a", "b"})
 	if _, ok := entries["a"]; ok || len(entries) != 1 {
 		t.Fatalf("wrong-key metadata accepted: %v", entries)
@@ -103,10 +97,10 @@ func TestLRUDirFoldBatchPromotion(t *testing.T) {
 	c := newFoldCache(dir, 2)
 	t.Cleanup(func() { _ = c.close() })
 	entries := c.entries(t.Context(), []string{"a", "b"})
-	if len(c.pending()) != 0 {
+	if len(c.hits) != 0 {
 		t.Fatal("prefetch promoted entries")
 	}
-	if _, ok := c.getEntry("a", entries["a"]); !ok || len(c.pending()) != 0 {
+	if _, ok := c.getEntry("a", entries["a"]); !ok || len(c.hits) != 0 {
 		t.Fatal("pre-write decode missed or promoted")
 	}
 	c.put("c", model.Note{ID: "c", Head: "c"}, 1, 0)
@@ -123,7 +117,7 @@ func TestLRUDirFoldBatchPromotion(t *testing.T) {
 	}
 	c.write("b", []byte("invalid fold"))
 	entries = c.entries(t.Context(), []string{"b"})
-	if _, ok := c.getEntry("b", entries["b"]); ok || len(c.pending()) != 0 {
+	if _, ok := c.getEntry("b", entries["b"]); ok || len(c.hits) != 0 {
 		t.Fatal("invalid semantic payload hit or promoted")
 	}
 }

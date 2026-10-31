@@ -29,6 +29,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	return &fixture{store: s, dir: dir}
 }
 

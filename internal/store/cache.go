@@ -24,7 +24,7 @@ const (
 	foldCacheCap = 1 << 14
 	// foldCacheSubdir is the path under the git common dir where entries live;
 	// it is never a ref, so it is never pushed or synced.
-	foldCacheSubdir = "cc-notes/folds-v3"
+	foldCacheSubdir = "cc-notes/folds-v5"
 )
 
 // foldCacheGeneration tags every entry with the op vocabulary of the binary that
@@ -63,7 +63,11 @@ func (c *foldCache) get(tip model.SHA) (model.Snapshot, bool) {
 }
 
 func (c *foldCache) getTop(tip model.SHA) (model.Snapshot, model.Lamport, model.Lamport, bool) {
-	data, ok := c.read(string(tip))
+	entry, ok := c.entry(string(tip))
+	if !ok {
+		return nil, 0, 0, false
+	}
+	data, ok := c.readEntry(entry)
 	if !ok {
 		return nil, 0, 0, false
 	}
@@ -71,11 +75,14 @@ func (c *foldCache) getTop(tip model.SHA) (model.Snapshot, model.Lamport, model.
 	if !ok {
 		return nil, 0, 0, false
 	}
-	c.touch(string(tip))
+	c.rememberHit(entry)
 	return snap, top, floor, true
 }
 
 func (c *foldCache) getEntry(tip model.SHA, entry cacheEntry) (model.Snapshot, bool) {
+	if !entry.valid(string(tip)) {
+		return nil, false
+	}
 	data, ok := c.readEntry(entry)
 	if !ok {
 		return nil, false
@@ -84,7 +91,7 @@ func (c *foldCache) getEntry(tip model.SHA, entry cacheEntry) (model.Snapshot, b
 	if !ok {
 		return nil, false
 	}
-	c.rememberHit(string(tip))
+	c.rememberHit(entry)
 	return snap, true
 }
 

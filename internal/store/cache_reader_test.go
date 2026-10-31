@@ -45,7 +45,8 @@ func TestCacheReaderRejectsTruncatedFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, size := range []int{0, cacheTokenSize - 1, cacheTokenSize, cacheTokenSize + sha256.Size - 1, cacheTokenSize + sha256.Size, cacheTokenSize + sha256.Size + cacheChunkSize - 1, cacheTokenSize + sha256.Size + cacheChunkSize, len(frame) - 1} {
+	prefix := cacheTokenSize + 1 + len("entry")
+	for _, size := range []int{0, cacheTokenSize - 1, cacheTokenSize, prefix - 1, prefix, prefix + sha256.Size - 1, prefix + sha256.Size, prefix + sha256.Size + cacheChunkSize - 1, prefix + sha256.Size + cacheChunkSize, len(frame) - 1} {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			if err := os.WriteFile(path, frame[:size], 0o600); err != nil {
 				t.Fatal(err)
@@ -66,7 +67,8 @@ func TestCacheReaderRejectsTruncatedFrames(t *testing.T) {
 }
 
 func TestCacheReaderRejectsCorruptionBeforeExposure(t *testing.T) {
-	for _, offset := range []int{0, 32, cacheTokenSize, cacheTokenSize + sha256.Size, cacheTokenSize + sha256.Size + cacheChunkSize, cacheTokenSize + sha256.Size*2 + cacheChunkSize} {
+	prefix := cacheTokenSize + 1 + len("entry")
+	for _, offset := range []int{0, 32, cacheTokenSize, cacheTokenSize + 1, prefix, prefix + sha256.Size, prefix + sha256.Size + cacheChunkSize, prefix + sha256.Size*2 + cacheChunkSize} {
 		t.Run(strconv.Itoa(offset), func(t *testing.T) {
 			l := newProcessCache(t, 1)
 			want := bytes.Repeat([]byte("a"), cacheChunkSize*2)
@@ -84,7 +86,7 @@ func TestCacheReaderRejectsCorruptionBeforeExposure(t *testing.T) {
 				t.Fatal("corrupt full frame was accepted")
 			}
 			reader, ok := l.open("entry")
-			if offset < cacheTokenSize+sha256.Size+cacheChunkSize {
+			if offset < prefix+sha256.Size+cacheChunkSize {
 				if ok {
 					_ = reader.Close()
 					t.Fatal("corrupt first block exposed a reader")
@@ -112,16 +114,7 @@ func TestCacheReaderRejectsInvalidLogicalSize(t *testing.T) {
 		t.Run(strconv.FormatInt(size, 10), func(t *testing.T) {
 			l := newProcessCache(t, 1)
 			l.write("entry", bytes.Repeat([]byte("s"), cacheChunkSize*2))
-			db, err := l.database(cacheWrite)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.Exec("PRAGMA ignore_check_constraints=ON"); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.Exec("UPDATE cache_entries SET size = ? WHERE name = 'entry'", size); err != nil {
-				t.Fatal(err)
-			}
+			mutateCacheHint(t, l, "entry", func(hint *cacheHint) { hint.size = size })
 			if reader, ok := l.open("entry"); ok {
 				_ = reader.Close()
 				t.Fatalf("invalid size %d exposed a reader", size)
@@ -145,7 +138,7 @@ func TestCacheReaderRejectsMixedPublicationBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	boundary := cacheTokenSize + sha256.Size + cacheChunkSize
+	boundary := cacheTokenSize + 1 + len("entry") + sha256.Size + cacheChunkSize
 	copy(current[boundary:], prior[boundary:])
 	if err := os.WriteFile(path, current, 0o600); err != nil {
 		t.Fatal(err)
@@ -174,9 +167,10 @@ func TestCacheReaderRejectsReorderedBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	boundary := cacheTokenSize + sha256.Size + cacheChunkSize
-	first := bytes.Clone(frame[cacheTokenSize:boundary])
-	copy(frame[cacheTokenSize:boundary], frame[boundary:])
+	boundary := cacheTokenSize + 1 + len("entry") + sha256.Size + cacheChunkSize
+	prefix := cacheTokenSize + 1 + len("entry")
+	first := bytes.Clone(frame[prefix:boundary])
+	copy(frame[prefix:boundary], frame[boundary:])
 	copy(frame[boundary:], first)
 	if err := os.WriteFile(path, frame, 0o600); err != nil {
 		t.Fatal(err)
@@ -197,7 +191,7 @@ func TestCacheReaderOwnsMultiBlockStreamAfterReplaceAndClose(t *testing.T) {
 	}
 	defer func() { _ = reader.Close() }()
 	position, err := reader.file.Seek(0, io.SeekCurrent)
-	if err != nil || position != cacheTokenSize+sha256.Size+cacheChunkSize {
+	if err != nil || position != int64(cacheTokenSize+1+len("entry")+sha256.Size+cacheChunkSize) {
 		t.Fatalf("open read more than one bounded block: %d, %v", position, err)
 	}
 	l.remove("entry")
@@ -208,5 +202,18 @@ func TestCacheReaderOwnsMultiBlockStreamAfterReplaceAndClose(t *testing.T) {
 	got, err := io.ReadAll(reader)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("independent old stream = %d bytes, %v", len(got), err)
+	}
+}
+
+func TestCacheReaderRejectsOldWholePublicationAgainstNewHint(t *testing.T) {
+	l := newProcessCache(t, 1)
+	l.write("entry", []byte("old"))
+	location := cacheEntryFrame(t, l, "entry")
+	old := location.read(t)
+	l.write("entry", []byte("new"))
+	location.write(t, old)
+	if reader, ok := l.open("entry"); ok {
+		_ = reader.Close()
+		t.Fatal("old whole publication matched a new nonce hint")
 	}
 }

@@ -21,7 +21,27 @@ jobs:
       - name: Install syscall tracer
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: Fresh-process cache cost and crash contracts
-        run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader)' ./internal/store
+        run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader|TestCacheHint|TestCacheInline)' ./internal/store
+
+  release-monotonic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Verify standard release version ordering
+        run: ./scripts/test.sh -race -count=1 ./scripts/release-version
+      - name: Build the release version comparator
+        run: go build -o "$RUNNER_TEMP/release-version" ./scripts/release-version
+      - name: Verify real Git publication races and latest promotion policy
+        run: |
+          set -euo pipefail
+          ruby -ryaml -rjson -e 'workflow = YAML.load_file(ARGV[0]); job = workflow.fetch("jobs").fetch("sync-plugin-version"); File.write(ARGV[1], job.fetch("steps").find { |step| step["name"] == "Sync plugin.json version to the released tag" }.fetch("run")); File.write(ARGV[2], JSON.generate(workflow))' \
+            .github/workflows/release.yml "$RUNNER_TEMP/sync-plugin.sh" "$RUNNER_TEMP/release-workflow.json"
+          SYNC_PLUGIN_SCRIPT="$RUNNER_TEMP/sync-plugin.sh" \
+          RELEASE_WORKFLOW_JSON="$RUNNER_TEMP/release-workflow.json" \
+          RELEASE_VERSION_COMPARE="$RUNNER_TEMP/release-version" \
+            python3 scripts/test_release_monotonic.py
+
 
   task-dedupe-cost:
     runs-on: ubuntu-latest
@@ -29,9 +49,85 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - name: Install syscall accounting
-        run: sudo apt-get update && sudo apt-get install -y strace
-      - name: Fresh CLI task deduplication payload, metadata and full-list costs
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLI(Cost|MetadataCost)$' ./internal/cli
+        run: sudo apt-get update && sudo apt-get install -y strace && strace --version
+      - name: Download the pinned legacy CLI baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ccn_legacy_dir="$RUNNER_TEMP/ccn-legacy-07418"
+          mkdir -p "$ccn_legacy_dir"
+          gh release download v0.74.18 --repo yasyf/cc-notes --pattern cc-notes_linux_amd64 --pattern SHA256SUMS.txt --dir "$ccn_legacy_dir"
+          cd "$ccn_legacy_dir"
+          printf '%s  %s\n' fce14f9ef1cb764b1ebaed0ccc17db323b972d39d1b26da3f6bd4b05290e76ae SHA256SUMS.txt | sha256sum --check --strict -
+          sha256sum --check --ignore-missing SHA256SUMS.txt
+          chmod +x cc-notes_linux_amd64
+          ./cc-notes_linux_amd64 --version
+          echo "CCN_LEGACY_BASELINE_CLI=$ccn_legacy_dir/cc-notes_linux_amd64" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build and record the exact fixed-hint release-style candidate
+        id: build_candidate
+        env:
+          CCN_FIXED_HINT_SHA: 2ea50e0003016dc7542352ed68c8dc4fc0322619
+        run: |
+          git fetch --no-tags origin "$CCN_FIXED_HINT_SHA"
+          git diff --exit-code "$CCN_FIXED_HINT_SHA" HEAD -- . ':!**/*_test.go' ':!.github/workflows/ci.yml'
+          ccn_candidate_source="$RUNNER_TEMP/ccn-fixed-hint-source"
+          ccn_candidate_cli="$RUNNER_TEMP/ccn-fixed-hint"
+          git worktree add --detach "$ccn_candidate_source" "$CCN_FIXED_HINT_SHA"
+          test "$(git -C "$ccn_candidate_source" rev-parse HEAD)" = "$CCN_FIXED_HINT_SHA"
+          (
+            cd "$ccn_candidate_source/web"
+            npm ci
+            npm run build
+          )
+          ccn_perf_ldflags="-s -w -X github.com/yasyf/cc-notes/internal/version.Version=v0.74.23-perf-proof -X github.com/yasyf/cc-notes/internal/version.Commit=$CCN_FIXED_HINT_SHA"
+          (
+            cd "$ccn_candidate_source"
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags webui -ldflags "$ccn_perf_ldflags" -o "$ccn_candidate_cli" ./cmd/cc-notes
+          )
+          printf 'source=%s binary=%s\n' "$CCN_FIXED_HINT_SHA" "$ccn_candidate_cli"
+          go version -m "$ccn_candidate_cli"
+          sha256sum "$ccn_candidate_cli"
+          go version -m "$CCN_LEGACY_BASELINE_CLI"
+          sha256sum "$CCN_LEGACY_BASELINE_CLI"
+          echo "CCN_PRODUCTIONLIKE_CLI=$ccn_candidate_cli" >> "$GITHUB_ENV"
+          echo "CCN_CACHE_HIT_TRACE_DIR=$RUNNER_TEMP/ccn-cache-hit-traces" >> "$GITHUB_ENV"
+      - name: Original payload metadata full-list and fair legacy comparison
+        if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)|TestTaskIOBytes(TraceAccounting|PathPartition|KernelFilter))$' ./internal/cli
+      - name: Separate cold returned-byte comparison
+        if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupeColdCLIBytes|TestTaskCacheUntracedColdPoint)$' ./internal/cli
+      - name: Fresh CLI cache-hit trace calibration
+        if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskCache(HitTraceAccounting|HitLowerBoundCalibration|ResultBoundaryAccounting)$' ./internal/cli
+      - name: Retain complete cache-hit operation and exit-tail traces
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: cache-hit-operation-traces
+          path: ${{ runner.temp }}/ccn-cache-hit-traces
+          if-no-files-found: error
+      - name: Query mutation work accounting
+        if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskQueryIndexConsecutiveWork|TestQueryMutationWorkContextCallsites)$' ./internal/store
+      - name: Selected-task JSON blocking cost
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskBlockingFreshCLICost$' ./internal/cli
+      - name: Selected-task reverse-posting work
+        run: ./scripts/test.sh -count=1 -v -run '^TestQueryTaskBlockingBatchWork$' ./internal/store
+      - name: Query metadata cardinality contracts and work
+        run: ./scripts/test.sh -count=1 -v -run '^TestQueryMetadataCardinality' ./internal/store
+      - name: Selected answer supersession contracts and fixed work
+        run: ./scripts/test.sh -count=1 -v -run '^Test(Supersession|IndexedSupersession|AnswerShowFreshCLICost|Resolve|BoundStoreFailsAfterBackendReplaced|PackedReference|SortedPackedReference|UnsortedPackedReference|NativeReferences|NativeMultiplePrefixes|ReferencePrefix)' ./notes ./internal/store ./internal/cli ./internal/gitobj
+      - name: Native packed read ownership and corpus contracts
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(Native|ObjectBatch)' ./internal/gitobj ./internal/gitcmd
+      - name: Fresh CLI packed ledger read beside a legacy object-index writer
+        if: ${{ !cancelled() }}
+        run: ./scripts/test.sh -count=1 -v -run '^TestPackedObjectIndexFreshCLICost$' ./internal/cli
 
   attachment-ref-passes:
     runs-on: ubuntu-latest
@@ -42,6 +138,7 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v -run '^TestReferencedAttachmentsPackedRefPasses$' ./internal/store
 
   test:
+    name: Proof-only full macOS suite
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7

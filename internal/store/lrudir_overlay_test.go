@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"crypto/sha256"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,22 +33,37 @@ func TestLRUDirReopenAndOverlay(t *testing.T) {
 	}
 }
 
-func TestLRUDirOverlayAcknowledgesOnlyCapturedHits(t *testing.T) {
-	l := &lruDir{capacity: 2, dir: t.TempDir()}
-	t.Cleanup(func() { _ = l.close() })
-	l.write("a", []byte("a"))
+func TestLRUDirOverlayRetainsNewerVerifiedHit(t *testing.T) {
+	l := newProcessCache(t, 2)
+	l.write("a", []byte("old a"))
 	l.write("b", []byte("b"))
-	l.touch("a")
-	hits := l.pending()
-	l.touch("a")
-	l.touch("b")
-	l.acknowledge(hits)
-	if got := l.pending(); len(got) != 2 || got[0].name != "a" || got[1].name != "b" {
-		t.Fatalf("concurrent hits lost: %v", got)
+	old, ok := l.entry("a")
+	if !ok {
+		t.Fatal("old entry missing")
 	}
-	l.touch("c")
-	if got := l.pending(); len(got) != 2 || got[0].name != "a" || got[1].name != "b" {
-		t.Fatalf("unknown hit displaced overlay: %v", got)
+	l.touch("a")
+	l.write("a", []byte("new a"))
+	fresh, ok := l.entry("a")
+	if !ok {
+		t.Fatal("fresh entry missing")
+	}
+	if data, ok := l.readEntry(fresh); !ok || string(data) != "new a" {
+		t.Fatal("fresh publication failed validation")
+	}
+	l.rememberHit(fresh)
+	l.rememberHit(old)
+	hit := l.hits[fresh.slot]
+	if hit.diskRank != fresh.rank || !bytes.Equal(hit.nonce[:], fresh.token[32:]) {
+		t.Fatal("old prefetched hit erased a newer verified hit")
+	}
+	rank, count := l.rank, len(l.hits)
+	l.touch("unknown")
+	if l.rank != rank || len(l.hits) != count {
+		t.Fatal("unknown touch displaced a real hit")
+	}
+	l.write("c", []byte("c"))
+	if got := l.names(); !slices.Equal(got, []string{"a", "c"}) {
+		t.Fatalf("newer hit not promoted: %v", got)
 	}
 }
 
@@ -81,23 +95,18 @@ func TestLRUDirCorruptMetadataAndTokensMiss(t *testing.T) {
 			l := &lruDir{capacity: 1, dir: t.TempDir()}
 			t.Cleanup(func() { _ = l.close() })
 			l.write("a", []byte("a"))
-			path := cacheEntryPath(t, l, "a")
+			location := cacheEntryFrame(t, l, "a")
 			switch mode {
 			case "token", "key":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
+				data := location.read(t)
 				at := 32
 				if mode == "key" {
 					at = 0
 				}
 				data[at] ^= 1
-				if err := os.WriteFile(path, data, 0o600); err != nil {
-					t.Fatal(err)
-				}
+				location.write(t, data)
 			case "truncated":
-				if err := os.WriteFile(path, []byte("bad"), 0o600); err != nil {
+				if err := os.Truncate(location.path, location.offset+3); err != nil {
 					t.Fatal(err)
 				}
 			case "metadata", "capacity":
@@ -106,7 +115,7 @@ func TestLRUDirCorruptMetadataAndTokensMiss(t *testing.T) {
 				}
 				capacity := 1
 				if mode == "metadata" {
-					if err := os.WriteFile(filepath.Join(l.dir, "index.sqlite"), []byte("bad"), 0o600); err != nil {
+					if err := os.WriteFile(filepath.Join(l.dir, cacheHintFile), []byte("bad"), 0o600); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -132,7 +141,7 @@ func TestLRUDirLargeOpenVerifiesOneBoundedBlock(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 	offset, err := f.file.Seek(0, io.SeekCurrent)
-	if err != nil || offset != cacheTokenSize+sha256.Size+cacheChunkSize {
+	if err != nil || offset != int64(cacheTokenSize+1+len("large")+sha256.Size+cacheChunkSize) {
 		t.Fatalf("payload offset = %d, %v", offset, err)
 	}
 	got := make([]byte, 11)
@@ -150,17 +159,15 @@ func TestLRUDirRemoveReclaimsPayloadBeforeSlotReuse(t *testing.T) {
 		t.Fatal("old payload missing")
 	}
 	defer func() { _ = f.Close() }()
-	path := f.Name()
+	location := cacheEntryFrame(t, l, "old")
 	l.remove("old")
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("removed payload remains: %v", err)
-	}
+	location.assertErased(t)
 	if _, ok := l.read("old"); ok {
 		t.Fatal("removed metadata still readable")
 	}
 	l.write("new", []byte("new payload"))
-	if next := cacheEntryPath(t, l, "new"); next != path {
-		t.Fatalf("slot not reused: %q, want %q", next, path)
+	if next := cacheEntryFrame(t, l, "new"); next.path != location.path || next.offset != location.offset {
+		t.Fatalf("slot not reused: %+v, want %+v", next, location)
 	}
 	if data, err := io.ReadAll(f); err != nil || string(data) != "old payload" {
 		t.Fatalf("opened removed payload = %q, %v", data, err)

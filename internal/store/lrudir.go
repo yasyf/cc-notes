@@ -2,22 +2,18 @@ package store
 
 import (
 	"bytes"
-	"container/list"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"sync"
 	"syscall"
-
-	_ "modernc.org/sqlite" // SQLite registers its database/sql driver during initialization.
 )
 
 const cacheTokenSize = 64
@@ -28,21 +24,22 @@ const (
 	cacheLookup cacheAccess = iota
 	cacheEnumerate
 	cacheWrite
+	cacheErase
 )
 
 type cacheEntry struct {
-	slot  int
-	token []byte
-	size  int64
+	name   string
+	slot   int
+	token  []byte
+	size   int64
+	rank   uint64
+	inline bool
 }
 
-const cacheSchema = `CREATE TABLE IF NOT EXISTS cache_meta (id INTEGER PRIMARY KEY CHECK(id = 1), capacity INTEGER NOT NULL, next_slot INTEGER NOT NULL, rank INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS cache_entries (name TEXT PRIMARY KEY, slot INTEGER NOT NULL UNIQUE, token BLOB NOT NULL, rank INTEGER NOT NULL UNIQUE, size INTEGER NOT NULL CHECK(size >= 0));
-CREATE TABLE IF NOT EXISTS cache_free (slot INTEGER PRIMARY KEY);`
-
 type cacheHit struct {
-	name string
-	rank uint64
+	nonce    [32]byte
+	diskRank uint64
+	rank     uint64
 }
 
 type lruDir struct {
@@ -53,12 +50,36 @@ type lruDir struct {
 	mu     sync.Mutex
 	active bool
 	rank   uint64
-	order  *list.List
-	hits   map[string]*list.Element
-	dbMu   sync.Mutex
-	db     *sql.DB
-	dbInfo os.FileInfo
-	closed bool
+	hits   map[int]cacheHit
+
+	indexMu       sync.Mutex
+	index         *os.File
+	indexInfo     os.FileInfo
+	indexWritable bool
+	lookupMissing bool
+	data          *os.File
+	dataInfo      os.FileInfo
+	dataWritable  bool
+	dataMissing   bool
+	closed        bool
+}
+
+func cacheNameTag(name string) uint64 {
+	key := sha256.Sum256([]byte(name))
+	return binary.BigEndian.Uint64(key[:8])
+}
+
+func (slot cacheHintSlot) entry(name string) cacheEntry {
+	key := sha256.Sum256([]byte(name))
+	token := make([]byte, cacheTokenSize)
+	copy(token, key[:])
+	copy(token[32:], slot.nonce[:])
+	return cacheEntry{name: name, slot: slot.slot, token: token, size: slot.size, rank: slot.rank, inline: slot.inline}
+}
+
+func (entry cacheEntry) valid(name string) bool {
+	key := sha256.Sum256([]byte(name))
+	return len(name) <= cacheKeyMax && entry.name == name && entry.size >= 0 && (!entry.inline || cacheInlineFits(name, entry.size)) && len(entry.token) == cacheTokenSize && bytes.Equal(entry.token[:32], key[:])
 }
 
 func (l *lruDir) read(name string) ([]byte, bool) {
@@ -83,66 +104,55 @@ func (l *lruDir) readEntry(entry cacheEntry) ([]byte, bool) {
 }
 
 func (l *lruDir) entry(name string) (cacheEntry, bool) {
-	db, err := l.database(cacheLookup)
+	if l.capacity <= 0 || len(name) > cacheKeyMax {
+		return cacheEntry{}, false
+	}
+	file, err := l.hintFile(cacheLookup)
 	if err != nil {
 		return cacheEntry{}, false
 	}
-	var entry cacheEntry
-	if db.QueryRow("SELECT slot, token, size FROM cache_entries WHERE name = ?", name).Scan(&entry.slot, &entry.token, &entry.size) != nil {
-		return cacheEntry{}, false
-	}
-	return entry, entry.valid(name)
+	pages := cacheHintPages{file: file, capacity: l.capacity}
+	return lookupCacheHint(&pages, name)
 }
 
-func (entry cacheEntry) valid(name string) bool {
-	key := sha256.Sum256([]byte(name))
-	return entry.size >= 0 && len(entry.token) == cacheTokenSize && bytes.Equal(entry.token[:32], key[:])
+func lookupCacheHint(pages *cacheHintPages, name string) (cacheEntry, bool) {
+	tag := cacheNameTag(name)
+	window, err := pages.window(tag)
+	if err != nil {
+		return cacheEntry{}, false
+	}
+	for _, slot := range window.slots[:window.count] {
+		if !slot.empty && slot.tag == tag {
+			return slot.entry(name), true
+		}
+	}
+	return cacheEntry{}, false
 }
 
 func (l *lruDir) entries(ctx context.Context, names []string) map[string]cacheEntry {
-	if len(names) == 0 || l.capacity <= 0 {
+	if len(names) == 0 || l.capacity <= 0 || ctx.Err() != nil {
 		return nil
 	}
-	db, err := l.database(cacheLookup)
+	file, err := l.hintFile(cacheLookup)
 	if err != nil {
 		return nil
 	}
+	pages := cacheHintPages{file: file, capacity: l.capacity, pages: make(map[int64][]byte)}
 	entries := make(map[string]cacheEntry, min(len(names), l.capacity))
-	for len(names) > 0 && len(entries) < l.capacity {
-		n := min(len(names), 128)
-		if l.readEntries(ctx, db, names[:n], entries) != nil {
+	for _, name := range names {
+		if ctx.Err() != nil {
 			return nil
 		}
-		names = names[n:]
-	}
-	return entries
-}
-
-func (l *lruDir) readEntries(ctx context.Context, db *sql.DB, names []string, entries map[string]cacheEntry) error {
-	args := make([]any, len(names))
-	for i, name := range names {
-		args[i] = name
-	}
-	query := "SELECT name, slot, token, size FROM cache_entries WHERE name IN (" + strings.TrimSuffix(strings.Repeat("?,", len(names)), ",") + ")" //nolint:gosec // G202: SQL combines only fixed text and a placeholder count.
-	rows, err := db.QueryContext(ctx, query, args...) //nolint:gosec // G701: Every key is passed as a bound argument.
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var name string
-		var entry cacheEntry
-		if err := rows.Scan(&name, &entry.slot, &entry.token, &entry.size); err != nil {
-			return err
+		if len(entries) == l.capacity {
+			break
 		}
-		if entry.valid(name) {
-			entries[name] = entry
-			if len(entries) == l.capacity {
-				return nil
+		if len(name) <= cacheKeyMax {
+			if entry, ok := lookupCacheHint(&pages, name); ok {
+				entries[name] = entry
 			}
 		}
 	}
-	return rows.Err()
+	return entries
 }
 
 func (l *lruDir) open(name string) (*CacheReader, bool) {
@@ -154,6 +164,21 @@ func (l *lruDir) open(name string) (*CacheReader, bool) {
 }
 
 func (l *lruDir) openEntry(entry cacheEntry) (*CacheReader, bool) {
+	if !entry.valid(entry.name) {
+		return nil, false
+	}
+	if entry.inline {
+		file, err := l.payloadFile(cacheLookup)
+		if err != nil {
+			return nil, false
+		}
+		reader, err := readCacheFirstBlock(io.NewSectionReader(file, int64(entry.slot)*cacheInlineStride, cacheInlineStride), entry)
+		if err != nil {
+			return nil, false
+		}
+		reader.name = file.Name()
+		return reader, true
+	}
 	file, err := os.Open(l.slotPath(entry.slot))
 	if err != nil {
 		return nil, false
@@ -175,10 +200,10 @@ func (l *lruDir) ensure() bool {
 }
 
 func (l *lruDir) writerFile() (*os.File, error) {
-	if err := os.MkdirAll(l.dir, 0o750); err != nil {
+	if err := os.MkdirAll(l.dir, 0o750); err != nil { //nolint:gosec // G703: The directory belongs to this store's derived cache, never a cache key.
 		return nil, err
 	}
-	return os.OpenFile(l.dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	return os.OpenFile(l.dir+".lock", os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G703: The sibling lock derives only from the store's cache directory.
 }
 
 func (l *lruDir) lockWriter() (*os.File, bool) {
@@ -193,103 +218,91 @@ func (l *lruDir) lockWriter() (*os.File, bool) {
 	return file, true
 }
 
-func (l *lruDir) database(access cacheAccess) (*sql.DB, error) {
-	l.dbMu.Lock()
-	defer l.dbMu.Unlock()
+func (l *lruDir) hintFile(access cacheAccess) (*os.File, error) {
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	if l.closed {
-		return nil, sql.ErrConnDone
+		return nil, os.ErrClosed
 	}
-	path := filepath.Join(l.dir, "index.sqlite")
-	if l.db != nil {
+	if access == cacheLookup && l.lookupMissing {
+		return nil, os.ErrNotExist
+	}
+	if access != cacheLookup {
+		l.lookupMissing = false
+		l.dataMissing = false
+	}
+	path := filepath.Join(l.dir, cacheHintFile)
+	if l.index != nil {
 		if access == cacheLookup {
-			return l.db, nil
+			return l.index, nil
 		}
-		info, err := os.Stat(path)
-		if err == nil && os.SameFile(info, l.dbInfo) {
-			return l.db, nil
+		info, err := os.Stat(path) //nolint:gosec // G703: path is the fixed routing file inside the store's cache directory.
+		same := err == nil && os.SameFile(info, l.indexInfo)
+		if same && (access != cacheWrite || l.indexWritable) {
+			return l.index, nil
 		}
-		if err := l.db.Close(); err != nil {
+		if err := l.index.Close(); err != nil {
 			return nil, err
 		}
-		l.db = nil
+		l.index = nil
+		if !same {
+			if err := l.closePayloadLocked(); err != nil {
+				return nil, err
+			}
+			l.mu.Lock()
+			clear(l.hits)
+			l.mu.Unlock()
+		}
 	}
-	mode := "rwc"
-	if access != cacheWrite {
-		mode = "rw"
+	if access == cacheLookup {
+		if _, err := os.Stat(path); err != nil { //nolint:gosec // G703: path is the fixed routing file inside the store's cache directory.
+			l.lookupMissing = errors.Is(err, os.ErrNotExist)
+			return nil, err
+		}
 	}
-	location := url.URL{Scheme: "file", Path: path}
-	query := location.Query()
-	query.Set("mode", mode)
-	query.Set("_txlock", "immediate")
-	query.Add("_pragma", "busy_timeout(25)")
-	query.Add("_pragma", "synchronous(NORMAL)")
-	query.Add("_pragma", "wal_autocheckpoint(4096)")
-	location.RawQuery = query.Encode()
-	db, err := sql.Open("sqlite", location.String())
+	flags := os.O_RDONLY
+	if access == cacheWrite {
+		flags = os.O_RDWR | os.O_CREATE
+	}
+	file, err := os.OpenFile(path, flags, 0o600) //nolint:gosec // G703: path is the fixed routing file inside the store's cache directory.
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if err := db.Ping(); err != nil {
-		return nil, errors.Join(err, db.Close())
-	}
-	if access != cacheWrite {
-		var capacity int
-		if err := db.QueryRow("SELECT capacity FROM cache_meta WHERE id = 1").Scan(&capacity); err != nil {
-			return nil, errors.Join(err, db.Close())
-		}
-		if capacity != l.capacity {
-			return nil, errors.Join(fmt.Errorf("cache capacity %d, expected %d", capacity, l.capacity), db.Close())
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return nil, errors.Join(err, db.Close())
-		}
-		l.db, l.dbInfo = db, info
-		return db, nil
-	}
-	var journal string
-	if err := db.QueryRow("PRAGMA journal_mode=WAL").Scan(&journal); err != nil {
-		return nil, errors.Join(err, db.Close())
-	}
-	if strings.ToLower(journal) != "wal" {
-		return nil, errors.Join(fmt.Errorf("cache journal mode %q", journal), db.Close())
-	}
-	if _, err := db.Exec(cacheSchema); err != nil {
-		return nil, errors.Join(err, db.Close())
-	}
-	if _, err := db.Exec("INSERT OR IGNORE INTO cache_meta VALUES (1, ?, 0, 0)", l.capacity); err != nil {
-		return nil, errors.Join(err, db.Close())
-	}
-	var capacity int
-	if err := db.QueryRow("SELECT capacity FROM cache_meta WHERE id = 1").Scan(&capacity); err != nil {
-		return nil, errors.Join(err, db.Close())
-	}
-	if capacity != l.capacity {
-		return nil, errors.Join(fmt.Errorf("cache capacity %d, expected %d", capacity, l.capacity), db.Close())
-	}
-	info, err := os.Stat(path)
+	info, err := file.Stat()
 	if err != nil {
-		return nil, errors.Join(err, db.Close())
+		return nil, errors.Join(err, file.Close())
 	}
-	l.db, l.dbInfo = db, info
-	return db, nil
+	if access == cacheWrite && info.Size() == 0 {
+		if err := initializeCacheHints(file, l.capacity); err != nil {
+			return nil, errors.Join(err, file.Close())
+		}
+	}
+	if _, err := readCacheHintHeader(file, l.capacity); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	l.index, l.indexInfo, l.indexWritable = file, info, access == cacheWrite
+	return file, nil
 }
 
 func (l *lruDir) close() error {
 	l.writer.Lock()
 	defer l.writer.Unlock()
-	l.dbMu.Lock()
-	defer l.dbMu.Unlock()
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
 	if l.closed {
 		return nil
 	}
 	l.closed = true
-	if l.db == nil {
-		return nil
+	l.lookupMissing = false
+	l.mu.Lock()
+	l.active = false
+	l.hits = nil
+	l.mu.Unlock()
+	var indexErr error
+	if l.index != nil {
+		indexErr = l.index.Close()
 	}
-	return l.db.Close()
+	return errors.Join(indexErr, l.closePayloadLocked())
 }
 
 func (l *lruDir) write(name string, data []byte) {
@@ -307,30 +320,37 @@ func (l *lruDir) writeBatch(values []cachePublication) {
 		return
 	}
 	defer func() { _ = lock.Close() }()
-	db, err := l.database(cacheWrite)
+	file, err := l.hintFile(cacheWrite)
 	if err != nil {
 		return
 	}
-	tx, err := db.Begin()
+	rank, err := readCacheHintHeader(file, l.capacity)
 	if err != nil {
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
-	hits := l.pending()
-	var rank int64
-	if tx.QueryRow("SELECT rank FROM cache_meta WHERE id = 1").Scan(&rank) != nil {
-		return
-	}
-	for _, hit := range hits {
-		rank++
-		if _, err := tx.Exec("UPDATE cache_entries SET rank = ? WHERE name = ?", rank, hit.name); err != nil {
+	initial := rank
+	defer func() {
+		if rank != initial {
+			_ = writeCacheHintRank(file, rank)
+		}
+	}()
+	pages := cacheHintPages{file: file, capacity: l.capacity}
+	payload := cachePayloadWriter{cache: l}
+	for _, value := range values {
+		if len(value.name) > cacheKeyMax {
 			return
 		}
-	}
-	for _, value := range values {
-		slot, err := l.allocate(tx, value.name)
+		tag := cacheNameTag(value.name)
+		window, err := pages.window(tag)
 		if err != nil {
 			return
+		}
+		previous := l.chooseSlot(window, tag)
+		slot := previous.slot
+		for _, candidate := range window.slots[:window.count] {
+			if !candidate.empty {
+				rank = max(rank, candidate.rank)
+			}
 		}
 		key := sha256.Sum256([]byte(value.name))
 		var token [cacheTokenSize]byte
@@ -338,73 +358,75 @@ func (l *lruDir) writeBatch(values []cachePublication) {
 		if _, err := rand.Read(token[32:]); err != nil {
 			return
 		}
-		if !l.publish(slot, token[:], value.data) {
+		inline := cacheInlineFits(value.name, int64(len(value.data)))
+		if !payload.publish(previous, value.name, token[:], value.data) {
 			return
 		}
-		rank++
-		if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank, size=excluded.size", value.name, slot, token[:], rank, len(value.data)); err != nil {
+		l.mu.Lock()
+		rank = max(rank, l.rank) + 1
+		l.mu.Unlock()
+		hint := cacheHint{tag: tag, size: int64(len(value.data)), rank: rank, inline: inline}
+		copy(hint.nonce[:], token[32:])
+		if err := writeCacheHint(file, slot, hint); err != nil {
 			return
 		}
+		l.mu.Lock()
+		l.active = true
+		l.rank = max(l.rank, rank)
+		if previous, ok := l.hits[slot]; ok && previous.nonce != hint.nonce {
+			delete(l.hits, slot)
+		}
+		if l.hits == nil {
+			l.hits = make(map[int]cacheHit)
+		}
+		l.mu.Unlock()
 	}
-	if _, err := tx.Exec("UPDATE cache_meta SET rank = ? WHERE id = 1", rank); err != nil {
-		return
-	}
-	if tx.Commit() != nil {
-		return
-	}
-	l.acknowledge(hits)
 }
 
-func (l *lruDir) allocate(tx *sql.Tx, name string) (int, error) {
-	var slot int
-	err := tx.QueryRow("SELECT slot FROM cache_entries WHERE name = ?", name).Scan(&slot)
-	if err == nil {
-		return slot, nil
+func (l *lruDir) chooseSlot(window cacheHintWindow, tag uint64) cacheHintSlot {
+	for _, candidate := range window.slots[:window.count] {
+		if !candidate.empty && candidate.tag == tag {
+			return candidate
+		}
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
+	for _, candidate := range window.slots[:window.count] {
+		if candidate.empty {
+			return candidate
+		}
 	}
-	err = tx.QueryRow("SELECT slot FROM cache_free ORDER BY slot LIMIT 1").Scan(&slot)
-	if err == nil {
-		_, err = tx.Exec("DELETE FROM cache_free WHERE slot = ?", slot)
-		return slot, err
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	victim, oldest := window.slots[0], ^uint64(0)
+	for _, candidate := range window.slots[:window.count] {
+		rank := candidate.rank
+		if hit, ok := l.hits[candidate.slot]; ok && hit.nonce == candidate.nonce && hit.diskRank == candidate.rank {
+			rank = max(rank, hit.rank)
+		}
+		if rank < oldest {
+			victim, oldest = candidate, rank
+		}
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
-	}
-	if err := tx.QueryRow("SELECT next_slot FROM cache_meta WHERE id = 1").Scan(&slot); err != nil {
-		return 0, err
-	}
-	if slot < l.capacity {
-		_, err = tx.Exec("UPDATE cache_meta SET next_slot = next_slot + 1 WHERE id = 1")
-		return slot, err
-	}
-	if err := tx.QueryRow("SELECT slot FROM cache_entries ORDER BY rank LIMIT 1").Scan(&slot); err != nil {
-		return 0, err
-	}
-	_, err = tx.Exec("DELETE FROM cache_entries WHERE slot = ?", slot)
-	return slot, err
+	return victim
 }
 
 func (l *lruDir) slotPath(slot int) string {
 	return filepath.Join(l.dir, fmt.Sprintf("slot-%08x", slot))
 }
 
-func (l *lruDir) publish(slot int, token, data []byte) bool {
+func (l *lruDir) publish(slot int, name string, token, data []byte) bool {
 	pending := filepath.Join(l.dir, ".pending")
-	//nolint:gosec // G304: pending is the fixed staging file in this store's derived cache directory.
-	f, err := os.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	file, err := os.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // G703: pending is the fixed staging file in the store's cache directory.
 	if err != nil {
 		return false
 	}
-	if err := writeCachePayload(f, token, data); err != nil {
-		_ = f.Close()
+	if err := writeCachePayload(file, name, token, data); err != nil {
+		_ = file.Close()
 		return false
 	}
-	if f.Close() != nil {
+	if file.Close() != nil {
 		return false
 	}
-	return os.Rename(pending, l.slotPath(slot)) == nil
+	return os.Rename(pending, l.slotPath(slot)) == nil //nolint:gosec // G703: Fixed staging and integer slot paths derive only from the store's cache directory.
 }
 
 func (l *lruDir) touch(name string) {
@@ -414,91 +436,80 @@ func (l *lruDir) touch(name string) {
 	if !active {
 		return
 	}
-	db, err := l.database(cacheLookup)
-	if err != nil {
+	entry, ok := l.entry(name)
+	if !ok {
 		return
 	}
-	var present int
-	if db.QueryRow("SELECT 1 FROM cache_entries WHERE name = ?", name).Scan(&present) != nil {
+	reader, ok := l.openEntry(entry)
+	if !ok {
 		return
 	}
-	l.rememberHit(name)
+	_ = reader.Close()
+	l.rememberHit(entry)
 }
 
-func (l *lruDir) rememberHit(name string) {
+func (l *lruDir) rememberHit(entry cacheEntry) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !l.active {
 		return
 	}
-	l.rank++
-	hit := cacheHit{name, l.rank}
-	if element, ok := l.hits[name]; ok {
-		element.Value = hit
-		l.order.MoveToBack(element)
+	var nonce [32]byte
+	copy(nonce[:], entry.token[32:])
+	if previous, ok := l.hits[entry.slot]; ok && previous.diskRank > entry.rank {
 		return
 	}
-	l.hits[name] = l.order.PushBack(hit)
-	if l.order.Len() > l.capacity {
-		delete(l.hits, l.order.Remove(l.order.Front()).(cacheHit).name)
-	}
+	l.rank = max(l.rank, entry.rank) + 1
+	l.hits[entry.slot] = cacheHit{nonce: nonce, diskRank: entry.rank, rank: l.rank}
 }
 
-func (l *lruDir) pending() []cacheHit {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if !l.active {
-		return nil
-	}
-	hits := make([]cacheHit, 0, l.order.Len())
-	for element := l.order.Front(); element != nil; element = element.Next() {
-		hits = append(hits, element.Value.(cacheHit))
-	}
-	return hits
-}
-
-func (l *lruDir) acknowledge(hits []cacheHit) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if !l.active {
-		l.order = list.New()
-		l.hits = make(map[string]*list.Element)
-		l.active = true
-		return
-	}
-	for _, hit := range hits {
-		if element, ok := l.hits[hit.name]; ok && element.Value.(cacheHit).rank == hit.rank {
-			l.order.Remove(element)
-			delete(l.hits, hit.name)
+func (l *lruDir) hintName(slot cacheHintSlot) (string, bool) {
+	if slot.inline {
+		file, err := l.payloadFile(cacheEnumerate)
+		if err != nil {
+			return "", false
 		}
+		return cachePayloadName(io.NewSectionReader(file, int64(slot.slot)*cacheInlineStride, cacheInlineStride), slot)
 	}
+	file, err := os.Open(l.slotPath(slot.slot))
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = file.Close() }()
+	return cachePayloadName(file, slot)
 }
 
 func (l *lruDir) names() []string {
-	db, err := l.database(cacheEnumerate)
+	if l.capacity <= 0 {
+		return nil
+	}
+	file, err := l.hintFile(cacheEnumerate)
 	if err != nil {
 		return nil
 	}
-	rows, err := db.Query("SELECT name FROM cache_entries ORDER BY name")
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = rows.Close() }()
+	pages := cacheHintPages{file: file, capacity: l.capacity, pages: make(map[int64][]byte)}
 	var names []string
-	for rows.Next() {
-		var name string
-		if rows.Scan(&name) != nil {
+	for slot := range l.capacity {
+		var data [cacheHintRecordSize]byte
+		if err := pages.read(data[:], cacheHintHeaderSize+int64(slot)*cacheHintRecordSize); err != nil {
 			return nil
 		}
-		names = append(names, name)
+		hint, err := decodeCacheHint(data[:])
+		if err != nil || hint.empty {
+			continue
+		}
+		if name, ok := l.hintName(cacheHintSlot{slot: slot, cacheHint: hint}); ok {
+			names = append(names, name)
+		}
 	}
-	if rows.Err() != nil {
-		return nil
-	}
+	slices.Sort(names)
 	return names
 }
 
 func (l *lruDir) remove(name string) {
+	if l.capacity <= 0 {
+		return
+	}
 	l.writer.Lock()
 	defer l.writer.Unlock()
 	lock, ok := l.lockWriter()
@@ -506,30 +517,27 @@ func (l *lruDir) remove(name string) {
 		return
 	}
 	defer func() { _ = lock.Close() }()
-	db, err := l.database(cacheWrite)
+	file, err := l.hintFile(cacheWrite)
 	if err != nil {
 		return
 	}
-	tx, err := db.Begin()
+	pages := cacheHintPages{file: file, capacity: l.capacity}
+	window, err := pages.window(cacheNameTag(name))
 	if err != nil {
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
-	var slot int
-	if tx.QueryRow("DELETE FROM cache_entries WHERE name = ? RETURNING slot", name).Scan(&slot) != nil {
+	for _, candidate := range window.slots[:window.count] {
+		if candidate.empty || candidate.tag != cacheNameTag(name) {
+			continue
+		}
+		if found, ok := l.hintName(candidate); ok && found != name {
+			continue
+		}
+		if payload, err := l.payloadFile(cacheErase); err == nil {
+			_ = eraseInlineCachePayload(payload, candidate.slot)
+		}
+		_ = os.Remove(l.slotPath(candidate.slot))
+		_ = writeCacheHint(file, candidate.slot, cacheHint{empty: true})
 		return
-	}
-	if _, err := tx.Exec("INSERT INTO cache_free VALUES (?)", slot); err != nil {
-		return
-	}
-	_ = os.Remove(l.slotPath(slot))
-	if tx.Commit() != nil {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if element, ok := l.hits[name]; ok {
-		l.order.Remove(element)
-		delete(l.hits, name)
 	}
 }

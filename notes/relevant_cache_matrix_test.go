@@ -798,6 +798,7 @@ func invalidationCases() []matrixCase {
 				if err != nil {
 					t.Fatalf("Open linked worktree: %v", err)
 				}
+				t.Cleanup(func() { _ = c.Close() })
 				fx.c = c
 			},
 			writes: []matrixWrite{{name: "refs/worktree/x moved to HEAD", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
@@ -831,6 +832,7 @@ func TestRelevantCachedWarmHitIsConstantWork(t *testing.T) {
 					if err != nil {
 						t.Fatalf("Open: %v", err)
 					}
+					t.Cleanup(func() { _ = c.Close() })
 					p := &tierProbe{t: t, c: c, dir: dir, git: installCountingGit(t, countingGitScript)}
 					p.expect("cold", tierRebuild)
 					p.promoteThen("warm hit", tierHit)

@@ -79,6 +79,7 @@ func TestGitDriverSharedSourceIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(source): %v", err)
 	}
+	t.Cleanup(func() { _ = src.Close() })
 	notes, err := src.ListNotes(ctx, false, false)
 	if err != nil {
 		t.Fatalf("source ListNotes: %v", err)

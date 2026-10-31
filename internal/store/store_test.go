@@ -123,6 +123,7 @@ func TestOpenWorktreeConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	created, ok := create(t, s, noteOps("worktree config")).(model.Note)
 	if !ok {
 		t.Fatal("Create did not return a note")
@@ -151,6 +152,7 @@ func TestOpenThroughASymlinkedSubdirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", link, err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	want, err := filepath.EvalSymlinks(filepath.Join(repo, ".git"))
 	if err != nil {
 		t.Fatal(err)

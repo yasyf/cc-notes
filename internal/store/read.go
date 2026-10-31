@@ -361,20 +361,22 @@ func (s *Store) PinnedKinds(ctx context.Context, kinds ...model.Kind) (*Store, e
 	return s.Pinned(tips), nil
 }
 
-// children lists the refs that are immediate children of prefix, excluding
-// nested namespaces.
 func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error) {
+	return s.childrenInRange(ctx, prefix, prefix)
+}
+
+func (s *Store) childrenInRange(ctx context.Context, namespace, selection string) ([]tipEntry, error) {
 	if err := s.CheckRecords(); err != nil {
 		return nil, err
 	}
 	tips := s.pins
 	if tips == nil {
 		var err error
-		if tips, err = s.Repo.ListPrefix(ctx, prefix); err != nil {
+		if tips, err = s.Repo.ListPrefix(ctx, selection); err != nil {
 			return nil, err
 		}
 	}
-	return directChildren(prefix, tips), nil
+	return directChildren(namespace, tips), nil
 }
 
 func directChildren(prefix string, tips map[string]model.SHA) []tipEntry {

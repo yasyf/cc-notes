@@ -3,157 +3,195 @@ package gitobj
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/format/packfile"
-	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
-
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
-type cancelIndexFS struct {
-	billy.Filesystem
-	cancel context.CancelFunc
-}
-
-func (fs cancelIndexFS) Open(path string) (billy.File, error) {
-	file, err := fs.Filesystem.Open(path)
-	if err != nil || filepath.Ext(path) != ".idx" {
-		return file, err
-	}
-	return cancelIndexFile{File: file, cancel: fs.cancel}, nil
-}
-
-type cancelIndexFile struct {
-	billy.File
-	cancel context.CancelFunc
-}
-
-func (f cancelIndexFile) Read(data []byte) (int, error) {
-	n, err := f.File.Read(data)
-	if n > 0 {
-		f.cancel()
-	}
-	return n, err
-}
-
-func TestPackIndexCancellationDoesNotPublishPartialGeneration(t *testing.T) {
-	_, commonDir, hash := indexedCommitFixture(t)
-	index, _ := testPackIndex(t, commonDir)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	index.dir = dotgit.New(cancelIndexFS{Filesystem: index.dir.Fs(), cancel: cancel})
-	if err := index.prepare(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("prepare cancelled during decode = %v, want Canceled", err)
-	}
-	if index.ready {
-		t.Fatal("cancelled generation became ready")
-	}
-	db, err := index.open(t.Context(), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var count int
-	err = db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE name = 'metadata'").Scan(&count)
-	if count != 0 {
-		t.Error("cancelled generation was published")
-	}
-	if err := errors.Join(err, db.Close()); err != nil {
-		t.Fatal(err)
-	}
-	fresh, _ := testPackIndex(t, commonDir)
-	if err := fresh.prepare(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	assertIndexedCommit(t, fresh, hash)
-}
-
-func TestPackIndexWriterWaitHonorsCancellation(t *testing.T) {
-	_, commonDir, _ := indexedCommitFixture(t)
-	index, _ := testPackIndex(t, commonDir)
-	if err := index.prepare(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	db, err := index.open(t.Context(), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	tx, err := db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			t.Error(err)
-		}
-	})
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	writer, err := index.open(t.Context(), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := writer.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
-	timer := time.AfterFunc(50*time.Millisecond, cancel)
-	defer timer.Stop()
-	start := time.Now()
-	err = index.reconcile(ctx, writer)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("reconcile cancelled while locked = %v, want Canceled", err)
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("cancelled writer took %v, want under one second", elapsed)
-	}
-}
-
-func TestIndexedLargeBlobRemainsFilesystemBacked(t *testing.T) {
-	dir, commonDir, _ := indexedCommitFixture(t)
-	if err := os.WriteFile(filepath.Join(dir, "large"), bytes.Repeat([]byte("0123456789abcdef"), 1<<20), 0o600); err != nil {
+func nativeLargeBlobFixture(t *testing.T) (*Repo, plumbing.Hash, int64) {
+	t.Helper()
+	dir, _, _ := indexedCommitFixture(t)
+	data := bytes.Repeat([]byte("0123456789abcdef"), 1<<20)
+	if err := os.WriteFile(filepath.Join(dir, "large"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gittest.Git(t, dir, "add", "large")
 	gittest.Git(t, dir, "commit", "-qm", "large")
 	hash := plumbing.NewHash(gittest.Git(t, dir, "rev-parse", "HEAD:large"))
 	gittest.Git(t, dir, "repack", "-adq")
-	gitDir, _ := gittest.Dirs(t, dir)
-	repo, err := Open(gitDir, commonDir)
+	return openPackedRepo(t, dir), hash, int64(len(data))
+}
+
+func TestNativeLargeBlobStreamSurvivesReadScopeRelease(t *testing.T) {
+	repo, hash, size := nativeLargeBlobFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	repo.beginRead(ctx)
+	encoded, err := repo.storage.EncodedObject(plumbing.BlobObject, hash)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, ok := encoded.(*nativeObject); !ok || encoded.Size() != size {
+		t.Fatalf("large object = %T size%d", encoded, encoded.Size())
+	}
+	stream, err := encoded.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := stream.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	prefix := make([]byte, 17)
+	if _, err := io.ReadFull(stream, prefix); err != nil || string(prefix) != "0123456789abcdef0" {
+		t.Fatalf("prefix=%q, %v", prefix, err)
+	}
+	ended := make(chan error, 1)
+	go func() { var err error; repo.endRead(&err); ended <- err }()
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		releaseErr := <-ended
+		t.Fatalf("scope release waited for the held stream; cancellation returned %v", releaseErr)
+	}
+	if _, err := encoded.Reader(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("new stream after scope release=%v", err)
+	}
+	hasher := plumbing.NewHasher(plumbing.BlobObject, size)
+	_, _ = hasher.Write(prefix)
+	if n, err := io.Copy(hasher, stream); err != nil || n != size-int64(len(prefix)) {
+		t.Fatalf("remaining stream=%d, %v", n, err)
+	}
+	if hasher.Sum() != hash {
+		t.Fatal("held stream contents changed across scope release")
+	}
+}
+
+func TestNativePackedReadCancellationLeavesNextScopeUsable(t *testing.T) {
+	repo, hash, _ := nativeLargeBlobFixture(t)
+	func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		repo.mu.Lock()
+		defer repo.mu.Unlock()
+		repo.beginRead(ctx)
+		defer func() {
+			var err error
+			repo.endRead(&err)
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+		encoded, err := repo.storage.EncodedObject(plumbing.BlobObject, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream, err := encoded.Reader()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := stream.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		cancel()
+		if _, err := stream.Read(make([]byte, 17)); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled stream=%v", err)
+		}
+	}()
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 	repo.beginRead(t.Context())
 	defer func() {
-		var closeErr error
-		repo.endRead(&closeErr)
-		if closeErr != nil {
-			t.Error(closeErr)
+		var err error
+		repo.endRead(&err)
+		if err != nil {
+			t.Error(err)
 		}
 	}()
-	object, err := repo.storage.EncodedObject(plumbing.BlobObject, hash)
+	encoded, err := repo.storage.EncodedObject(plumbing.BlobObject, hash)
+	if err != nil || encoded.Size() != 16<<20 {
+		t.Fatalf("fresh scope=%v, %v", encoded, err)
+	}
+}
+
+func TestNativeSimultaneousStreamsRemainIndependentAfterScopeRelease(t *testing.T) {
+	repo, hash, size := nativeLargeBlobFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	repo.beginRead(ctx)
+	encoded, err := repo.storage.EncodedObject(plumbing.BlobObject, hash)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := object.(*packfile.FSObject); !ok {
-		t.Fatalf("large blob = %T, want filesystem-backed object", object)
+	first, err := encoded.Reader()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := object.Size(); got != 16<<20 {
-		t.Fatalf("large blob size = %d, want %d", got, 16<<20)
+	defer func() {
+		if err := first.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	second, err := encoded.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := second.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	firstPrefix, secondPrefix := make([]byte, 17), make([]byte, 17)
+	if _, err := io.ReadFull(first, firstPrefix); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(second, secondPrefix); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstPrefix, secondPrefix) {
+		t.Fatal("simultaneous streams returned different prefixes")
+	}
+	if len(repo.storage.scope.batches) != 2 {
+		t.Fatal("simultaneous readers did not own distinct batches")
+	}
+	released := make(chan error, 1)
+	go func() { var err error; repo.endRead(&err); released <- err }()
+	select {
+	case err := <-released:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		releaseErr := <-released
+		t.Fatalf("scope release waited for simultaneous held streams; cancellation returned %v", releaseErr)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	hasher := plumbing.NewHasher(plumbing.BlobObject, size)
+	_, _ = hasher.Write(secondPrefix)
+	if n, err := io.Copy(hasher, second); err != nil || n != size-int64(len(secondPrefix)) {
+		t.Fatalf("second stream after independent first Close=%d, %v", n, err)
+	}
+	if hasher.Sum() != hash {
+		t.Fatal("second stream changed after first reader released its child")
 	}
 }

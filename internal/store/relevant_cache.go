@@ -2,17 +2,21 @@ package store
 
 const (
 	relevantCacheCap    = 2048
-	relevantCacheSubdir = "cc-notes/relevant-v4"
+	relevantCacheSubdir = "cc-notes/relevant-v6"
 )
 
 // OpenRelevantCache returns a relevance stream whose bytes are verified as
 // they are read. The caller validates semantic headers and closes the reader.
 func (s *Store) OpenRelevantCache(name string) (*CacheReader, bool) {
-	f, ok := s.relevant.open(name)
+	entry, ok := s.relevant.entry(name)
 	if !ok {
 		return nil, false
 	}
-	s.relevant.touch(name)
+	f, ok := s.relevant.openEntry(entry)
+	if !ok {
+		return nil, false
+	}
+	s.relevant.rememberHit(entry)
 	return f, true
 }
 

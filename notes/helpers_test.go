@@ -26,6 +26,17 @@ func newWBClient(t *testing.T) (*Client, string) {
 	return c, dir
 }
 
+func clearClientCache(t *testing.T, c *Client, subdir string) {
+	t.Helper()
+	root := filepath.Join(c.s.CommonDir(), "cc-notes", subdir)
+	if err := os.Truncate(filepath.Join(root, "values.bin"), 0); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestResolveCommits(t *testing.T) {
 	c, dir := newWBClient(t)
 	ctx := t.Context()

@@ -34,6 +34,14 @@ func TestTaskRelationsPreserveEmptyIDsAndLifecycle(t *testing.T) {
 		model.AddDep{ID: target}, model.DeleteNote{},
 	)
 	slices.Sort(children)
+	selected := []model.EntityID{target, root, target, "unknown", ""}
+	wantBlocks := map[model.EntityID][]model.EntityID{target: children, root: nil, "unknown": nil, "": nil}
+	if got, err := c.TasksBlockingFor(t.Context(), selected); err != nil || !reflect.DeepEqual(got, wantBlocks) {
+		t.Fatalf("selected blockers = %#v, %v; want %#v", got, err, wantBlocks)
+	}
+	if got, err := c.TasksBlockingFor(t.Context(), nil); err != nil || len(got) != 0 {
+		t.Fatalf("empty selected blockers = %#v, %v", got, err)
+	}
 	if got, err := c.TasksBlocking(t.Context(), target); err != nil || !slices.Equal(got, children) {
 		t.Fatalf("blocking includes terminal live tasks = %v, %v; want %v", got, err, children)
 	}
@@ -138,6 +146,10 @@ func taskRelationContractValues(t *testing.T, c *Client, id model.EntityID) task
 	if err != nil {
 		t.Fatal(err)
 	}
+	batch, err := c.TasksBlockingFor(t.Context(), []model.EntityID{id, id})
+	if err != nil || !reflect.DeepEqual(batch, map[model.EntityID][]model.EntityID{id: blocks}) {
+		t.Fatalf("selected blocker batch = %#v, %v; want %v", batch, err, blocks)
+	}
 	children, err := c.TaskChildren(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
@@ -177,6 +189,7 @@ func TestTaskRelationsPreservePinnedAndUnavailableCacheViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = fresh.Close() })
 	path := filepath.Join(fresh.s.CommonDir(), "cc-notes-query")
 	if err := os.RemoveAll(path); err != nil {
 		t.Fatal(err)
@@ -200,6 +213,11 @@ func TestTaskRelationsCancellationHasNoResult(t *testing.T) {
 	if got, err := c.TasksBlocking(ctx, target); got != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled blockers = %v, %v", got, err)
 	}
+	for _, ids := range [][]model.EntityID{nil, {target}} {
+		if got, err := c.TasksBlockingFor(ctx, ids); got != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled selected blockers = %v, %v", got, err)
+		}
+	}
 	if got, err := c.TaskChildren(ctx, target); got != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled children = %v, %v", got, err)
 	}
@@ -221,6 +239,7 @@ func TestTaskRunsUnreadableSelectedBodyIsAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = fresh.Close() })
 	if got, err := fresh.TaskRuns(t.Context(), target); got != nil || !errors.Is(err, gitobj.ErrIncompleteChain) {
 		t.Fatalf("unreadable selected runbook = %#v, %v; want incomplete-chain error", got, err)
 	}

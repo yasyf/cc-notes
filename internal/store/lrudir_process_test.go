@@ -93,19 +93,13 @@ func TestLRUDirProcessHelper(t *testing.T) {
 			t.Fatal("acquire publication lock")
 		}
 		defer func() { _ = lock.Close() }()
-		db, err := l.database(cacheWrite)
+		file, err := l.hintFile(cacheWrite)
 		if err != nil {
 			t.Fatal(err)
 		}
-		tx, err := db.Begin()
-		if err != nil {
-			t.Fatal(err)
-		}
+		pages := cacheHintPages{file: file, capacity: l.capacity}
 		if request.Mode == "hold" {
-			var rank int64
-			if err := tx.QueryRow("SELECT rank FROM cache_meta WHERE id = 1").Scan(&rank); err != nil {
-				t.Fatal(err)
-			}
+
 			if _, err := fmt.Fprintln(os.Stdout, "locked"); err != nil {
 				t.Fatal(err)
 			}
@@ -115,12 +109,9 @@ func TestLRUDirProcessHelper(t *testing.T) {
 			homeguard.ChildExit(77)
 		}
 		if request.Mode == "batch-rename" {
-			var rank int64
-			if err := tx.QueryRow("SELECT rank FROM cache_meta WHERE id = 1").Scan(&rank); err != nil {
-				t.Fatal(err)
-			}
+			payload := cachePayloadWriter{cache: l}
 			for _, name := range request.Names {
-				slot, err := l.allocate(tx, name)
+				window, err := pages.window(cacheNameTag(name))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -131,17 +122,14 @@ func TestLRUDirProcessHelper(t *testing.T) {
 					t.Fatal(err)
 				}
 				data := []byte(request.Data + name)
-				if !l.publish(slot, token[:], data) {
+				slot := l.chooseSlot(window, cacheNameTag(name))
+				if !payload.publish(slot, name, token[:], data) {
 					t.Fatal("batch prefix publication failed")
-				}
-				rank++
-				if _, err := tx.Exec("INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET slot=excluded.slot, token=excluded.token, rank=excluded.rank, size=excluded.size", name, slot, token[:], rank, len(data)); err != nil {
-					t.Fatal(err)
 				}
 			}
 			homeguard.ChildExit(77)
 		}
-		slot, err := l.allocate(tx, request.Name)
+		window, err := pages.window(cacheNameTag(request.Name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,8 +143,11 @@ func TestLRUDirProcessHelper(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(l.dir, ".pending"), append(token[:], request.Data...), 0o600); err != nil {
 				t.Fatal(err)
 			}
-		} else if !l.publish(slot, token[:], []byte(request.Data)) {
-			t.Fatal("publish failed before crash")
+		} else {
+			payload := cachePayloadWriter{cache: l}
+			if !payload.publish(l.chooseSlot(window, cacheNameTag(request.Name)), request.Name, token[:], []byte(request.Data)) {
+				t.Fatal("publish failed before crash")
+			}
 		}
 		homeguard.ChildExit(77)
 	default:
@@ -276,7 +267,15 @@ func requireCacheSlotBound(t *testing.T, l *lruDir) {
 			slots++
 		case entry.Name() == ".pending":
 			pending++
-		case entry.Name() == "index.sqlite", entry.Name() == "index.sqlite-wal", entry.Name() == "index.sqlite-shm":
+		case entry.Name() == cacheInlineFile:
+			info, err := entry.Info()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !info.Mode().IsRegular() || info.Size() > int64(l.capacity)*cacheInlineStride {
+				t.Fatalf("inline payload extent = %v, capacity=%d", info, l.capacity)
+			}
+		case entry.Name() == cacheHintFile:
 		default:
 			t.Fatalf("unexpected cache artifact %q", entry.Name())
 		}
@@ -299,6 +298,9 @@ func TestLRUDirProcessCrashPublication(t *testing.T) {
 		t.Run(step.mode+"_"+step.name, func(t *testing.T) {
 			l := newProcessCache(t, 2)
 			a, b, c := "payload:a", "payload:b", "payload:c"
+			if step.mode == "pending" {
+				c = strings.Repeat(c, cacheChunkSize)
+			}
 			l.write("a", []byte(a))
 			l.write("b", []byte(b))
 			exit := 77
@@ -361,7 +363,7 @@ func TestLRUDirCompetingPublicationBatches(t *testing.T) {
 	for _, name := range []string{"base-a", "base-b", "base-c"} {
 		l.write(name, []byte("payload:"+name))
 	}
-	var processes []*cacheProcess
+	processes := make([]*cacheProcess, 0, 4)
 	for i := range 4 {
 		processes = append(processes, startCacheProcess(t, cacheProcessRequest{Mode: "batch", Dir: l.dir, Capacity: l.capacity, Names: []string{fmt.Sprintf("batch-%d-a", i), fmt.Sprintf("batch-%d-b", i)}, Data: "payload:"}))
 	}
@@ -420,30 +422,29 @@ func TestLRUDirProcessesShareCapacity(t *testing.T) {
 }
 
 func TestLRUDirOpenDescriptorSurvivesProcessPublication(t *testing.T) {
-	l := newProcessCache(t, 1)
-	l.write("a", []byte("old"))
-	for _, step := range []struct {
-		name string
-		data string
-		want string
-	}{
-		{"a", "new", "old"},
-		{"b", "replacement", "new"},
-	} {
-		f, ok := l.open("a")
-		if !ok {
-			t.Fatal("open original entry")
-		}
-		runCacheProcess(t, cacheProcessRequest{Mode: "commit", Dir: l.dir, Capacity: l.capacity, Name: step.name, Data: step.data}, 0)
-		data, err := io.ReadAll(f)
-		closeErr := f.Close()
-		if err != nil || closeErr != nil || string(data) != step.want {
-			t.Fatalf("opened descriptor = %q, %v, %v; want %q", data, err, closeErr, step.want)
-		}
+	for _, repetitions := range []int{1, cacheChunkSize} {
+		t.Run(fmt.Sprintf("repeat_%d", repetitions), func(t *testing.T) {
+			l := newProcessCache(t, 1)
+			l.write("a", []byte(strings.Repeat("old", repetitions)))
+			for _, step := range []struct{ name, data, want string }{
+				{"a", "new", "old"}, {"b", "replacement", "new"},
+			} {
+				f, ok := l.open("a")
+				if !ok {
+					t.Fatal("open original entry")
+				}
+				runCacheProcess(t, cacheProcessRequest{Mode: "commit", Dir: l.dir, Capacity: l.capacity, Name: step.name, Data: strings.Repeat(step.data, repetitions)}, 0)
+				data, err := io.ReadAll(f)
+				closeErr := f.Close()
+				if err != nil || closeErr != nil || string(data) != strings.Repeat(step.want, repetitions) {
+					t.Fatalf("opened descriptor = %d bytes, %v, %v", len(data), err, closeErr)
+				}
+			}
+			want := strings.Repeat("replacement", repetitions)
+			requireCacheProcessValues(t, l, map[string]*string{"a": nil, "b": &want})
+			requireCacheSlotBound(t, l)
+		})
 	}
-	want := "replacement"
-	requireCacheProcessValues(t, l, map[string]*string{"a": nil, "b": &want})
-	requireCacheSlotBound(t, l)
 }
 
 func TestLRUDirProcessPendingFailureDoesNotPublish(t *testing.T) {
@@ -455,12 +456,12 @@ func TestLRUDirProcessPendingFailureDoesNotPublish(t *testing.T) {
 	if err := os.Mkdir(pending, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runCacheProcess(t, cacheProcessRequest{Mode: "write", Dir: l.dir, Capacity: l.capacity, Name: "c", Data: "payload:c"}, 0)
+	runCacheProcess(t, cacheProcessRequest{Mode: "write", Dir: l.dir, Capacity: l.capacity, Name: "c", Data: strings.Repeat("payload:c", cacheChunkSize)}, 0)
 	requireCacheProcessValues(t, l, map[string]*string{"a": &a, "b": &b, "c": nil})
 	if err := os.Remove(pending); err != nil {
 		t.Fatal(err)
 	}
-	c := "payload:c"
+	c := strings.Repeat("payload:c", cacheChunkSize)
 	runCacheProcess(t, cacheProcessRequest{Mode: "commit", Dir: l.dir, Capacity: l.capacity, Name: "c", Data: c}, 0)
 	requireCacheProcessValues(t, l, map[string]*string{"a": nil, "b": &b, "c": &c})
 	requireCacheSlotBound(t, l)
@@ -496,7 +497,7 @@ func TestLRUDirProcessWriterLockSurvivesMetadataReplacement(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				for _, name := range []string{"index.sqlite", "index.sqlite-wal", "index.sqlite-shm"} {
+				for _, name := range []string{cacheHintFile} {
 					if err := os.Remove(filepath.Join(l.dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 						t.Fatal(err)
 					}
@@ -515,7 +516,7 @@ func TestLRUDirProcessWriterLockSurvivesMetadataReplacement(t *testing.T) {
 			if output := runCacheProcess(t, request, 0); len(output) != 0 {
 				t.Fatalf("unexpected blocked-writer output %q", output)
 			}
-			if _, err := os.Stat(filepath.Join(l.dir, "index.sqlite")); !errors.Is(err, os.ErrNotExist) {
+			if _, err := os.Stat(filepath.Join(l.dir, cacheHintFile)); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("blocked writer initialized replacement metadata: %v", err)
 			}
 			if data, err := os.ReadFile(pending); err != nil || !bytes.Equal(data, staging) {

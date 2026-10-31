@@ -17,6 +17,7 @@ func loadCriterion(t *testing.T, dir, taskID, critID string) model.Criterion {
 	if err != nil {
 		t.Fatalf("notes.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	ctx := t.Context()
 	id, err := c.ResolveTask(ctx, taskID)
 	if err != nil {

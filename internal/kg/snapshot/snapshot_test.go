@@ -44,6 +44,7 @@ func newFixture(t *testing.T) fixture {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 
 	spin := verifiedNote(t, c, "Spin returns one",
 		"Widget.Spin counts rotor ticks and returns one per revolution.", "pkg/widget.go")

@@ -29,6 +29,8 @@ func TestSyncUsesNativeRefEnumeration(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				ownedSource := a
+				t.Cleanup(func() { _ = ownedSource.Close() })
 				b = f.thinStore
 			} else {
 				bare := gittest.InitBare(t)

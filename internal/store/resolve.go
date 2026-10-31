@@ -19,11 +19,15 @@ import (
 // *AmbiguousError carrying each candidate's id and title.
 func (s *Store) Resolve(ctx context.Context, kind model.Kind, prefix string) (string, error) {
 	namespace := refs.Root(kind)
-	entries, err := s.children(ctx, namespace)
+	lowered := strings.ToLower(prefix)
+	end := 0
+	for end < len(lowered) && (lowered[end] >= '0' && lowered[end] <= '9' || lowered[end] >= 'a' && lowered[end] <= 'f') {
+		end++
+	}
+	entries, err := s.childrenInRange(ctx, namespace, namespace+lowered[:end])
 	if err != nil {
 		return "", err
 	}
-	lowered := strings.ToLower(prefix)
 	var matches []tipEntry
 	for _, e := range entries {
 		if strings.HasPrefix(strings.TrimPrefix(e.ref, namespace), lowered) {

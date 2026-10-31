@@ -206,7 +206,11 @@ func TestBoundStoreSharesRecords(t *testing.T) {
 	assertPruneGuardInRecordsOnly(t, f)
 
 	assertObjectsOnlyInRecords(t, f, note.Head, seeded.(model.Note).Head, fromA.Head, renamed.(model.Note).Head)
-	if _, err := os.Stat(cacheEntryPath(t, &a.cache.lruDir, string(renamed.(model.Note).Head))); err != nil {
+	cacheEntry := cacheEntryPath(t, &a.cache.lruDir, string(renamed.(model.Note).Head))
+	if got, want := filepath.Dir(cacheEntry), filepath.Join(f.sourceCommon, foldCacheSubdir); got != want {
+		t.Fatalf("fold cache directory = %q, want source directory %q", got, want)
+	}
+	if _, err := os.Stat(cacheEntry); err != nil {
 		t.Fatalf("fold cache entry for the renamed tip is not under the source: %v", err)
 	}
 	f.assertNoRecords(t)

@@ -580,25 +580,51 @@ func packedRepo(t *testing.T) (dir string, c1 model.SHA) {
 	return dir, c1
 }
 
-func TestStableMissKeepsTheLoadedPackIndexes(t *testing.T) {
+func TestNativeStableMissFollowsCurrentIndexAvailability(t *testing.T) {
 	dir, c1 := packedRepo(t)
 	packs := settlePacks(t, dir)
 	repo := open(t, dir)
 	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
-		t.Fatalf("seed Ancestry(c1, c1) = %v, %v; want Ancestor", got, err)
+		t.Fatalf("seed ancestry=%v, %v", got, err)
 	}
-
+	absent := model.SHA("0123456789abcdef0123456789abcdef01234567")
+	for range 2 {
+		if _, err := repo.Ancestry(t.Context(), absent, c1); !errors.Is(err, gitobj.ErrCommitNotFound) {
+			t.Fatalf("stable miss with valid indexes=%v", err)
+		}
+	}
 	indexes := packIndexes(t, packs)
 	if len(indexes) != 1 {
-		t.Fatalf("pack indexes = %v, want exactly one", indexes)
+		t.Fatalf("indexes=%v, want one", indexes)
 	}
-	breakIndexInPlace(t, indexes[0])
-
-	absent := model.SHA("0123456789abcdef0123456789abcdef01234567")
-	for attempt := 1; attempt <= 2; attempt++ {
-		if _, err := repo.Ancestry(t.Context(), absent, c1); !errors.Is(err, gitobj.ErrCommitNotFound) {
-			t.Fatalf("Ancestry(absent, c1) attempt %d = %v, want ErrCommitNotFound from the loaded indexes, not a reload of the truncated one", attempt, err)
+	restore := breakIndexInPlace(t, indexes[0])
+	defer restore()
+	command := exec.CommandContext(t.Context(), "git", "--no-replace-objects", "--no-lazy-fetch", "-C", dir, "cat-file", "--batch")
+	command.Stdin = strings.NewReader(string(absent) + "\n")
+	var output, diagnostic bytes.Buffer
+	command.Stdout, command.Stderr = &output, &diagnostic
+	nativeErr := command.Run()
+	for attempt := range 2 {
+		_, err := repo.Ancestry(t.Context(), absent, c1)
+		switch {
+		case nativeErr != nil || diagnostic.Len() != 0:
+			if err == nil || errors.Is(err, gitobj.ErrCommitNotFound) || errors.Is(err, plumbing.ErrObjectNotFound) {
+				t.Fatalf("attempt%d diagnosed native corruption became miss: native=%v %q read=%v", attempt, nativeErr, diagnostic.String(), err)
+			}
+		case output.String() == string(absent)+" missing\n":
+			if !errors.Is(err, gitobj.ErrCommitNotFound) {
+				t.Fatalf("attempt%d native missing=%v", attempt, err)
+			}
+		default:
+			t.Fatalf("unexpected native missing oracle=%q", output.String())
 		}
+	}
+	restore()
+	if got, err := repo.Ancestry(t.Context(), c1, c1); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("restored current index=%v, %v", got, err)
+	}
+	if _, err := repo.Ancestry(t.Context(), absent, c1); !errors.Is(err, gitobj.ErrCommitNotFound) {
+		t.Fatalf("restored stable miss=%v", err)
 	}
 }
 
@@ -620,7 +646,7 @@ func TestFailedFirstIndexLoadReloadsOnceTheIndexIsRestoredInPlace(t *testing.T) 
 	}
 }
 
-func TestMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
+func TestNativeMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
 	dir, c1 := packedRepo(t)
 	_, commonDir := gittest.Dirs(t, dir)
 	indexes := packIndexes(t, filepath.Join(commonDir, "objects", "pack"))
@@ -642,8 +668,11 @@ func TestMissingIndexReloadsOnceItsSymlinkTargetIsRestored(t *testing.T) {
 	settlePacks(t, dir)
 	repo := open(t, dir)
 
-	if _, err := repo.Ancestry(t.Context(), c1, c1); !errors.Is(err, dotgit.ErrPackfileNotFound) {
-		t.Fatalf("Ancestry(c1, c1) through a dangling index symlink = %v, want ErrPackfileNotFound", err)
+	if got := gitStdin(t, dir, string(c1)+"\n", "--no-replace-objects", "--no-lazy-fetch", "cat-file", "--batch-check"); got != string(c1)+" missing" {
+		t.Fatalf("native dangling index lookup=%q, want clean missing", got)
+	}
+	if _, err := repo.Ancestry(t.Context(), c1, c1); !errors.Is(err, gitobj.ErrCommitNotFound) {
+		t.Fatalf("Ancestry(c1, c1) through a dangling index symlink = %v, want native missing", err)
 	}
 	if err := os.Rename(hidden, target); err != nil {
 		t.Fatalf("restore %s: %v", target, err)

@@ -1294,10 +1294,18 @@ func newCriterionListCmd() *cobra.Command {
 	return cmd
 }
 
+func taskIDs(tasks []model.Task) []model.EntityID {
+	ids := make([]model.EntityID, len(tasks))
+	for i, task := range tasks {
+		ids[i] = task.ID
+	}
+	return ids
+}
+
 func printTaskList(cmd *cobra.Command, c *notes.Client, tasks []model.Task, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		blocks, err := c.TasksBlockingIndex(cmd.Context())
+		blocks, err := c.TasksBlockingFor(cmd.Context(), taskIDs(tasks))
 		if err != nil {
 			return err
 		}
@@ -1315,13 +1323,10 @@ func printTaskList(cmd *cobra.Command, c *notes.Client, tasks []model.Task, json
 	return nil
 }
 
-// printStaleTaskList writes stale tasks as their JSON summary DTOs — each
-// carrying the idle duration in seconds — or one lean line per task with a
-// trailing idle marker.
 func printStaleTaskList(cmd *cobra.Command, c *notes.Client, tasks []model.Task, now time.Time, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		blocks, err := c.TasksBlockingIndex(cmd.Context())
+		blocks, err := c.TasksBlockingFor(cmd.Context(), taskIDs(tasks))
 		if err != nil {
 			return err
 		}

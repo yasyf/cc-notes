@@ -28,6 +28,7 @@ func TestReconcileNamesEveryRefAMovedBindingHid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	scope := map[string]model.SHA{}
 	for _, title := range []string{"one", "two"} {
 		snap, err := s.Create(ctx, []model.Op{model.CreateNote{Nonce: model.NewNonce(), Title: title}})

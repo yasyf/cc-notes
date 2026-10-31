@@ -10,12 +10,13 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/model"
 )
 
 func TestLRUDirPublicationBatchRowBound(t *testing.T) {
-	c := newFoldCache(t.TempDir(), 128)
+	c := newFoldCache(t.TempDir(), cachePublicationRows*2)
 	t.Cleanup(func() { _ = c.close() })
 	b := newFoldPublicationBatch(t.Context(), c)
 	defer b.discard()
@@ -38,6 +39,35 @@ func TestLRUDirPublicationBatchRowBound(t *testing.T) {
 	b.flush()
 	if data, ok := c.read("tail"); !ok || string(data) != "tail" {
 		t.Fatalf("tail = %q, %v", data, ok)
+	}
+}
+
+func TestLRUDirPublicationBatchFlushDuration(t *testing.T) {
+	for _, size := range []int{13, cachePublicationBytes / cachePublicationRows} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			c := newFoldCache(t.TempDir(), cachePublicationRows+1)
+			t.Cleanup(func() { _ = c.close() })
+			c.write("prime", []byte("prime"))
+			b := newFoldPublicationBatch(t.Context(), c)
+			defer b.discard()
+			data := bytes.Repeat([]byte("x"), size)
+			for i := range cachePublicationRows - 1 {
+				b.add(&cachePublication{name: strconv.Itoa(i), data: data})
+			}
+			started := time.Now()
+			b.add(&cachePublication{name: "last", data: data})
+			elapsed := time.Since(started)
+			if len(b.values) != 0 || b.bytes != 0 {
+				t.Fatalf("chunk did not flush: queued=%d bytes=%d", len(b.values), b.bytes)
+			}
+			for _, name := range []string{"0", "last"} {
+				got, ok := c.read(name)
+				if !ok || !bytes.Equal(got, data) {
+					t.Fatalf("published %s = %d bytes, %v", name, len(got), ok)
+				}
+			}
+			t.Logf("publication_rows=%d logical_bytes=%d flush_elapsed_ns=%d", cachePublicationRows, size*cachePublicationRows, elapsed.Nanoseconds())
+		})
 	}
 }
 
@@ -85,7 +115,7 @@ func TestLRUDirPublicationBatchCancelDiscards(t *testing.T) {
 	if len(b.values) != 0 || b.bytes != 0 {
 		t.Fatal("cancelled batch retained values")
 	}
-	if _, ok := c.read("pending"); ok || c.db != nil {
+	if _, ok := c.read("pending"); ok || c.index != nil {
 		t.Fatal("cancelled tail opened or published metadata")
 	}
 }
@@ -96,9 +126,10 @@ func TestLRUDirPublicationBatchCapacityAndRepeatedKeys(t *testing.T) {
 			l := newProcessCache(t, capacity)
 			l.writeBatch([]cachePublication{{"a", []byte("first")}, {"b", []byte("b")}, {"a", []byte("last")}, {"c", []byte("c")}, {"d", []byte("d")}})
 			var want []string
-			if capacity == 1 {
+			switch capacity {
+			case 1:
 				want = []string{"d"}
-			} else if capacity == 3 {
+			case 3:
 				want = []string{"a", "c", "d"}
 			}
 			if got := l.names(); !slices.Equal(got, want) {
@@ -122,37 +153,41 @@ func TestLRUDirPublicationBatchCapacityAndRepeatedKeys(t *testing.T) {
 	}
 }
 
-func TestLRUDirPublicationBatchRollbackAfterRenames(t *testing.T) {
+func TestLRUDirPublicationBatchRetainsValidPrefixAfterRenameFailure(t *testing.T) {
 	l := newProcessCache(t, 3)
 	for _, name := range []string{"a", "b", "c"} {
-		l.write(name, []byte("old "+name))
+		data := []byte("old " + name)
+		if name == "b" {
+			data = bytes.Repeat(data, cacheChunkSize)
+		}
+		l.write(name, data)
 	}
 	l.touch("c")
-	db, err := l.database(cacheWrite)
-	if err != nil {
+	blocked := cacheEntryPath(t, l, "b")
+	if err := os.Remove(blocked); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("CREATE TRIGGER reject_second BEFORE INSERT ON cache_entries WHEN NEW.name = 'b' BEGIN SELECT RAISE(ABORT, 'injected publication error'); END"); err != nil {
+	if err := os.Mkdir(blocked, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l.writeBatch([]cachePublication{{"a", []byte("new a")}, {"b", []byte("new b")}})
-	for _, name := range []string{"a", "b"} {
-		if data, ok := l.read(name); ok {
-			t.Fatalf("rolled-back key %s returned bytes %q", name, data)
-		}
+	l.writeBatch([]cachePublication{{"a", []byte("new a")}, {"b", bytes.Repeat([]byte("new b"), cacheChunkSize)}})
+	if data, ok := l.read("a"); !ok || string(data) != "new a" {
+		t.Fatalf("valid prefix = %q, %v", data, ok)
+	}
+	if data, ok := l.read("b"); ok {
+		t.Fatalf("failed rename exposed bytes %q", data)
 	}
 	if data, ok := l.read("c"); !ok || string(data) != "old c" {
 		t.Fatalf("untouched key = %q, %v", data, ok)
 	}
-	if hits := l.pending(); len(hits) != 1 || hits[0].name != "c" || db.Stats().InUse != 0 {
-		t.Fatalf("failed batch acknowledged hits or retained transaction: %v, %+v", hits, db.Stats())
-	}
-	if _, err := db.Exec("DROP TRIGGER reject_second"); err != nil {
+	if err := os.Remove(blocked); err != nil {
 		t.Fatal(err)
 	}
 	l.writeBatch([]cachePublication{{"a", []byte("repaired a")}, {"b", []byte("repaired b")}})
-	if len(l.pending()) != 0 {
-		t.Fatal("successful batch did not acknowledge captured hits")
+	for _, name := range []string{"a", "b"} {
+		if data, ok := l.read(name); !ok || string(data) != "repaired "+name {
+			t.Fatalf("repaired %s = %q, %v", name, data, ok)
+		}
 	}
 }
 
@@ -178,7 +213,7 @@ func reopenColdPublicationStore(t *testing.T, s *Store) *Store {
 
 func TestLRUDirFoldAllPublishesTailAfterWait(t *testing.T) {
 	s := initStore(t)
-	var heads []model.SHA
+	heads := make([]model.SHA, 0, 3)
 	for i := range 3 {
 		note := create(t, s, noteOps(fmt.Sprintf("tail %d", i))).(model.Note)
 		heads = append(heads, note.Head)
@@ -197,7 +232,7 @@ func TestLRUDirFoldAllPublishesTailAfterWait(t *testing.T) {
 
 func TestLRUDirQueryRefreshPublishesUnselectedTail(t *testing.T) {
 	s := initStore(t)
-	var heads []model.SHA
+	heads := make([]model.SHA, 0, 3)
 	for i := range 3 {
 		label := "other"
 		if i == 0 {

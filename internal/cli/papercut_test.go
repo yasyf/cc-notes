@@ -290,6 +290,7 @@ func TestPapercutTwinConvergence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	twinSnap, err := s.Create(t.Context(), []model.Op{
 		model.CreateLog{Nonce: model.NewNonce(), Title: papercutTitleForTest, Tags: []string{"papercut"}},
 		model.AppendEntry{Text: "twin complaint"},

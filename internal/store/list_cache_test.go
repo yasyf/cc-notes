@@ -283,6 +283,7 @@ func TestCachedListChecksTheBindingBeforeAHit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Open: %v", err)
 			}
+			t.Cleanup(func() { _ = s.Close() })
 			a := create(t, s, answerOps("a")).(model.Answer)
 			p := &listProbe{s: s}
 			p.expect(t, "all", 1, a.ID)
@@ -302,6 +303,7 @@ func TestCachedListChecksTheBindingBeforeAHit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
+		t.Cleanup(func() { _ = s.Close() })
 		a := create(t, s, answerOps("a")).(model.Answer)
 		(&listProbe{s: s}).expect(t, "all", 1, a.ID)
 
@@ -310,6 +312,7 @@ func TestCachedListChecksTheBindingBeforeAHit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reopen: %v", err)
 		}
+		t.Cleanup(func() { _ = reopened.Close() })
 		p := &listProbe{s: reopened}
 		p.expect(t, "all", 1)
 		p.expect(t, "all", 1)
