@@ -149,8 +149,17 @@ func TestQueryGenerationRecentUpdatesAndPackRefs(t *testing.T) {
 	if _, heads, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || !slices.Equal(heads, []model.EntityID{b}) {
 		t.Fatalf("recent update = %v %v %v", heads, hit, err)
 	}
-	if generation, _ := queryIndexGeneration(t, q); generation != "" {
-		t.Fatalf("recent source published generation %q", generation)
+	taken := time.Now()
+	current, err := s.Repo.RefGeneration(t.Context(), refs.Root(model.KindDoc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want string
+	if current.SettledAt(taken) {
+		want = current.Key()
+	}
+	if generation, _ := queryIndexGeneration(t, q); generation != want {
+		t.Fatalf("recent source generation %q, want %q", generation, want)
 	}
 	settleSupersession(t, s, a)
 	updated, _ := queryIndexGeneration(t, q)
