@@ -69,7 +69,7 @@ func TestReleasePinsEveryExternalActionByCommit(t *testing.T) {
 		"actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
 		"yasyf/homebrew-tap/.github/actions/verify-tag-on-main@2281a3ea884422db190de44fad65ce9bc08b19c4",
 		"yasyf/homebrew-tap/.github/actions/render-formula@19c3d5013032ad9c88f9a8f1170d1f366c19b8d9",
-		"yasyf/homebrew-tap/.github/actions/publish@9525763796fce4d1042cf3393d9479f791908eaa",
+		"yasyf/homebrew-tap/.github/actions/publish@6a9a9619492f444cf75c8785ba302ad2c92aacd2",
 	)
 }
 
@@ -96,12 +96,19 @@ func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 		`uses: yasyf/homebrew-tap/.github/actions/publish-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5`,
 		`manifest: ${{ runner.temp }}/cc-notes-release-assets.txt`,
 		`release-id: ${{ steps.stage-release.outputs.release-id }}`,
-		`make-latest: ${{ !contains(github.ref_name, '-') }}`,
+		"make-latest: false",
+		"monotonic-file: Formula/cc-notes.rb",
+		"  promote-latest:\n    needs: [release, helper-app, bump-formula, sync-plugin-version]",
+		"      group: cc-notes-stable-promotion\n      queue: max\n      cancel-in-progress: false",
+		"RELEASE_ID: ${{ needs.release.outputs.release-id }}",
+		"run: python3 scripts/promote_latest.py",
 		"contents: read",
 	)
 	assertFileExcludes(
 		t, workflow,
 		"softprops/action-gh-release",
+		"make-latest: ${{ !contains(github.ref_name, '-') }}",
+		"make-latest: true",
 		`releases/tags/$RELEASE_TAG`,
 		`gh release create`,
 		`gh release upload`,
@@ -117,6 +124,9 @@ func TestReleasePublishesOnlyOneCompleteCallerOwnedDraft(t *testing.T) {
 		t.Fatalf("public release transitions = %d, want exactly 1", count)
 	}
 	text := string(payload)
+	if count := strings.Count(text, "run: python3 scripts/promote_latest.py"); count != 1 {
+		t.Fatalf("serialized latest promotion callers = %d, want exactly 1", count)
+	}
 	verify := strings.Index(text, `stage-draft-release@e4c3108e693681df1a3c666bae80e890bc44cf3e`)
 	publish := strings.Index(text, `publish-draft-release@54e3e194bda69896894a82c17fcdb2822beefab5`)
 	if verify < 0 || publish < 0 || publish <= verify {
