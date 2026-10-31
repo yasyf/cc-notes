@@ -1,1 +1,1 @@
-{"v":1,"lamport":13,"ops":[{"kind":"renew"}]}
+{"v":1,"lamport":14,"ops":[{"kind":"set_criterion_status","id":"4c977e20cb51a30018775e6d6f80049d","status":"met","note":"Actualprivate23image/29edge strictclosure/installPASS; canonicalCLI and named44916 exact60f, sanity=true; only argv0/configflag/link changed, actualsocket/state/config retained. Finalreadonly00467b9a and W/installed-handoff-and-scope-release.json."}]}
