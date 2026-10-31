@@ -147,7 +147,7 @@ func TestLRUDirLargeOpenVerifiesOneBoundedBlock(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 	offset, err := f.file.Seek(0, io.SeekCurrent)
-	if err != nil || offset != cacheTokenSize+1+len("large")+sha256.Size+cacheChunkSize {
+	if err != nil || offset != int64(cacheTokenSize+1+len("large")+sha256.Size+cacheChunkSize) {
 		t.Fatalf("payload offset = %d, %v", offset, err)
 	}
 	got := make([]byte, 11)
