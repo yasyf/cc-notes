@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf/attachment-ref-batch"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"a159fbfa9dade8e01d9d9f6656c11692","status":"met","note":"CCX confirmedrequiredCapt29/cwdcontext685/runtimealreadyinstalled; existingdev\u003e=29. Exactnormalfloorcommit04c5b39d0db2e5e1b04ee1ef163180064bb3236e changesONLY dependency13→29 against actualsafeMain2b3, version725/otherJSONfields untouched; sourceprep and Gitdiff verified. No newAPI/runtimegate/localtest."}]}
