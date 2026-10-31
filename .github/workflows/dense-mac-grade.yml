@@ -1,0 +1,63 @@
+name: Dense cache final macOS grades
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dense-mac15-grade-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Proof-only full macOS suite
+    if: github.head_ref == 'test/dense-mac15-grade'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: ./.github/actions/setup
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Test (race, via the process-cap harness)
+        run: ./scripts/test.sh -race -count=1 ./...
+
+      - name: Build (default, pure Go)
+        run: go build ./...
+
+      - name: Cross-compile smoke (linux/amd64)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/cc-notes_linux_amd64 ./cmd/cc-notes
+
+      - name: Cross-compile smoke (darwin/arm64)
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/cc-notes_darwin_arm64 ./cmd/cc-notes
+
+  helper:
+    if: github.head_ref == 'test/dense-mac15-grade'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: ./.github/actions/setup
+      - name: Install FUSE-T headers
+        run: brew install macos-fuse-t/cask/fuse-t
+      - name: Build the dedicated signed-helper target
+        run: CGO_ENABLED=1 go build -tags fuse ./cmd/cc-notes-helper
+      - name: Home-discipline contract over the darwin file set
+        run: ./scripts/test.sh -race -count=1 ./internal/homeguard
+      - name: Prove the ordinary CLI has no FuseKit child dispatcher
+        run: |
+          CGO_ENABLED=0 go build -o /tmp/cc-notes ./cmd/cc-notes
+          strings -a /tmp/cc-notes > /tmp/cc-notes.strings
+          if grep -E -- '--fusekit-(broker-child|catalog-worker-v1|daemon-socket|source-driver-v1|source-observer-child|source-task-child)' /tmp/cc-notes.strings; then
+            echo "::error::ordinary cc-notes CLI still embeds a FuseKit child mode"
+            exit 1
+          fi
+
