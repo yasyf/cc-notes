@@ -178,13 +178,16 @@ func compareSearchHits(a, b searchHit) int {
 	return cmp.Compare(a.snap.EntityID(), b.snap.EntityID())
 }
 
-// printSearchHits writes the merged hits as searchDTOs in JSON, or as each
-// kind's lean line prefixed with a kind tag column. The JSON path folds the
-// reverse dependency index once, for every task hit at a time.
 func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		blocks, err := c.TasksBlockingIndex(cmd.Context())
+		var ids []model.EntityID
+		for _, hit := range hits {
+			if task, ok := hit.snap.(model.Task); ok {
+				ids = append(ids, task.ID)
+			}
+		}
+		blocks, err := c.TasksBlockingFor(cmd.Context(), ids)
 		if err != nil {
 			return err
 		}
