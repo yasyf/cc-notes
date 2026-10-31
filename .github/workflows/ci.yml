@@ -100,7 +100,7 @@ jobs:
         run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)|TestTaskIOBytes(TraceAccounting|PathPartition|KernelFilter))$' ./internal/cli
       - name: Separate cold returned-byte comparison
         if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeColdCLIBytes$' ./internal/cli
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupeColdCLIBytes|TestTaskCacheUntracedColdPoint)$' ./internal/cli
       - name: Fresh CLI cache-hit trace calibration
         if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskCache(HitTraceAccounting|HitLowerBoundCalibration)$' ./internal/cli
