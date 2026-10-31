@@ -43,7 +43,7 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v -run '^TestReferencedAttachmentsPackedRefPasses$' ./internal/store
 
   test:
-    runs-on: macos-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'macos-latest' }}
     steps:
       - uses: actions/checkout@v7
 
