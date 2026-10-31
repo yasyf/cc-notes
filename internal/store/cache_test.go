@@ -509,7 +509,7 @@ func TestFoldCacheHoldsTheLiveRefsOfALargeStore(t *testing.T) {
 	tips := make([]model.SHA, live)
 	for i := range tips {
 		tips[i] = model.SHA(fmt.Sprintf("%040x", i+1))
-		c.put(tips[i], model.Note{ID: fmt.Sprintf("n%d", i), Title: "t", Head: tips[i]}, 1, 0)
+		c.put(tips[i], model.Note{ID: model.EntityID(fmt.Sprintf("n%d", i)), Title: "t", Head: tips[i]}, 1, 0)
 	}
 	for _, tip := range []model.SHA{tips[0], tips[live/2], tips[live-1]} {
 		if _, ok := c.get(tip); !ok {
