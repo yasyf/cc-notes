@@ -168,7 +168,7 @@ func removeStatusCommit(t *testing.T, c *Client, tip model.SHA) {
 
 func clearStatusFoldCache(t *testing.T, c *Client) {
 	t.Helper()
-	clearClientCache(t, c, "folds-v5")
+	clearClientCache(t, c, "folds-v6")
 }
 
 func TestStatusMetadataOldAndEmptyPinsAndCacheMiss(t *testing.T) {

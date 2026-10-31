@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A full listing no longer re-folds what it just cached.** The fold cache held
+  16,384 entries, and a repository with about 14,000 live records filled its
+  hint index so far that listing them evicted entries the same listing had
+  written, so every later listing folded them again. The cache now holds 32,768
+  entries, in a new `cc-notes/folds-v6` directory; the old `folds-v5` directory
+  is no longer read and can be deleted.
 - **The object index write-ahead log stays bounded.** Index
   writes came from short-lived connections whose passive auto-checkpoint
   always raced a concurrent reader, and read-only connections cannot
