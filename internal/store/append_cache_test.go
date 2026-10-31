@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -67,8 +68,26 @@ func steppedClock() func() time.Time {
 
 func wipeCache(t *testing.T, s *Store) {
 	t.Helper()
+	if err := os.Truncate(filepath.Join(s.cache.dir, "values.bin"), 0); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("truncate fold cache: %v", err)
+	}
 	if err := os.RemoveAll(s.cache.dir); err != nil {
 		t.Fatalf("wipe fold cache: %v", err)
+	}
+}
+
+func TestWipeCacheDropsOpenInlineEntry(t *testing.T) {
+	s := initStore(t)
+	note := create(t, s, noteOps("cold")).(model.Note)
+	if _, _, _, hit := s.cache.getTop(note.Head); !hit {
+		t.Fatal("created note is not cached")
+	}
+	if location := cacheEntryFrame(t, &s.cache.lruDir, string(note.Head)); !location.inline {
+		t.Fatal("created note does not use inline storage")
+	}
+	wipeCache(t, s)
+	if _, _, _, hit := s.cache.getTop(note.Head); hit {
+		t.Fatal("wiped note remains cached through its open inline file")
 	}
 }
 
