@@ -19,6 +19,7 @@ func openRepo(t *testing.T) *notes.Client {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
 

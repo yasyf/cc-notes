@@ -25,7 +25,7 @@ func TestQueryMetadataSourceRetainsCapturedTips(t *testing.T) {
 	}
 	appendOps(t, s, answerRef(a.ID), model.AddTag{Tag: "later"})
 	b := create(t, s, answerOps("b")).(model.Answer)
-	row, err := source.load(t.Context(), a.ID, oldTip)
+	row, _, err := source.load(t.Context(), a.ID, oldTip)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestQueryMetadataSourceRetainsCapturedTips(t *testing.T) {
 	if current.binding != source.binding {
 		t.Fatalf("source advancement changed schema binding: %q != %q", current.binding, source.binding)
 	}
-	if _, err := source.load(t.Context(), a.ID, current.tips[a.ID]); err == nil {
+	if _, _, err := source.load(t.Context(), a.ID, current.tips[a.ID]); err == nil {
 		t.Fatal("accepted tip outside captured source")
 	}
 }
@@ -66,7 +66,7 @@ func TestQueryMetadataSourcePreservesPinnedUniverse(t *testing.T) {
 	if !maps.Equal(source.tips, map[model.EntityID]model.SHA{a.ID: tip}) {
 		t.Fatalf("pinned source = %v, want original %s at %s", source.tips, a.ID, tip)
 	}
-	row, err := source.load(t.Context(), a.ID, tip)
+	row, _, err := source.load(t.Context(), a.ID, tip)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,11 +89,13 @@ func TestQueryMetadataSourceUsesRecordsBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = backend.Close() })
 	a := create(t, backend, answerOps("backend")).(model.Answer)
 	bound, err := Open(f.worktreeA)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = bound.Close() })
 	source, err := captureQueryMetadata(t.Context(), bound, model.KindAnswer)
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +103,7 @@ func TestQueryMetadataSourceUsesRecordsBackend(t *testing.T) {
 	if len(source.tips) != 1 || source.tips[a.ID] == "" || source.store.Repo == source.store.ContextRepo {
 		t.Fatalf("bound source tips = %v, records/context equal = %v", source.tips, source.store.Repo == source.store.ContextRepo)
 	}
-	row, err := source.load(t.Context(), a.ID, source.tips[a.ID])
+	row, _, err := source.load(t.Context(), a.ID, source.tips[a.ID])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +118,7 @@ func TestQueryMetadataSourceUsesRecordsBackend(t *testing.T) {
 		t.Fatalf("same backend bindings differ: %q != %q", source.binding, local.binding)
 	}
 	replaceRepo(t, f.source)
-	if _, err := source.load(t.Context(), a.ID, source.tips[a.ID]); err == nil {
+	if _, _, err := source.load(t.Context(), a.ID, source.tips[a.ID]); err == nil {
 		t.Fatal("cached load accepted replaced backend")
 	}
 	if _, err := captureQueryMetadata(t.Context(), bound, model.KindAnswer); err == nil {
@@ -136,7 +138,7 @@ func TestQueryMetadataSourceCancellationAndUnreadableTip(t *testing.T) {
 	if _, err := captureQueryMetadata(ctx, s, model.KindAnswer); !errors.Is(err, context.Canceled) {
 		t.Fatalf("capture cancellation = %v", err)
 	}
-	if _, err := source.load(ctx, a.ID, source.tips[a.ID]); !errors.Is(err, context.Canceled) {
+	if _, _, err := source.load(ctx, a.ID, source.tips[a.ID]); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cached load cancellation = %v", err)
 	}
 	missing := model.SHA("1111111111111111111111111111111111111111")
@@ -144,14 +146,14 @@ func TestQueryMetadataSourceCancellationAndUnreadableTip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bad.load(t.Context(), a.ID, missing); err == nil {
+	if _, _, err := bad.load(t.Context(), a.ID, missing); err == nil {
 		t.Fatal("accepted unreadable captured tip")
 	}
 	wrong, err := captureQueryMetadata(t.Context(), s.Pinned(map[string]model.SHA{refs.For(model.KindNote, a.ID): source.tips[a.ID]}), model.KindNote)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wrong.load(t.Context(), a.ID, source.tips[a.ID]); err == nil {
+	if _, _, err := wrong.load(t.Context(), a.ID, source.tips[a.ID]); err == nil {
 		t.Fatal("accepted wrong captured kind")
 	}
 }
@@ -178,11 +180,11 @@ func TestQueryMetadataSourcePreservesPartialFolds(t *testing.T) {
 	}
 	var first queryMetadata
 	for i := range 2 {
-		row, err := source.load(t.Context(), a.ID, partial)
+		row, publication, err := source.load(t.Context(), a.ID, partial)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if row.SkippedOps != 1 || row.Tip != partial || row.ID != a.ID {
+		if row.SkippedOps != 1 || row.Tip != partial || row.ID != a.ID || publication != nil {
 			t.Fatalf("partial row = %+v", row)
 		}
 		if i == 0 {

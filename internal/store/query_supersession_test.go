@@ -108,6 +108,7 @@ func TestIndexedSupersessionAvoidsUnchangedCorpusBodies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = fresh.Close() })
 			if incoming, heads, hit, err := fresh.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || incoming != nil || !slices.Equal(heads, []model.EntityID{b}) {
 				t.Fatalf("unchanged with unreadable bodies = %v %v %v %v", incoming, heads, hit, err)
 			}

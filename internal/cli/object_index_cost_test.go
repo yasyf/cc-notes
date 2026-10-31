@@ -67,7 +67,7 @@ func TestPackedObjectIndexFreshCLICost(t *testing.T) {
 			}
 			gittest.Git(t, dir, "repack", "-adq")
 			gittest.Git(t, dir, "multi-pack-index", "write")
-			if err := os.RemoveAll(filepath.Join(gitDir, "cc-notes", "folds-v2")); err != nil {
+			if err := os.RemoveAll(filepath.Join(gitDir, "cc-notes", "folds-v4")); err != nil {
 				t.Fatal(err)
 			}
 			home, err := ccnhome.ForRepo(gitDir)

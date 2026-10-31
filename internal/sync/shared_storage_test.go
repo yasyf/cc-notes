@@ -41,6 +41,7 @@ func newBoundSyncFixture(t *testing.T) *boundSyncFixture {
 	if err != nil {
 		t.Fatalf("Open(thin): %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	f.thinStore = s
 	return f
 }
@@ -111,6 +112,7 @@ func TestSyncBoundUsesRecordsRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(source): %v", err)
 	}
+	t.Cleanup(func() { _ = src.Close() })
 	for name, s := range map[string]*store.Store{"source": src, "thin": f.thinStore} {
 		notes, err := s.ListNotes(ctx, false, false)
 		if err != nil {
@@ -202,6 +204,7 @@ func TestSyncBoundResolvesRelativeRemoteFromSource(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Open(checkout): %v", err)
 			}
+			t.Cleanup(func() { _ = s.Close() })
 			note := createNote(t, s, "routed through the source")
 			ref := refs.For(model.KindNote, note.ID)
 

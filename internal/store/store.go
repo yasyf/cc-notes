@@ -143,7 +143,9 @@ type Store struct {
 	policy           *policyMemo
 	pins             map[string]model.SHA
 	// storage is the context's binding record; Pinned views share it.
-	storage *storageBinding
+	storage  *storageBinding
+	lease    *storeLease
+	borrowed bool
 }
 
 type rootMemo struct {
@@ -237,6 +239,8 @@ func (s *Store) Pinned(tips map[string]model.SHA) *Store {
 		policy:           s.policy,
 		pins:             tips,
 		storage:          s.storage,
+		lease:            s.lease,
+		borrowed:         true,
 	}
 }
 

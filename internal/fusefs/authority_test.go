@@ -275,6 +275,7 @@ func authorityStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = source.Close() })
 	return source
 }
 

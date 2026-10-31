@@ -255,6 +255,7 @@ func TestBind(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Open after Bind: %v", err)
 			}
+			t.Cleanup(func() { _ = s.Close() })
 			if s.RecordsCommonDir() != wantCommon {
 				t.Fatalf("Open after Bind: RecordsCommonDir = %q, want %q", s.RecordsCommonDir(), wantCommon)
 			}

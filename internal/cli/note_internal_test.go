@@ -97,6 +97,7 @@ func TestShowUsesNotesVerdict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("notes.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	ctx := t.Context()
 	onOld := notes.AnchorSpec{Commits: []string{old}}
 	unknownNote, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: "old commit", Body: "b", Anchors: onOld})
@@ -310,6 +311,7 @@ func TestWitnessReadsBoundContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	ctx := t.Context()
 
 	head, err := resolveHead(ctx, s)

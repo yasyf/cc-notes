@@ -14,6 +14,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/fold"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -26,7 +27,10 @@ func main() {
 		root.Use = "ccn"
 	}
 
-	if err := root.ExecuteContext(ctx); err != nil {
+	ctx, scope := store.WithScope(ctx)
+	err := root.ExecuteContext(ctx)
+	_ = scope.Close()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s\n", cli.Label(err), cli.Message(err))
 		if hint := cli.Hint(err); hint != "" {
 			fmt.Fprintln(os.Stderr, hint)

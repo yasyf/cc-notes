@@ -78,7 +78,15 @@ func taskDedupeFreshCLIWork(t *testing.T) []map[string]int {
 			mustBin(t, dir, actorA, "task", "list", "--all", "--label", "target")
 			warm := tracedTaskCreate(t, dir, "warm probe")
 			warmCounts = append(warmCounts, warm)
-			t.Logf("unrelated=%d cold=%v warm=%v", count, cold, warm)
+			listed, fullList, listElapsed := tracedTaskCLI(t, dir, "task", "list", "--all", "--all-branches")
+			if rows := strings.Count(listed, "\n"); rows != count+3 {
+				t.Fatalf("full task list returned %d rows, want %d", rows, count+3)
+			}
+			t.Logf("unrelated=%d cold=%v warm=%v full_list=%v full_list_ms=%.3f", count, cold, warm, fullList, float64(listElapsed)/float64(time.Millisecond))
+			fullListOpens := fullList["open"] + fullList["openat"]
+			if fullListOpens > count+515 || fullList["fsync"] > 8 || fullList["fdatasync"] > 8 || fullList["pwrite64"] > 64 {
+				t.Errorf("full task list added per-hit cache opens or writes: %v", fullList)
+			}
 			if cold["read"] <= count {
 				t.Fatalf("cold population did not account for %d fixture histories: %v", count, cold)
 			}
@@ -89,20 +97,33 @@ func taskDedupeFreshCLIWork(t *testing.T) []map[string]int {
 
 func tracedTaskCreate(t *testing.T, dir, title string) map[string]int {
 	t.Helper()
+	out, counts, elapsed := tracedTaskCLI(t, dir, "task", "add", title, "--backlog", "--label", "target", "--no-validation-criteria")
+	if !strings.Contains(out, "\topen\tP2\t-\t"+title+"\n") {
+		t.Fatalf("fresh CLI task create output: %q", out)
+	}
+	t.Logf("create=%q elapsed_ms=%.3f counters=%v", title, float64(elapsed)/float64(time.Millisecond), counts)
+	return counts
+}
+
+func tracedTaskCLI(t *testing.T, dir string, args ...string) (string, map[string]int, time.Duration) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), binTimeout)
 	defer cancel()
 	report := filepath.Join(t.TempDir(), "syscalls.txt")
-	cmd := exec.CommandContext(ctx, "strace", "-f", "-qq", "-c", "-o", report, "-e", "trace=read,openat,newfstatat,getdents64", cli.TestBinary,
-		"task", "add", title, "--backlog", "--label", "target", "--no-validation-criteria")
+	syscalls := []string{"read", "pread64", "write", "pwrite64", "open", "openat", "fstat", "newfstatat", "getdents64", "fsync", "fdatasync", "close"}
+	argv := append([]string{"-f", "-qq", "-c", "-o", report, "-e", "trace=" + strings.Join(syscalls, ","), cli.TestBinary}, args...)
+	cmd := exec.CommandContext(ctx, "strace", argv...)
 	cmd.Dir = dir
 	cmd.Env = binEnv(actorA)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	started := time.Now()
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("fresh CLI task create: %v; stdout %q; stderr %q", err, stdout.String(), stderr.String())
+		t.Fatalf("fresh CLI %v: %v; stdout %q; stderr %q", args, err, stdout.String(), stderr.String())
 	}
-	if stderr.Len() != 0 || !strings.Contains(stdout.String(), "\topen\tP2\t-\t"+title+"\n") {
-		t.Fatalf("fresh CLI output: stdout %q; stderr %q", stdout.String(), stderr.String())
+	elapsed := time.Since(started)
+	if stderr.Len() != 0 {
+		t.Fatalf("fresh CLI %v stderr: %q", args, stderr.String())
 	}
 	data, err := os.ReadFile(report)
 	if err != nil {
@@ -111,7 +132,7 @@ func tracedTaskCreate(t *testing.T, dir, title string) map[string]int {
 	counts := make(map[string]int)
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 5 || !slices.Contains([]string{"read", "openat", "newfstatat", "getdents64"}, fields[len(fields)-1]) {
+		if len(fields) < 5 || !slices.Contains(syscalls, fields[len(fields)-1]) {
 			continue
 		}
 		calls, err := strconv.Atoi(fields[3])
@@ -123,5 +144,5 @@ func tracedTaskCreate(t *testing.T, dir, title string) map[string]int {
 	if counts["read"] == 0 || counts["openat"] == 0 {
 		t.Fatalf("missing syscall counters: %s", data)
 	}
-	return counts
+	return stdout.String(), counts, elapsed
 }
