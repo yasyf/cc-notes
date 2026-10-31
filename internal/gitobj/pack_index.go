@@ -25,7 +25,11 @@ import (
 	"github.com/yasyf/cc-notes/internal/ccnhome"
 )
 
-const indexBusyWait = 25 * time.Millisecond
+const (
+	indexBusyWait       = 25 * time.Millisecond
+	indexCheckpointWait = 5 * time.Second
+	indexWALLimit       = 64 << 20
+)
 
 type packIdentity struct {
 	hash  plumbing.Hash
@@ -33,9 +37,10 @@ type packIdentity struct {
 }
 
 type packIndex struct {
-	dir   *dotgit.DotGit
-	path  string
-	ready bool
+	dir      *dotgit.DotGit
+	path     string
+	walLimit int64
+	ready    bool
 }
 
 const packIndexSchema = `CREATE TABLE IF NOT EXISTS packs (hash BLOB PRIMARY KEY, stamp BLOB NOT NULL, count INTEGER NOT NULL) WITHOUT ROWID;
@@ -51,7 +56,7 @@ func newPackIndex(dir *dotgit.DotGit, commonDir string) (*packIndex, error) {
 		return nil, err
 	}
 	dir = dotgit.NewWithOptions(dir.Fs(), dotgit.Options{AlternatesFS: osfs.New(string(filepath.Separator))})
-	return &packIndex{dir: dir, path: filepath.Join(repo.Dir, "objects-v2.sqlite")}, nil
+	return &packIndex{dir: dir, path: filepath.Join(repo.Dir, "objects-v2.sqlite"), walLimit: indexWALLimit}, nil
 }
 
 func (p *packIndex) identities(ctx context.Context) ([]packIdentity, error) {
@@ -120,6 +125,9 @@ func (p *packIndex) open(ctx context.Context, readOnly bool) (*sql.DB, error) {
 	query.Set("_txlock", lock)
 	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", indexBusyWait.Milliseconds()))
 	query.Add("_pragma", "foreign_keys(ON)")
+	if !readOnly {
+		query.Add("_pragma", fmt.Sprintf("journal_size_limit(%d)", p.walLimit))
+	}
 	location.RawQuery = query.Encode()
 	db, err := sql.Open("sqlite", location.String())
 	if err != nil {
@@ -212,7 +220,115 @@ func enterIndexWAL(ctx context.Context, db *sql.DB) error {
 	}
 }
 
-func (p *packIndex) reconcile(ctx context.Context, db *sql.DB) (resultErr error) {
+func (p *packIndex) reconcile(ctx context.Context, db *sql.DB) error {
+	var identities []packIdentity
+	var indexed map[plumbing.Hash][]byte
+	current := false
+	err := p.write(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		identities, err = p.identities(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, packIndexSchema); err != nil {
+			return err
+		}
+		var generation []byte
+		err = tx.QueryRowContext(ctx, "SELECT value FROM metadata WHERE key = 'generation'").Scan(&generation)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		current = bytes.Equal(generation, packGeneration(identities))
+		indexed, err = indexedPacks(ctx, tx)
+		return err
+	})
+	if err != nil || current {
+		return err
+	}
+	wanted := make(map[plumbing.Hash]bool, len(identities))
+	for _, identity := range identities {
+		wanted[identity.hash] = true
+		if bytes.Equal(indexed[identity.hash], identity.stamp) {
+			continue
+		}
+		err := p.write(ctx, db, func(tx *sql.Tx) error {
+			var stamp []byte
+			err := tx.QueryRowContext(ctx, "SELECT stamp FROM packs WHERE hash = ?", identity.hash[:]).Scan(&stamp)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if bytes.Equal(stamp, identity.stamp) {
+				return nil
+			}
+			if _, err := tx.ExecContext(ctx, "DELETE FROM packs WHERE hash = ?", identity.hash[:]); err != nil {
+				return err
+			}
+			return p.add(ctx, tx, identity)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	for hash := range indexed {
+		if wanted[hash] {
+			continue
+		}
+		err := p.write(ctx, db, func(tx *sql.Tx) error {
+			if _, err := p.identity(hash); !errors.Is(err, dotgit.ErrPackfileNotFound) {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, "DELETE FROM packs WHERE hash = ?", hash[:])
+			return err
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return p.write(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, packIndexLookupSchema); err != nil {
+			return err
+		}
+		indexed, err := indexedPacks(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, identity := range identities {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			stamp, err := p.identity(identity.hash)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(stamp, identity.stamp) || !bytes.Equal(indexed[identity.hash], identity.stamp) {
+				return errors.New("pack generation changed while indexing")
+			}
+		}
+		_, err = tx.ExecContext(ctx, "INSERT INTO metadata(key, value) VALUES('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", packGeneration(identities))
+		return err
+	})
+}
+
+func indexedPacks(ctx context.Context, tx *sql.Tx) (map[plumbing.Hash][]byte, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT hash, stamp FROM packs")
+	if err != nil {
+		return nil, err
+	}
+	indexed := make(map[plumbing.Hash][]byte)
+	for rows.Next() {
+		var raw, stamp []byte
+		if err := rows.Scan(&raw, &stamp); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		if len(raw) != len(plumbing.Hash{}) {
+			return nil, errors.Join(errors.New("invalid indexed pack hash"), rows.Close())
+		}
+		indexed[plumbing.Hash(raw)] = stamp
+	}
+	return indexed, errors.Join(rows.Err(), rows.Close())
+}
+
+func (p *packIndex) write(ctx context.Context, db *sql.DB, apply func(*sql.Tx) error) (resultErr error) {
 	tx, err := beginIndexWrite(ctx, db)
 	if err != nil {
 		return err
@@ -222,87 +338,30 @@ func (p *packIndex) reconcile(ctx context.Context, db *sql.DB) (resultErr error)
 			resultErr = errors.Join(resultErr, err)
 		}
 	}()
-	identities, err := p.identities(ctx)
+	if err := apply(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return p.boundWAL(ctx, db)
+}
+
+func (p *packIndex) boundWAL(ctx context.Context, db *sql.DB) error {
+	info, err := os.Stat(p.path + "-wal")
+	if err != nil || info.Size() < p.walLimit {
+		return err
+	}
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, packIndexSchema); err != nil {
-		return err
+	_, err = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", indexCheckpointWait.Milliseconds()))
+	if err == nil {
+		_, err = conn.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 	}
-	var generation []byte
-	err = tx.QueryRowContext(ctx, "SELECT value FROM metadata WHERE key = 'generation'").Scan(&generation)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if bytes.Equal(generation, packGeneration(identities)) {
-		return nil
-	}
-	wanted := make(map[plumbing.Hash]bool, len(identities))
-	for _, identity := range identities {
-		wanted[identity.hash] = true
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT hash FROM packs")
-	if err != nil {
-		return err
-	}
-	var removed [][]byte
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return errors.Join(err, rows.Close())
-		}
-		if len(raw) != len(plumbing.Hash{}) {
-			return errors.Join(errors.New("invalid indexed pack hash"), rows.Close())
-		}
-		var hash plumbing.Hash
-		copy(hash[:], raw)
-		if !wanted[hash] {
-			removed = append(removed, bytes.Clone(raw))
-		}
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
-	}
-	for _, hash := range removed {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM packs WHERE hash = ?", hash); err != nil {
-			return err
-		}
-	}
-	for _, identity := range identities {
-		var stamp []byte
-		err := tx.QueryRowContext(ctx, "SELECT stamp FROM packs WHERE hash = ?", identity.hash[:]).Scan(&stamp)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if bytes.Equal(stamp, identity.stamp) {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, "DELETE FROM packs WHERE hash = ?", identity.hash[:]); err != nil {
-			return err
-		}
-		if err := p.add(ctx, tx, identity); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, packIndexLookupSchema); err != nil {
-		return err
-	}
-	for _, identity := range identities {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		stamp, err := p.identity(identity.hash)
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(stamp, identity.stamp) {
-			return errors.New("pack generation changed while indexing")
-		}
-	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO metadata(key, value) VALUES('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", packGeneration(identities)); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, restoreErr := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", indexBusyWait.Milliseconds()))
+	return errors.Join(err, restoreErr, conn.Close())
 }
 
 func beginIndexWrite(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
