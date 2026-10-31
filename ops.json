@@ -1,1 +1,1 @@
-{"v":1,"lamport":5,"ops":[{"kind":"renew"}]}
+{"v":1,"lamport":6,"ops":[{"kind":"set_criterion_status","id":"aaf54b750297189ef0f676fd06b7be81","status":"met","note":"Actualold0c/provider actualhandlerCI externalresolve failsbothN32/10000 preserved FE/lr-current-annotation-freshness-red-proof.json/raw. Cachedkindholdhistory excludesresolvinglift; consumerinventory/currentquery RootA traced."}]}
