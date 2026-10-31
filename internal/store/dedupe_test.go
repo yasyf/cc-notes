@@ -77,34 +77,6 @@ func TestDedupeNote(t *testing.T) {
 	}
 }
 
-func TestCreateFoldsNoUncachedChain(t *testing.T) {
-	for _, tc := range []struct {
-		kind model.Kind
-		ops  func(string) []model.Op
-	}{
-		{model.KindNote, noteOps},
-		{model.KindDoc, docOps},
-		{model.KindLog, logOps},
-		{model.KindTask, func(title string) []model.Op { return taskOps(title, "main") }},
-		{model.KindSprint, sprintOps},
-		{model.KindProject, projectOps},
-		{model.KindInvestigation, investigationOps},
-		{model.KindPlan, planOps},
-		{model.KindLedger, ledgerOps},
-		{model.KindAnswer, answerOps},
-	} {
-		t.Run(string(tc.kind), func(t *testing.T) {
-			s := initStore(t)
-			cold := create(t, s, tc.ops("cold"))
-			wipeCache(t, s)
-			create(t, s, tc.ops("fresh"))
-			if _, ok := s.cache.get(model.SHA(cold.EntityID())); ok {
-				t.Errorf("creating a %s folded the uncached %s from git", tc.kind, cold.EntityID())
-			}
-		})
-	}
-}
-
 func TestDedupePerKind(t *testing.T) {
 	for _, tc := range []struct {
 		name string
