@@ -95,6 +95,7 @@ jobs:
           go version -m "$CCN_LEGACY_BASELINE_CLI"
           sha256sum "$CCN_LEGACY_BASELINE_CLI"
           echo "CCN_PRODUCTIONLIKE_CLI=$ccn_candidate_cli" >> "$GITHUB_ENV"
+          echo "CCN_CACHE_HIT_TRACE_DIR=$RUNNER_TEMP/ccn-cache-hit-traces" >> "$GITHUB_ENV"
       - name: Original payload metadata full-list and fair legacy comparison
         if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
         run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)|TestTaskIOBytes(TraceAccounting|PathPartition|KernelFilter))$' ./internal/cli
@@ -103,7 +104,14 @@ jobs:
         run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupeColdCLIBytes|TestTaskCacheUntracedColdPoint)$' ./internal/cli
       - name: Fresh CLI cache-hit trace calibration
         if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskCache(HitTraceAccounting|HitLowerBoundCalibration)$' ./internal/cli
+        run: ./scripts/test.sh -count=1 -v -run '^TestTaskCache(HitTraceAccounting|HitLowerBoundCalibration|ResultBoundaryAccounting)$' ./internal/cli
+      - name: Retain complete cache-hit operation and exit-tail traces
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: cache-hit-operation-traces
+          path: ${{ runner.temp }}/ccn-cache-hit-traces
+          if-no-files-found: error
       - name: Query mutation work accounting
         if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
         run: ./scripts/test.sh -count=1 -v -run '^(TestTaskQueryIndexConsecutiveWork|TestQueryMutationWorkContextCallsites)$' ./internal/store

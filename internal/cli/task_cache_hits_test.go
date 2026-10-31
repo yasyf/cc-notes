@@ -68,7 +68,7 @@ func parseTaskCacheLookups(r io.Reader, roots map[string]bool) (map[string]bool,
 			return errors.New("empty open result")
 		}
 		if len(fields) <= 1 || fields[0] != "?" || fields[1] != "ERESTARTSYS" {
-			if _, err := strconv.ParseInt(fields[0], 10, 64); err != nil {
+			if _, err := taskTraceFDResult(result); err != nil {
 				return fmt.Errorf("unknown open result: %w", err)
 			}
 		}
@@ -161,22 +161,51 @@ func tracedTaskCacheLookups(t *testing.T, dir, binary string, roots map[string]b
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), binTimeout)
 	defer cancel()
-	report := filepath.Join(t.TempDir(), "cache-open-attempts.txt")
-	args := []string{"-f", "--seccomp-bpf", "-qq", "-s", "4096", "-o", report, "-e", "trace=open,openat,openat2", binary, "task", "list", "--all", "--all-branches"}
+	reportRoot := os.Getenv("CCN_CACHE_HIT_TRACE_DIR")
+	if reportRoot == "" {
+		t.Fatal("cache-hit trace artifact directory is required")
+	}
+	if err := os.MkdirAll(reportRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reportDir, err := os.MkdirTemp(reportRoot, "cache-hit-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(reportDir, "cache-open-attempts.txt")
+	if err := os.WriteFile(report, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outputPath := filepath.Join(reportDir, "task-list-output.txt")
+	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-f", "--seccomp-bpf", "-qq", "-y", "-s", "4096", "-o", report, "-e", "trace=open,openat,openat2,write", binary, "task", "list", "--all", "--all-branches"}
 	cmd := exec.CommandContext(ctx, "strace", args...)
 	cmd.Dir = dir
 	cmd.Env = binEnv(actorA)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = output, &stderr
 	started := time.Now()
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("cache-hit list: %v; stderr %q", err, stderr.String())
-	}
+	runErr := cmd.Run()
 	elapsed := time.Since(started)
+	outputCloseErr := output.Close()
+	if runErr != nil || outputCloseErr != nil {
+		t.Fatalf("cache-hit list: %v; output close: %v; stderr %q", runErr, outputCloseErr, stderr.String())
+	}
 	if stderr.Len() != 0 {
 		t.Fatalf("cache-hit list stderr %q", stderr.String())
 	}
-	validateTaskCacheList(t, stdout.String(), roots, extraTitle)
+	outputInfo, err := os.Stat(outputPath)
+	if err != nil || !outputInfo.Mode().IsRegular() || outputInfo.Size() > 64<<20 {
+		t.Fatalf("private output is unreadable, non-regular or exceeds64MiB: info=%v stat=%v", outputInfo, err)
+	}
+	stdout, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validateTaskCacheList(t, string(stdout), roots, extraTitle)
 	f, err := os.Open(report)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +215,18 @@ func tracedTaskCacheLookups(t *testing.T, dir, binary string, roots map[string]b
 		closeErr := f.Close()
 		t.Fatalf("open trace is unreadable or exceeds64MiB: info=%v stat=%v close=%v", info, err, closeErr)
 	}
-	lookedUp, err := parseTaskCacheLookups(f, roots)
+	operation, tail, tailUnknown, tailPending, err := taskListResultTrace(f, outputPath, roots)
+	if err == nil {
+		err = os.WriteFile(filepath.Join(reportDir, "cache-open-attempts-tail.txt"), tail, 0o600)
+	}
+	if err == nil {
+		err = os.WriteFile(filepath.Join(reportDir, "cache-source-operation-opens.txt"), operation, 0o600)
+	}
+	var lookedUp map[string]bool
+	if err == nil {
+		lookedUp, err = parseTaskCacheLookups(bytes.NewReader(operation), roots)
+	}
+	t.Logf("root_operation_boundary=first_successful_exact_stdout_file_write tail_bytes=%d tail_unknown_frames=%d tail_pending_calls=%d full_trace=%q", len(tail), tailUnknown, tailPending, report)
 	if err != nil {
 		logTaskByteTraceFailure(t, f)
 	}
