@@ -23,6 +23,26 @@ jobs:
       - name: Fresh-process cache cost and crash contracts
         run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader|TestCacheHint)' ./internal/store
 
+  release-monotonic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Verify standard release version ordering
+        run: ./scripts/test.sh -race -count=1 ./scripts/release-version
+      - name: Build the release version comparator
+        run: go build -o "$RUNNER_TEMP/release-version" ./scripts/release-version
+      - name: Verify real Git publication races and latest promotion policy
+        run: |
+          set -euo pipefail
+          ruby -ryaml -rjson -e 'workflow = YAML.load_file(ARGV[0]); job = workflow.fetch("jobs").fetch("sync-plugin-version"); File.write(ARGV[1], job.fetch("steps").find { |step| step["name"] == "Sync plugin.json version to the released tag" }.fetch("run")); File.write(ARGV[2], JSON.generate(workflow))' \
+            .github/workflows/release.yml "$RUNNER_TEMP/sync-plugin.sh" "$RUNNER_TEMP/release-workflow.json"
+          SYNC_PLUGIN_SCRIPT="$RUNNER_TEMP/sync-plugin.sh" \
+          RELEASE_WORKFLOW_JSON="$RUNNER_TEMP/release-workflow.json" \
+          RELEASE_VERSION_COMPARE="$RUNNER_TEMP/release-version" \
+            python3 scripts/test_release_monotonic.py
+
+
   task-dedupe-cost:
     runs-on: ubuntu-latest
     steps:
@@ -55,7 +75,7 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v -run '^TestReferencedAttachmentsPackedRefPasses$' ./internal/store
 
   test:
-    runs-on: macos-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'macos-latest' }}
     steps:
       - uses: actions/checkout@v7
 
