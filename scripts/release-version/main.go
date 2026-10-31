@@ -1,3 +1,4 @@
+// Command release-version validates and compares semantic release versions.
 package main
 
 import (
