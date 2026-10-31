@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"host-pressure/portable-signature-finalizer-20261026"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"82f2bb2d2071bda88f2b7795ba922ebd","status":"met","note":"IndependentSynckit source/designPASSbc9f1cb3 exactcf455/2e2f/ff28; all63insertions/inversewholebasePASS, fixedartifact/head/digest/fullSUCCESS guard and no-rebuild manualMac path. Localcommit3b4e bound204144. ActualpackCI/canonicalpush pendingwhole-sourceSUCCESS; no sourcegate bypass from privateinstall exception."}]}
