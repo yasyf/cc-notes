@@ -1,0 +1,40 @@
+name: Dense cache final focused macOS grades
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dense-final-mac-focused-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Corrected cold rebuild and remaining macOS builds
+    if: github.head_ref == 'test/dense-final-mac-focused'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: ./.github/actions/setup
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Test (race, via the process-cap harness)
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(FoldCacheRebuildAfterDelete|WipeCacheDropsOpenInlineEntry|Append)' ./internal/store
+
+      - name: Build (default, pure Go)
+        run: go build ./...
+
+      - name: Cross-compile smoke (linux/amd64)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/cc-notes_linux_amd64 ./cmd/cc-notes
+
+      - name: Cross-compile smoke (darwin/arm64)
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/cc-notes_darwin_arm64 ./cmd/cc-notes
+
