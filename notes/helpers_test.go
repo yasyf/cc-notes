@@ -22,7 +22,19 @@ func newWBClient(t *testing.T) (*Client, string) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	return c, dir
+}
+
+func clearClientCache(t *testing.T, c *Client, subdir string) {
+	t.Helper()
+	root := filepath.Join(c.s.CommonDir(), "cc-notes", subdir)
+	if err := os.Truncate(filepath.Join(root, "values.bin"), 0); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestResolveCommits(t *testing.T) {

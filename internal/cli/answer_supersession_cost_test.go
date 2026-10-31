@@ -81,7 +81,7 @@ func TestAnswerShowFreshCLICost(t *testing.T) {
 					t.Fatalf("prime selected answer = %q, %v", out, err)
 				}
 			}
-			if err := os.RemoveAll(filepath.Join(gitDir, "cc-notes", "folds-v2")); err != nil {
+			if err := os.RemoveAll(filepath.Join(gitDir, "cc-notes", "folds-v4")); err != nil {
 				t.Fatal(err)
 			}
 			out, counts, elapsed := tracedPackedCLI(t, dir, "answer", "show", string(ids[0]), "--json")

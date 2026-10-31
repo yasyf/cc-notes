@@ -32,6 +32,7 @@ func TestReconcileBoundMovesRecordsByCheckoutAncestry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", thin, err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 
 	branchFrom(t, thin, "feature/x")
 	merged := createTask(t, s, "merged in the clone", "feature/x")

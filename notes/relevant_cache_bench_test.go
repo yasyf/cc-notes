@@ -70,6 +70,7 @@ func benchWarmHit(b *testing.B, n, relevant int, layout warmLayout, detached boo
 	if err != nil {
 		b.Fatalf("Open: %v", err)
 	}
+	b.Cleanup(func() { _ = c.Close() })
 	var renders int
 	render := func(entries []notes.RelevantEntry) ([]byte, error) {
 		renders++

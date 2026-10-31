@@ -28,13 +28,12 @@ func TestSupersessionUsesIndexedEdgesWithoutCorpusBodies(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v2")); err != nil {
-				t.Fatal(err)
-			}
+			clearClientCache(t, c, "folds-v5")
 			fresh, err := Open(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = fresh.Close() })
 			assertSupersessionPair(t, fresh, kind, a, b)
 			switch kind {
 			case model.KindDoc:

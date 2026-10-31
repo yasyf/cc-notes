@@ -44,13 +44,12 @@ func TestLabeledListsReadOnlySelectedBodies(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes", "folds-v2")); err != nil {
-				t.Fatal(err)
-			}
+			clearClientCache(t, c, "folds-v5")
 			fresh, err := Open(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = fresh.Close() })
 			var reads atomic.Int64
 			fresh.s.Repo.BackfillWith(func(ctx context.Context, tip model.SHA) error {
 				if err := ctx.Err(); err != nil {

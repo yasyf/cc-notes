@@ -48,6 +48,7 @@ func clone(t *testing.T, bare, name, email string) *store.Store {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -1040,6 +1041,7 @@ func bloblessClone(t *testing.T, refspec string) (*store.Store, model.Note) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", thin, err)
 	}
+	t.Cleanup(func() { _ = b.Close() })
 	return b, note
 }
 
@@ -1086,6 +1088,7 @@ func TestSyncDefersARefWhoseObjectsTheRemoteWithholds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", thin, err)
 	}
+	t.Cleanup(func() { _ = b.Close() })
 	mine := createNote(t, b, "bob's note")
 
 	report, err := ccsync.Sync(t.Context(), b, "origin", false)
@@ -1190,6 +1193,7 @@ func TestSyncNoRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	_, err = ccsync.Sync(t.Context(), s, "origin", false)
 	if !errors.Is(err, ccsync.ErrRemoteNotFound) {
 		t.Fatalf("Sync without remote: got %v, want ErrRemoteNotFound", err)

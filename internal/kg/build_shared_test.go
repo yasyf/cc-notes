@@ -37,6 +37,7 @@ func (f *sharedFixture) openThin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open thin store: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	f.thin.store = s
 }
 

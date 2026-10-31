@@ -290,6 +290,7 @@ func assertMatchesFreshOpen(t *testing.T, dir string, retained *Store) {
 	if err != nil {
 		t.Fatalf("OpenContext(%s): %v", dir, err)
 	}
+	t.Cleanup(func() { _ = fresh.Close() })
 	head, err := fresh.ContextRepo.Tip(ctx, "HEAD")
 	if err != nil {
 		t.Fatalf("fresh HEAD: %v", err)
