@@ -18,6 +18,7 @@ func nativeReferenceCounter(name string) (uint32, bool, error) {
 	}
 	attributes := unix.Attrlist{Bitmapcount: 5, Commonattr: unix.ATTR_CMN_RETURNED_ATTRS | unix.ATTR_CMN_GEN_COUNT}
 	var data [28]byte
+	//nolint:gosec // G103: getattrlist uses fixed masks and a 28-byte returned-attribute buffer through the Darwin syscall ABI.
 	_, _, errno := syscall.Syscall6(unix.SYS_GETATTRLIST, uintptr(unsafe.Pointer(path)), uintptr(unsafe.Pointer(&attributes)), uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)), unix.FSOPT_ATTR_CMN_EXTENDED|unix.FSOPT_PACK_INVAL_ATTRS, 0)
 	runtime.KeepAlive(path)
 	runtime.KeepAlive(attributes)
