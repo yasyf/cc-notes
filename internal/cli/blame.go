@@ -44,7 +44,7 @@ func newBlameCmd() *cobra.Command {
 
 func printBlame(cmd *cobra.Command, c *notes.Client, tasks []model.Task, invs []model.Investigation, jsonOut bool) error {
 	if jsonOut {
-		blocks, err := c.TasksBlockingIndex(cmd.Context())
+		blocks, err := c.TasksBlockingFor(cmd.Context(), taskIDs(tasks))
 		if err != nil {
 			return err
 		}

@@ -39,6 +39,24 @@ func (c *Client) TasksBlockingIndex(ctx context.Context) (map[model.EntityID][]m
 	return blockingIndex(tasks), nil
 }
 
+// TasksBlockingFor returns sorted live reverse dependencies for the supplied task IDs.
+// Dependents are selected across all labels, branches, and statuses.
+func (c *Client) TasksBlockingFor(ctx context.Context, ids []model.EntityID) (map[model.EntityID][]model.EntityID, error) {
+	if blocks, hit, err := c.s.IndexedTasksBlockingFor(ctx, ids); err != nil || hit {
+		return blocks, err
+	}
+	tasks, err := c.s.ListTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	all := blockingIndex(tasks)
+	blocks := make(map[model.EntityID][]model.EntityID, len(ids))
+	for _, id := range ids {
+		blocks[id] = all[id]
+	}
+	return blocks, nil
+}
+
 func blockingIndex(tasks []model.Task) map[model.EntityID][]model.EntityID {
 	index := make(map[model.EntityID][]model.EntityID)
 	for _, t := range tasks {
