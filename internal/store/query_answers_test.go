@@ -167,7 +167,11 @@ func TestIndexedAnswersCancellationAndUnavailableCache(t *testing.T) {
 	if got, hit, err := s.IndexedAnswers(ctx, []string{"target"}, ListOpts{}); got != nil || hit || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled = %v %v %v", got, hit, err)
 	}
-	if err := os.WriteFile(filepath.Join(s.recordsCommonDir, "cc-notes-query"), []byte("unavailable"), 0o600); err != nil {
+	cachePath := filepath.Join(s.recordsCommonDir, "cc-notes-query")
+	if err := os.RemoveAll(cachePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, []byte("unavailable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, hit, err := s.IndexedAnswers(t.Context(), []string{"target"}, ListOpts{}); got != nil || hit || err != nil {

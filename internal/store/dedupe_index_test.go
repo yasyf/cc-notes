@@ -131,7 +131,7 @@ func TestIndexedDuplicatePostingLifecycle(t *testing.T) {
 
 func TestIndexedDuplicateSurvivorOrderCollisionAndPins(t *testing.T) {
 	s := initStore(t)
-	var same []model.Snapshot
+	same := make([]model.Snapshot, 0, 2)
 	for range 2 {
 		value, err := s.CreateExact(t.Context(), noteOps("same"))
 		if err != nil {
@@ -236,7 +236,7 @@ func TestQueryDuplicateSelectedWork(t *testing.T) {
 				t.Skip("filesystem does not qualify recent native generations")
 			}
 			ctx := &queryWorkContext{Context: t.Context()}
-			got := mustDedupeWithContext(t, ctx, s, noteOps("fixture 0"))
+			got := mustDedupeWithContext(ctx, t, s, noteOps("fixture 0"))
 			if got.EntityID() != selected.EntityID() || ctx.checks.Load() > 40 {
 				t.Fatalf("KEYED_DUPLICATE_WORK: count=%d survivor=%s checks=%d", count, got.EntityID(), ctx.checks.Load())
 			}
@@ -245,7 +245,7 @@ func TestQueryDuplicateSelectedWork(t *testing.T) {
 	}
 }
 
-func mustDedupeWithContext(t *testing.T, ctx context.Context, s *Store, ops []model.Op) model.Snapshot {
+func mustDedupeWithContext(ctx context.Context, t *testing.T, s *Store, ops []model.Op) model.Snapshot {
 	t.Helper()
 	_, err := s.Create(ctx, ops)
 	var duplicate *DuplicateError

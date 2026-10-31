@@ -100,7 +100,11 @@ func TestAnswerLabelUnavailableIndexUsesExistingAuthoritativeRead(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(c.s.CommonDir(), "cc-notes-query"), []byte("unavailable"), 0o600); err != nil {
+	cachePath := filepath.Join(c.s.CommonDir(), "cc-notes-query")
+	if err := os.RemoveAll(cachePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, []byte("unavailable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := c.Answers(t.Context(), DocumentFilter{Labels: []string{"target"}})

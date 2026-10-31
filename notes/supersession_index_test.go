@@ -67,7 +67,11 @@ func TestSupersessionCacheMissRetainsAuthoritativeAndPinnedViews(t *testing.T) {
 				pins[refs.For(kind, id)] = tip
 			}
 			pinned := FromStore(c.s.Pinned(pins))
-			if err := os.WriteFile(filepath.Join(c.s.CommonDir(), "cc-notes-query"), []byte("unavailable cache"), 0o600); err != nil {
+			cachePath := filepath.Join(c.s.CommonDir(), "cc-notes-query")
+			if err := os.RemoveAll(cachePath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cachePath, []byte("unavailable cache"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := c.s.Append(t.Context(), refs.For(kind, a), []model.Op{model.DeleteNote{}}); err != nil {
