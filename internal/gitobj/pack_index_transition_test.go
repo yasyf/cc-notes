@@ -1,6 +1,7 @@
 package gitobj
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -8,15 +9,25 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
+
+	"github.com/yasyf/cc-notes/internal/ccnhome"
+	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/model"
 )
 
-func TestInitialPackIndexJournalTransitionHonorsCancellation(t *testing.T) {
-	_, commonDir, hash := indexedCommitFixture(t)
-	index, _ := testPackIndex(t, commonDir)
-	if err := os.MkdirAll(filepath.Dir(index.path), 0o700); err != nil {
+func TestNativePackedReadsIgnoreLegacyIndexWriterAfterRepack(t *testing.T) {
+	dir, commonDir, first := indexedCommitFixture(t)
+	home, err := ccnhome.ForRepo(commonDir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", index.path)
+	if err := os.MkdirAll(home.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home.Dir, "objects-v2.sqlite")
+	db, err := sql.Open("sqlite", path+"?_txlock=immediate")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,36 +36,40 @@ func TestInitialPackIndexJournalTransitionHonorsCancellation(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if _, err := db.ExecContext(t.Context(), "CREATE TABLE initial_reader(value INTEGER)"); err != nil {
+	if _, err := db.ExecContext(t.Context(), "CREATE TABLE retained(value INTEGER)"); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
+	tx, err := db.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
+	defer func() {
 		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 			t.Error(err)
 		}
-	})
-	var count int
-	if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM initial_reader").Scan(&count); err != nil {
+	}()
+	if _, err := tx.ExecContext(t.Context(), "INSERT INTO retained(value) VALUES(1)"); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, dir, "commit", "--allow-empty", "-qm", "second")
+	second := model.SHA(gittest.Git(t, dir, "rev-parse", "HEAD"))
+	gittest.Git(t, dir, "repack", "-adq")
+	gittest.Git(t, dir, "multi-pack-index", "write")
+	repo := openPackedRepo(t, dir)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	if err := index.prepare(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("initial journal transition beside a live reader = %v, want caller deadline", err)
+	started := time.Now()
+	verdict, err := repo.Ancestry(ctx, model.SHA(first.String()), second)
+	if err != nil || verdict != Ancestor {
+		t.Fatalf("read beside obsolete SQLite writer = %v, %v", verdict, err)
 	}
-	if index.ready {
-		t.Fatal("blocked initial journal transition published a generation")
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("legacy object index changed: %v", err)
 	}
-	if err := tx.Rollback(); err != nil {
-		t.Fatal(err)
-	}
-	fresh, _ := testPackIndex(t, commonDir)
-	if err := fresh.prepare(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	assertIndexedCommit(t, fresh, hash)
+	t.Logf("repacked read beside held legacy writer elapsed=%v; legacy index bytes unchanged=%d", time.Since(started), len(before))
 }

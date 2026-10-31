@@ -1,20 +1,20 @@
 package gitobj
 
 import (
-	"database/sql"
+	"bytes"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/format/idxfile"
-	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
-
 	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/model"
 )
 
 type indexReadFS struct {
@@ -42,17 +42,6 @@ func (f *indexReadFile) Read(data []byte) (int, error) {
 	return n, err
 }
 
-func testPackIndex(t *testing.T, commonDir string) (*packIndex, map[string]int64) {
-	t.Helper()
-	reads := make(map[string]int64)
-	fs := indexReadFS{Filesystem: gitDirFS{osfs.New(commonDir)}, reads: reads}
-	index, err := newPackIndex(dotgit.New(fs), commonDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return index, reads
-}
-
 func indexedCommitFixture(t *testing.T) (string, string, plumbing.Hash) {
 	t.Helper()
 	t.Setenv(ccnhome.Env, t.TempDir())
@@ -64,93 +53,83 @@ func indexedCommitFixture(t *testing.T) (string, string, plumbing.Hash) {
 	return dir, commonDir, hash
 }
 
-func assertIndexedCommit(t *testing.T, index *packIndex, hash plumbing.Hash) {
+type indexInput struct {
+	io.Reader
+	size int64
+}
+
+type indexInputInfo struct {
+	os.FileInfo
+	size int64
+}
+
+func (info indexInputInfo) Size() int64 { return info.size }
+
+func (input indexInput) Stat() (os.FileInfo, error) {
+	return indexInputInfo{size: input.size}, nil
+}
+
+func newIndexInput(file io.ReadSeeker) (indexInput, error) {
+	position, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return indexInput{}, err
+	}
+	size, seekErr := file.Seek(0, io.SeekEnd)
+	_, restoreErr := file.Seek(position, io.SeekStart)
+	if err := errors.Join(seekErr, restoreErr); err != nil {
+		return indexInput{}, err
+	}
+	return indexInput{Reader: file, size: size}, nil
+}
+
+func openPackedRepo(t *testing.T, dir string) *Repo {
 	t.Helper()
-	db, err := index.open(t.Context(), true)
+	gitDir, commonDir := gittest.Dirs(t, dir)
+	repo, err := Open(gitDir, commonDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
+	return repo
+}
+
+func assertNativeCommit(t *testing.T, repo *Repo, hash plumbing.Hash) {
+	t.Helper()
+	sha := model.SHA(hash.String())
+	if verdict, err := repo.Ancestry(t.Context(), sha, sha); err != nil || verdict != Ancestor {
+		t.Fatalf("Ancestry = %v, %v; want Ancestor", verdict, err)
+	}
+}
+
+func TestNativePackedReadLeavesLegacyIndexUntouched(t *testing.T) {
+	dir, commonDir, hash := indexedCommitFixture(t)
+	home, err := ccnhome.ForRepo(commonDir)
 	if err != nil {
-		t.Fatal(errors.Join(err, db.Close()))
-	}
-	err = func() error {
-		_, pack, err := locateIndexedPack(t.Context(), tx, hash)
-		if err != nil {
-			return err
-		}
-		offset, err := pack.FindOffset(hash)
-		if err != nil {
-			return err
-		}
-		got, err := pack.FindHash(offset)
-		if err != nil {
-			return err
-		}
-		if got != hash {
-			t.Errorf("reverse lookup = %s, want %s", got, hash)
-		}
-		return nil
-	}()
-	if err := errors.Join(err, tx.Rollback(), db.Close()); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.MkdirAll(home.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home.Dir, "objects-v2.sqlite")
+	want := []byte("unavailable obsolete index")
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		assertNativeCommit(t, openPackedRepo(t, dir), hash)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(want) {
+		t.Fatalf("legacy index = %q, %v", got, err)
 	}
 }
 
-func TestPackIndexFreshHandleReusesValidatedGeneration(t *testing.T) {
-	_, commonDir, hash := indexedCommitFixture(t)
-	first, reads := testPackIndex(t, commonDir)
-	if err := first.prepare(t.Context()); err != nil {
-		t.Fatal(err)
+func TestNativePackedIndexMutationMatchesTargetedGitLookup(t *testing.T) {
+	dir, common, hash := indexedCommitFixture(t)
+	paths, err := filepath.Glob(filepath.Join(common, packDir, "pack-*.idx"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("indexes=%v, %v", paths, err)
 	}
-	if len(reads) != 1 {
-		t.Fatalf("initial index reads = %v, want exactly one decoded index", reads)
-	}
-	second, reads := testPackIndex(t, commonDir)
-	if err := second.prepare(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	assertIndexedCommit(t, second, hash)
-	if len(reads) != 0 {
-		t.Fatalf("fresh handle read index payloads %v, want zero", reads)
-	}
-}
-
-func TestPackIndexLandingDecodesOnlyTheNewPack(t *testing.T) {
-	dir, commonDir, firstHash := indexedCommitFixture(t)
-	first, oldReads := testPackIndex(t, commonDir)
-	if err := first.prepare(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	gittest.Git(t, dir, "commit", "--allow-empty", "-qm", "second")
-	secondHash := plumbing.NewHash(gittest.Git(t, dir, "rev-parse", "HEAD"))
-	gittest.Git(t, dir, "repack", "-dq")
-	second, reads := testPackIndex(t, commonDir)
-	if err := second.prepare(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if len(reads) != 1 {
-		t.Fatalf("incremental index reads = %v, want exactly one new index", reads)
-	}
-	for path := range reads {
-		if oldReads[path] != 0 {
-			t.Errorf("unchanged index %s decoded again", path)
-		}
-	}
-	assertIndexedCommit(t, second, firstHash)
-	assertIndexedCommit(t, second, secondHash)
-}
-
-func TestPackIndexRejectsCorruptionAndRecoversInPlace(t *testing.T) {
-	_, commonDir, hash := indexedCommitFixture(t)
-	first, reads := testPackIndex(t, commonDir)
-	if err := first.prepare(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	var path string
-	for name := range reads {
-		path = filepath.Join(commonDir, name)
-	}
+	path := paths[0]
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -163,15 +142,30 @@ func TestPackIndexRejectsCorruptionAndRecoversInPlace(t *testing.T) {
 	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	second, _ := testPackIndex(t, commonDir)
-	if err := second.prepare(t.Context()); !errors.Is(err, idxfile.ErrMalformedIdxFile) {
-		t.Fatalf("corrupt index prepare = %v, want checksum failure", err)
+	command := exec.CommandContext(t.Context(), "git", "--no-replace-objects", "--git-dir="+common, "cat-file", "--batch")
+	command.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+	command.Stdin = strings.NewReader(hash.String() + "\n")
+	var output, diagnostic bytes.Buffer
+	command.Stdout, command.Stderr = &output, &diagnostic
+	nativeErr := command.Run()
+	sha := model.SHA(hash.String())
+	verdict, readErr := openPackedRepo(t, dir).Ancestry(t.Context(), sha, sha)
+	switch {
+	case nativeErr != nil || diagnostic.Len() != 0:
+		if readErr == nil || errors.Is(readErr, ErrCommitNotFound) || errors.Is(readErr, plumbing.ErrObjectNotFound) {
+			t.Fatalf("diagnosed native corruption became miss: native=%v %q read=%v", nativeErr, diagnostic.String(), readErr)
+		}
+	case output.String() == hash.String()+" missing\n":
+		if !errors.Is(readErr, ErrCommitNotFound) {
+			t.Fatalf("targeted native miss=%v, want commit-not-found", readErr)
+		}
+	default:
+		if readErr != nil || verdict != Ancestor {
+			t.Fatalf("native target remained readable; read=%v, %v", verdict, readErr)
+		}
 	}
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := second.prepare(t.Context()); err != nil {
-		t.Fatalf("repaired index prepare: %v", err)
-	}
-	assertIndexedCommit(t, second, hash)
+	assertNativeCommit(t, openPackedRepo(t, dir), hash)
 }

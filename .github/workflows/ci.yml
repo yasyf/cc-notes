@@ -28,6 +28,11 @@ jobs:
         run: ./scripts/test.sh -count=1 -v -run '^TestQueryTaskBlockingBatchWork$' ./internal/store
       - name: Query metadata cardinality contracts and work
         run: ./scripts/test.sh -count=1 -v -run '^TestQueryMetadataCardinality' ./internal/store
+      - name: Native packed read ownership and corpus contracts
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(Native|ObjectBatch)' ./internal/gitobj ./internal/gitcmd
+      - name: Fresh CLI packed ledger read beside a legacy object-index writer
+        if: ${{ !cancelled() }}
+        run: ./scripts/test.sh -count=1 -v -run '^TestPackedObjectIndexFreshCLICost$' ./internal/cli
 
   attachment-ref-passes:
     runs-on: ubuntu-latest

@@ -8,6 +8,8 @@
 
 ## Get started
 
+Requires Git 2.45 or newer on `PATH`.
+
 ```bash
 brew install yasyf/tap/cc-notes
 cc-notes package install # macOS: install and activate the signed helper

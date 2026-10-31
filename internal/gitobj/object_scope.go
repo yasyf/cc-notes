@@ -2,99 +2,53 @@ package gitobj
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"slices"
+	"os"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/format/packfile"
+
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 )
 
-type scopedPack struct {
-	hash   plumbing.Hash
-	reader *packfile.Packfile
-}
-
 type objectReadScope struct {
-	ctx              context.Context
-	db               *sql.DB
-	tx               *sql.Tx
-	packs            []scopedPack
-	alternates       []*objectStorage
-	alternatesLoaded bool
+	ctx     context.Context
+	batches []*gitcmd.ObjectBatch
+	refresh bool
+	closed  bool
 }
 
-func (s *objectReadScope) pack(storage *objectStorage, hash plumbing.Hash, index indexedPack) (*packfile.Packfile, error) {
-	for i, pack := range s.packs {
-		if pack.hash == hash {
-			copy(s.packs[1:i+1], s.packs[:i])
-			s.packs[0] = pack
-			return pack.reader, nil
+func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
+	if s.closed {
+		return nil, os.ErrClosed
+	}
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
+	for _, batch := range s.batches {
+		if batch.Idle() {
+			return batch, nil
 		}
 	}
-	if len(s.packs) == openPacks {
-		last := len(s.packs) - 1
-		if err := s.packs[last].reader.Close(); err != nil {
-			return nil, err
-		}
-		s.packs = s.packs[:last]
-	}
-	file, err := storage.index.dir.ObjectPack(hash)
+	batch, err := git.ObjectBatch(s.ctx)
 	if err != nil {
 		return nil, err
 	}
-	reader := packfile.NewPackfileWithCache(index, contextFS{Filesystem: storage.index.dir.Fs(), ctx: s.ctx}, contextFile{File: file, ctx: s.ctx}, storage.objects, 0)
-	s.packs = slices.Insert(s.packs, 0, scopedPack{hash: hash, reader: reader})
-	return reader, nil
+	s.batches = append(s.batches, batch)
+	return batch, nil
 }
 
-func (s *objectReadScope) closeIndex() error {
+func (s *objectReadScope) closeBatches() error {
 	var result error
-	for _, pack := range s.packs {
-		result = errors.Join(result, pack.reader.Close())
+	for _, batch := range s.batches {
+		result = errors.Join(result, batch.Release())
 	}
-	s.packs = nil
-	if s.tx != nil {
-		if err := s.tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			result = errors.Join(result, err)
-		}
-		s.tx = nil
-	}
-	if s.db != nil {
-		result = errors.Join(result, s.db.Close())
-		s.db = nil
-	}
-	return result
-}
-
-func (s *objectReadScope) close() error {
-	result := s.closeIndex()
-	for _, alternate := range s.alternates {
-		result = errors.Join(result, alternate.scope.close())
-	}
+	s.batches = nil
 	return result
 }
 
 type contextFile struct {
 	billy.File
 	ctx context.Context
-}
-
-type contextFS struct {
-	billy.Filesystem
-	ctx context.Context
-}
-
-func (fs contextFS) Open(path string) (billy.File, error) {
-	if err := fs.ctx.Err(); err != nil {
-		return nil, err
-	}
-	file, err := fs.Filesystem.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	return contextFile{File: file, ctx: fs.ctx}, nil
 }
 
 func (f contextFile) Read(data []byte) (int, error) {
