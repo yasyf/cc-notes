@@ -1,1 +1,1 @@
-{"v":1,"lamport":6,"ops":[{"kind":"renew"}]}
+{"v":1,"lamport":7,"ops":[{"kind":"add_comment","body":"Sole Mac CI41194255097 FAILED11:57:36 after58m12s, nottimeout: generated Eden header includes intentionally unmirrored GlobPath.h. Raw416fa242, terminal source diagnosis under W/one-mac-ci-terminal-source-diagnosis.json. Official stock Homebrew2473f5d already uses exactly3 source substitutions preserving Eden support. No artifact/tests/install/handoff reached; observer30974 naturallyexited1; no blindrerun/sourcechange. Root reviewed-choice/peer source scope next."}]}
