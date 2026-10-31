@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -261,7 +262,7 @@ func TestFoldCacheV1NamespaceRebuildsDerivedEntries(t *testing.T) {
 	if !ok {
 		t.Fatal("encode old derived entry")
 	}
-	for _, prior := range []string{"folds", "folds-v1", "folds-v2", "folds-v3"} {
+	for _, prior := range []string{"folds", "folds-v1", "folds-v2", "folds-v3", "folds-v4", "folds-v5"} {
 		oldDir := filepath.Join(common, "cc-notes", prior)
 		if err := os.MkdirAll(oldDir, 0o750); err != nil {
 			t.Fatal(err)
@@ -495,5 +496,24 @@ func TestFoldCacheCorruptEntryIsMiss(t *testing.T) {
 	}
 	if got := loaded.(model.Note).Title; got != "corrupt" {
 		t.Fatalf("Load over corrupt entry: title = %q, want %q", got, "corrupt")
+	}
+}
+
+// TestFoldCacheHoldsTheLiveRefsOfALargeStore pins the cap above the 14,063 live
+// refs one repository held on Oct 31 2026. At the old 16,384 a full listing of a
+// store that size evicted entries it had just written, and the next listing
+// folded them again.
+func TestFoldCacheHoldsTheLiveRefsOfALargeStore(t *testing.T) {
+	const live = 20000
+	c := newFoldCache(t.TempDir(), foldCacheCap)
+	tips := make([]model.SHA, live)
+	for i := range tips {
+		tips[i] = model.SHA(fmt.Sprintf("%040x", i+1))
+		c.put(tips[i], model.Note{ID: model.EntityID(fmt.Sprintf("n%d", i)), Title: "t", Head: tips[i]}, 1, 0)
+	}
+	for _, tip := range []model.SHA{tips[0], tips[live/2], tips[live-1]} {
+		if _, ok := c.get(tip); !ok {
+			t.Fatalf("entry %s was evicted after writing %d live refs", tip, live)
+		}
 	}
 }

@@ -964,7 +964,7 @@ func TestRelevantCachedPersistsAColdBuildInAnUnfoldedRepository(t *testing.T) {
 	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
 		t.Fatalf("CreateNote: %v", err)
 	}
-	clearClientCache(t, c, "folds-v5")
+	clearClientCache(t, c, "folds-v6")
 	clearClientCache(t, c, "relevant-v6")
 	if err := os.RemoveAll(filepath.Join(c.s.CommonDir(), "cc-notes")); err != nil {
 		t.Fatal(err)

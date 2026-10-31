@@ -44,7 +44,7 @@ func TestLabeledListsReadOnlySelectedBodies(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			clearClientCache(t, c, "folds-v5")
+			clearClientCache(t, c, "folds-v6")
 			fresh, err := Open(dir)
 			if err != nil {
 				t.Fatal(err)
