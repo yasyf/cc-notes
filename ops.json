@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"renew"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"006defc740f6e0aef9f711b299b478b8","status":"met","note":"Baseline2ca PR1324 CI41160796441 bothOS PASS: actual mq/Landing holding plus real FileIO; N32→N10000 predicates33→10001, unrelated opens32→10000, unrelated bytes1120→350000, selected1open29B, posts0. FE/mq-incident-baseline2ca-metrics.json. FakeShell feeds, not native SQL/index proof. Provider native indexed/watch backend custody ACKcontract288; implementation/consumer/installation remain open."}]}
