@@ -132,6 +132,10 @@ func taskIOPathClass(fd string) string {
 			switch base {
 			case "index.sqlite", "index.sqlite-wal", "index.sqlite-shm":
 				return cache.class + "_sqlite"
+			case "index.bin":
+				return cache.class + "_hint_metadata"
+			case "values.bin":
+				return cache.class + "_inline_payload"
 			}
 			if base == ".pending" || strings.HasPrefix(base, "slot-") {
 				return cache.class + "_payload"
@@ -270,20 +274,28 @@ func TestTaskIOBytesPathPartition(t *testing.T) {
 101 read(8</tmp/repo/.git/cc-notes/folds-v2/abc>, "o", 3) = 3
 101 read(9</tmp/repo/.git/cc-notes-query/hash.db>, "q", 2) = 2
 101 write(1<pipe:[1]>, "m", 4) = 4
+101 pwrite64(10</tmp/repo/.git/cc-notes/folds-v5/index.bin>, "h", 56, 0) = 56
+101 pwrite64(11</tmp/repo/.git/cc-notes/folds-v5/values.bin>, "i", 512, 1024) = 512
+101 pread64(12</tmp/repo/.git/cc-notes/relevant-v6/index.bin>, "h", 56, 0) = 56
+101 pread64(13</tmp/repo/.git/cc-notes/relevant-v6/values.bin>, "i", 88, 2048) = 88
 `
 	work, err := parseTaskIOBytes(strings.NewReader(trace))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]map[string]int64{
-		"fold_cache_sqlite":       {"pwrite64": 8},
-		"fold_cache_payload":      {"write": 7},
-		"relevance_cache_payload": {"read": 5},
-		"relevance_cache_sqlite":  {"pwrite64": 9},
-		"packed_refs":             {"pread64": 16},
-		"fold_cache_other":        {"read": 3},
-		"query_metadata":          {"read": 2},
-		"other":                   {"write": 4},
+		"fold_cache_sqlite":              {"pwrite64": 8},
+		"fold_cache_payload":             {"write": 7},
+		"relevance_cache_payload":        {"read": 5},
+		"relevance_cache_sqlite":         {"pwrite64": 9},
+		"packed_refs":                    {"pread64": 16},
+		"fold_cache_other":               {"read": 3},
+		"query_metadata":                 {"read": 2},
+		"other":                          {"write": 4},
+		"fold_cache_hint_metadata":       {"pwrite64": 56},
+		"fold_cache_inline_payload":      {"pwrite64": 512},
+		"relevance_cache_hint_metadata":  {"pread64": 56},
+		"relevance_cache_inline_payload": {"pread64": 88},
 	}
 	if !reflect.DeepEqual(work.PathBytes, want) {
 		t.Fatalf("path partition = %v, want %v", work.PathBytes, want)
