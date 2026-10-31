@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf/attachment-ref-batch"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"aa46dd5fa5f6eb18ee6578557936ebc8","status":"met","note":"Exact8f00c9fbe777274230a84378d9fe11e6b55161b4 one-workflow literal76aaaGit→publiccapt-hook==12.108.4; independentCCXc3ccbb936b verifieswholeworkflowinverse/args/checks andactualPypi2files/wholeofficialpublisher837. No plugin/runtimefloor or productfile change. PR1441normalready, currentactualpackstepSUCCESS; no localtest."}]}
