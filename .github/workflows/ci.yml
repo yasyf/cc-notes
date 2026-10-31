@@ -71,7 +71,7 @@ jobs:
       - name: Build and record the exact fixed-hint release-style candidate
         id: build_candidate
         env:
-          CCN_FIXED_HINT_SHA: 0c90db1343d8fe3436f2c707677dda56691e3e9d
+          CCN_FIXED_HINT_SHA: 93e5f425d9f6b78b6454c7e2d45474f2f6911170
         run: |
           git fetch --no-tags origin "$CCN_FIXED_HINT_SHA"
           git diff --exit-code "$CCN_FIXED_HINT_SHA" HEAD -- . ':!**/*_test.go' ':!.github/workflows/ci.yml'

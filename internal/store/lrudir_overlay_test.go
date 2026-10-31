@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"crypto/sha256"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"

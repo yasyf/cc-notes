@@ -162,7 +162,7 @@ func tracedTaskCacheLookups(t *testing.T, dir, binary string, roots map[string]b
 	ctx, cancel := context.WithTimeout(t.Context(), binTimeout)
 	defer cancel()
 	report := filepath.Join(t.TempDir(), "cache-open-attempts.txt")
-	args := []string{"-f", "-qq", "-s", "4096", "-o", report, "-e", "trace=open,openat,openat2", binary, "task", "list", "--all", "--all-branches"}
+	args := []string{"-f", "--seccomp-bpf", "-qq", "-s", "4096", "-o", report, "-e", "trace=open,openat,openat2", binary, "task", "list", "--all", "--all-branches"}
 	cmd := exec.CommandContext(ctx, "strace", args...)
 	cmd.Dir = dir
 	cmd.Env = binEnv(actorA)

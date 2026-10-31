@@ -173,7 +173,7 @@ func tracedTaskCLI(t *testing.T, dir, binary string, args ...string) (string, ma
 		t.Fatalf("fresh CLI %v: %v; stdout %q; stderr %q", args, err, stdout.String(), stderr.String())
 	}
 	elapsed := time.Since(started)
-	t.Logf("traced_wrapper_cli=%q args=%q user_cpu=%v system_cpu=%v raw_native_rusage=%+v", binary, args, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState.SysUsage())
+	t.Logf("traced_wrapper_cli=%q args=%q elapsed_ms=%.3f user_cpu=%v system_cpu=%v raw_native_rusage=%+v", binary, args, float64(elapsed)/float64(time.Millisecond), cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState.SysUsage())
 	if stderr.Len() != 0 {
 		t.Fatalf("fresh CLI %v stderr: %q", args, stderr.String())
 	}
