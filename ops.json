@@ -1,1 +1,1 @@
-{"v":1,"lamport":11,"ops":[{"kind":"remove_criterion","id":"2399a4e457db8a2cf9aa71549fa48c76"}]}
+{"v":1,"lamport":12,"ops":[{"kind":"set_criterion_status","id":"27647091dd7c639ad37caea13c3de2f8","status":"met","note":"Actual manual41210323932/job124563782379 SUCCESS in17s, normalbuildSKIPPED/no dependency rebuild. Artifact13045919898/digestab814eec verified; exact provenance,23actual strictPASS lines,21identical images/two original code-data/header/normalized-loadcommand invariants. Data-only proof75ad7e75; original622CANCELLED/causeUNKNOWN separate."}]}
