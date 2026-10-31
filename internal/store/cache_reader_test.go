@@ -191,7 +191,7 @@ func TestCacheReaderOwnsMultiBlockStreamAfterReplaceAndClose(t *testing.T) {
 	}
 	defer func() { _ = reader.Close() }()
 	position, err := reader.file.Seek(0, io.SeekCurrent)
-	if err != nil || position != cacheTokenSize+1+len("entry")+sha256.Size+cacheChunkSize {
+	if err != nil || position != int64(cacheTokenSize+1+len("entry")+sha256.Size+cacheChunkSize) {
 		t.Fatalf("open read more than one bounded block: %d, %v", position, err)
 	}
 	l.remove("entry")
