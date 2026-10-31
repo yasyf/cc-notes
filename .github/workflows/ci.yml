@@ -29,7 +29,7 @@ jobs:
       - name: Query metadata cardinality contracts and work
         run: ./scripts/test.sh -count=1 -v -run '^TestQueryMetadataCardinality' ./internal/store
       - name: Selected answer supersession contracts and fixed work
-        run: ./scripts/test.sh -count=1 -v -run '^Test(Supersession|IndexedSupersession|AnswerShowFreshCLICost|Resolve|BoundStoreFailsAfterBackendReplaced)' ./notes ./internal/store ./internal/cli
+        run: ./scripts/test.sh -count=1 -v -run '^Test(Supersession|IndexedSupersession|AnswerShowFreshCLICost|Resolve|BoundStoreFailsAfterBackendReplaced|PackedReference|SortedPackedReference|UnsortedPackedReference|NativeReferences|NativeMultiplePrefixes|ReferencePrefix)' ./notes ./internal/store ./internal/cli ./internal/gitobj
       - name: Native packed read ownership and corpus contracts
         run: ./scripts/test.sh -race -count=1 -v -run '^Test(Native|ObjectBatch)' ./internal/gitobj ./internal/gitcmd
       - name: Fresh CLI packed ledger read beside a legacy object-index writer
