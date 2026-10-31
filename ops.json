@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf/attachment-ref-batch"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"7e5c662fd3cef90856520c34866fdd2c","status":"met","note":"Independent source7b3add5 binds d85 sole canonical import correction; standalone4d81 ONEfile postimage byteexactd85 verified FE/lr-canonical-deadline-child-import-source-binding.json. Same3s/60s/allassertions; no production bytes changed. ActualCI/merge still pending."}]}
