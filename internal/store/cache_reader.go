@@ -124,7 +124,7 @@ func cacheBlockDigest(token []byte, size int64, index uint64, data []byte) [sha2
 func writeCachePayload(file io.Writer, name string, token, data []byte) error {
 	var buffer [cacheTokenSize + 1 + cacheKeyMax + sha256.Size + cacheChunkSize]byte
 	copy(buffer[:], token)
-	buffer[cacheTokenSize] = byte(len(name))
+	buffer[cacheTokenSize] = byte(len(name)) //nolint:gosec // G115: Publication rejects keys longer than 255 bytes before framing.
 	copy(buffer[cacheTokenSize+1:], name)
 	size, index, offset := int64(len(data)), uint64(0), cacheTokenSize+1+len(name)
 	for {

@@ -71,7 +71,7 @@ jobs:
       - name: Build and record the exact fixed-hint release-style candidate
         id: build_candidate
         env:
-          CCN_FIXED_HINT_SHA: 93e5f425d9f6b78b6454c7e2d45474f2f6911170
+          CCN_FIXED_HINT_SHA: 2ea50e0003016dc7542352ed68c8dc4fc0322619
         run: |
           git fetch --no-tags origin "$CCN_FIXED_HINT_SHA"
           git diff --exit-code "$CCN_FIXED_HINT_SHA" HEAD -- . ':!**/*_test.go' ':!.github/workflows/ci.yml'
@@ -100,7 +100,7 @@ jobs:
         run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupe(FreshCLI(Cost|MetadataCost)|LegacyCLIListCost)|TestTaskIOBytes(TraceAccounting|PathPartition|KernelFilter))$' ./internal/cli
       - name: Separate cold returned-byte comparison
         if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
-        run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeColdCLIBytes$' ./internal/cli
+        run: ./scripts/test.sh -count=1 -v -run '^(TestTaskDedupeColdCLIBytes|TestTaskCacheUntracedColdPoint)$' ./internal/cli
       - name: Fresh CLI cache-hit trace calibration
         if: ${{ !cancelled() && steps.build_candidate.outcome == 'success' }}
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskCache(HitTraceAccounting|HitLowerBoundCalibration)$' ./internal/cli

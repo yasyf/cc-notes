@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -72,6 +73,10 @@ func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal 
 	if stderr.Len() != 0 || !strings.Contains(stdout.String(), "\topen\tP2\t-\t"+title+"\n") {
 		t.Fatalf("byte create output: stdout %q; stderr %q", stdout.String(), stderr.String())
 	}
+	var allocated map[string]int64
+	if ordinal == 0 && unrelated == 32 && binary == os.Getenv("CCN_PRODUCTIONLIKE_CLI") {
+		allocated = taskCacheColdAllocation(t, dir)
+	}
 	if hitRoots != nil {
 		t.Run("cache_hit_lower_bound", func(t *testing.T) {
 			tracedTaskCacheLookups(t, dir, binary, hitRoots, title)
@@ -94,6 +99,19 @@ func tracedTaskCreateBytes(t *testing.T, dir, binary string, unrelated, ordinal 
 	}
 	if work.Calls["read"] == 0 || work.Bytes["read"] == 0 {
 		t.Fatalf("missing returned-byte accounting: %+v", work)
+	}
+	for namespace, size := range allocated {
+		prefix := "fold_cache"
+		if namespace == "relevant-v6" {
+			prefix = "relevance_cache"
+		}
+		if writes := work.PathBytes[prefix+"_payload"]; writes["write"] != 0 || writes["pwrite64"] != 0 {
+			t.Fatalf("cold allocation fixture has external %s payload writes: %v", namespace, writes)
+		}
+		if size > 1<<20 {
+			t.Errorf("cold %s allocated %d bytes, exceeding 1MiB absolute bound", namespace, size)
+		}
+		t.Logf("cold_namespace=%s allocated_endpoint_bytes=%d additional_bytes_upper_bound=%d limit_bytes=%d", namespace, size, size, 1<<20)
 	}
 	t.Logf("unrelated=%d byte_create=%d elapsed_ms=%.3f successful_return_calls=%v restarted_zero_bytes=%v returned_bytes=%v query_db_returned_bytes=%v path_class_returned_bytes=%v user_cpu=%v system_cpu=%v raw_traced_wrapper_rusage=%+v", unrelated, ordinal, float64(elapsed)/float64(time.Millisecond), work.Calls, work.Restarted, work.Bytes, work.QueryBytes, work.PathBytes, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState.SysUsage())
 }
@@ -311,4 +329,22 @@ func TestTaskIOBytesPathPartition(t *testing.T) {
 	if !reflect.DeepEqual(totals, work.Bytes) || !reflect.DeepEqual(work.PathBytes["query_metadata"], work.QueryBytes) {
 		t.Fatalf("partition differs from totals: partition=%v all=%v query=%v", totals, work.Bytes, work.QueryBytes)
 	}
+}
+
+func taskCacheColdAllocation(t *testing.T, dir string) map[string]int64 {
+	t.Helper()
+	allocated := make(map[string]int64, 2)
+	for _, namespace := range []string{"folds-v5", "relevant-v6"} {
+		var total int64
+		root := filepath.Join(dir, ".git", "cc-notes", namespace)
+		for _, name := range []string{root, filepath.Join(root, "index.bin"), filepath.Join(root, "values.bin")} {
+			info, err := os.Stat(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			total += info.Sys().(*syscall.Stat_t).Blocks * 512
+		}
+		allocated[namespace] = total
+	}
+	return allocated
 }
