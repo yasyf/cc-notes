@@ -1,6 +1,7 @@
 package notes
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -114,17 +115,37 @@ type LedgerFilter struct {
 // time then id). Tombstoned ledgers are always dropped; archived ledgers are
 // dropped unless IncludeArchived is set.
 func (c *Client) Ledgers(ctx context.Context, f LedgerFilter) ([]model.Ledger, error) {
+	if len(f.Labels) > 0 {
+		ledgers, hit, err := c.s.IndexedLedgers(ctx, f.Labels)
+		if err != nil {
+			return nil, err
+		}
+		if hit {
+			ledgers = filteredLedgers(ledgers, f)
+			slices.SortFunc(ledgers, func(a, b model.Ledger) int {
+				if order := a.Meta().CreatedAt.Compare(b.Meta().CreatedAt); order != 0 {
+					return order
+				}
+				return cmp.Compare(a.ID, b.ID)
+			})
+			return ledgers, nil
+		}
+	}
 	ledgers, err := c.s.ListLedgers(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return filteredLedgers(ledgers, f), nil
+}
+
+func filteredLedgers(ledgers []model.Ledger, f LedgerFilter) []model.Ledger {
 	ledgers = slices.DeleteFunc(ledgers, func(l model.Ledger) bool {
 		if !f.IncludeArchived && l.Status != model.LedgerActive {
 			return true
 		}
 		return !hasAll(l.Labels, f.Labels) || !matchesAnchorFilter(l.Anchors, f.Anchors)
 	})
-	return ledgers, nil
+	return ledgers
 }
 
 // ActivateLedger marks the ledger active. A ledger already active is refused

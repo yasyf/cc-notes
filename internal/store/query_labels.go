@@ -37,6 +37,12 @@ func (s *Store) IndexedInvestigations(ctx context.Context, labels []string) ([]m
 	return indexedLabeledList(ctx, s, model.KindInvestigation, labels, ListOpts{}, fold.Investigation)
 }
 
+// IndexedLedgers reads only live ledger bodies matching every supplied label.
+// At least one label is required; a derived-cache miss leaves listing to the caller.
+func (s *Store) IndexedLedgers(ctx context.Context, labels []string) ([]model.Ledger, bool, error) {
+	return indexedLabeledList(ctx, s, model.KindLedger, labels, ListOpts{}, fold.Ledger)
+}
+
 func indexedLabeledList[T model.Snapshot](ctx context.Context, s *Store, kind model.Kind, labels []string, opts ListOpts, foldFn func([]model.PackCommit) (T, error)) (values []T, hit bool, err error) {
 	defer func() {
 		if finalErr := s.CheckRecords(); finalErr != nil {
