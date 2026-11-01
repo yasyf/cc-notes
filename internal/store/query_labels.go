@@ -18,6 +18,12 @@ func (s *Store) IndexedAnswers(ctx context.Context, labels []string, opts ListOp
 	return indexedLabeledList(ctx, s, model.KindAnswer, labels, opts, fold.Answer)
 }
 
+// IndexedDocs reads only doc bodies matching every supplied label. At least
+// one label is required; a derived-cache miss leaves listing to the caller.
+func (s *Store) IndexedDocs(ctx context.Context, labels []string, opts ListOpts) ([]model.Doc, bool, error) {
+	return indexedLabeledList(ctx, s, model.KindDoc, labels, opts, fold.Doc)
+}
+
 // IndexedTasks reads only task bodies matching every supplied label. At least
 // one label is required; a derived-cache miss leaves listing to the caller.
 func (s *Store) IndexedTasks(ctx context.Context, labels []string) ([]model.Task, bool, error) {

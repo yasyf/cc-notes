@@ -16,7 +16,7 @@ import (
 )
 
 func TestLabeledListsReadOnlySelectedBodies(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger} {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger, model.KindDoc} {
 		t.Run(string(kind), func(t *testing.T) {
 			c, dir := newWBClient(t)
 			ctx := t.Context()
@@ -86,6 +86,8 @@ func createLabeledListEntity(t *testing.T, c *Client, kind model.Kind, title str
 		ops = []model.Op{model.CreateInvestigation{Nonce: model.NewNonce(), Title: title, Premise: body, Tags: labels}}
 	case model.KindLedger:
 		ops = []model.Op{model.CreateLedger{Nonce: model.NewNonce(), Title: title, Labels: labels}, model.UpsertRow{Key: "row", Fields: map[string]string{"state": body}, Position: model.PositionBetween("", "")}}
+	case model.KindDoc:
+		ops = []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title, Body: body, When: "private trigger", Tags: labels}}
 	default:
 		t.Fatalf("unsupported fixture kind %s", kind)
 	}
@@ -129,6 +131,14 @@ func labeledListIDs(ctx context.Context, c *Client, kind model.Kind, labels []st
 		}
 	case model.KindLedger:
 		values, err := c.Ledgers(ctx, LedgerFilter{Labels: labels})
+		if err != nil {
+			return nil, err
+		}
+		for _, value := range values {
+			ids = append(ids, value.ID)
+		}
+	case model.KindDoc:
+		values, err := c.Docs(ctx, DocumentFilter{Labels: labels})
 		if err != nil {
 			return nil, err
 		}

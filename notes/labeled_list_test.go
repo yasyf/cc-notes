@@ -154,8 +154,83 @@ func TestLedgerLabelsMatchAuthoritativeLifecycleAnchorsAndOrder(t *testing.T) {
 	}
 }
 
+func TestDocLabelsPreserveCompleteBodiesAttachmentsLifecycleAndOrder(t *testing.T) {
+	c, _ := newWBClient(t)
+	path := filepath.Join(t.TempDir(), "proof.txt")
+	if err := os.WriteFile(path, []byte("preserved attachment"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	attachment, _, err := c.AttachFile(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make(map[string]model.EntityID)
+	for _, spec := range []DocSpec{
+		{Title: "both", Body: "complete selected body", When: "read the complete document", Tags: []string{"a", "b"}, Anchors: AnchorSpec{Branches: []string{"main"}}, Attachments: []model.Attachment{attachment}},
+		{Title: "first", Body: "first body", Tags: []string{"a"}},
+		{Title: "second", Body: "second body", Tags: []string{"b"}},
+		{Title: "deleted", Body: "deleted body", Tags: []string{"a", "b"}},
+		{Title: "superseded", Body: "superseded body", Tags: []string{"a", "b"}},
+		{Title: "expired", Body: "expired body", Tags: []string{"a", "b"}},
+	} {
+		doc, _, err := c.CreateDoc(t.Context(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[spec.Title] = doc.ID
+	}
+	if _, err := c.RemoveDoc(t.Context(), ids["deleted"]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SupersedeDoc(t.Context(), ids["superseded"], ids["both"]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ExpireDoc(t.Context(), ids["expired"], "still listed"); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		filter DocumentFilter
+		titles []string
+	}{
+		{"all live", DocumentFilter{}, []string{"both", "first", "second", "expired"}},
+		{"one label", DocumentFilter{Labels: []string{"a"}}, []string{"both", "first", "expired"}},
+		{"all labels", DocumentFilter{Labels: []string{"a", "b"}}, []string{"both", "expired"}},
+		{"repeated label", DocumentFilter{Labels: []string{"a", "a"}}, []string{"both", "first", "expired"}},
+		{"missing label", DocumentFilter{Labels: []string{"missing"}}, nil},
+		{"empty label", DocumentFilter{Labels: []string{""}}, nil},
+		{"anchor", DocumentFilter{Labels: []string{"a"}, Anchor: AnchorFilter{Branch: "main"}}, []string{"both"}},
+		{"missing anchor", DocumentFilter{Labels: []string{"a"}, Anchor: AnchorFilter{Branch: "other"}}, nil},
+		{"deleted", DocumentFilter{Labels: []string{"a"}, IncludeTombstoned: true}, []string{"both", "first", "deleted", "expired"}},
+		{"superseded", DocumentFilter{Labels: []string{"a"}, IncludeSuperseded: true}, []string{"both", "first", "superseded", "expired"}},
+		{"all dispositions", DocumentFilter{Labels: []string{"a"}, IncludeTombstoned: true, IncludeSuperseded: true}, []string{"both", "first", "deleted", "superseded", "expired"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			authoritative, err := c.s.ListDocs(t.Context(), test.filter.IncludeTombstoned, test.filter.IncludeSuperseded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := make(map[model.EntityID]bool, len(test.titles))
+			for _, title := range test.titles {
+				selected[ids[title]] = true
+			}
+			want := make([]model.Doc, 0, len(selected))
+			for _, doc := range authoritative {
+				if selected[doc.ID] {
+					want = append(want, doc)
+				}
+			}
+			sortDocuments(want)
+			got, err := c.Docs(t.Context(), test.filter)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("Docs(%+v) differs from complete authoritative bodies/attachments and order: %v", test.filter, err)
+			}
+		})
+	}
+}
+
 func TestLabeledListsRetainPinnedTipsAcrossChanges(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger} {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger, model.KindDoc} {
 		t.Run(string(kind), func(t *testing.T) {
 			c, _, ids := labeledListFixture(t, kind)
 			tip, err := c.s.Repo.Tip(t.Context(), refs.For(kind, ids["both"]))
@@ -191,7 +266,7 @@ func TestLabeledListsRetainPinnedTipsAcrossChanges(t *testing.T) {
 }
 
 func TestLabeledListsKeepUnavailableIndexAndCancellationBehavior(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger} {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger, model.KindDoc} {
 		t.Run(string(kind), func(t *testing.T) {
 			c, _, ids := labeledListFixture(t, kind)
 			indexPath := filepath.Join(c.s.CommonDir(), "cc-notes-query")
@@ -215,7 +290,7 @@ func TestLabeledListsKeepUnavailableIndexAndCancellationBehavior(t *testing.T) {
 }
 
 func TestLabeledListsReportSelectedObjectFailures(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger} {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger, model.KindDoc} {
 		for _, broken := range []string{"missing", "corrupt"} {
 			t.Run(string(kind)+"/"+broken, func(t *testing.T) {
 				c, dir := newWBClient(t)

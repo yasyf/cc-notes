@@ -548,15 +548,28 @@ func (c *Client) Notes(ctx context.Context, f DocumentFilter) ([]model.Note, err
 // Docs folds the doc set the filter selects and returns it in UpdatedAt-desc,
 // id-asc order.
 func (c *Client) Docs(ctx context.Context, f DocumentFilter) ([]model.Doc, error) {
+	if len(f.Labels) > 0 {
+		docs, hit, err := c.s.IndexedDocs(ctx, f.Labels, store.ListOpts{IncludeDeleted: f.IncludeTombstoned, IncludeSuperseded: f.IncludeSuperseded})
+		if err != nil {
+			return nil, err
+		}
+		if hit {
+			return filteredDocs(docs, f), nil
+		}
+	}
 	docs, err := c.s.ListDocs(ctx, f.IncludeTombstoned, f.IncludeSuperseded)
 	if err != nil {
 		return nil, err
 	}
+	return filteredDocs(docs, f), nil
+}
+
+func filteredDocs(docs []model.Doc, f DocumentFilter) []model.Doc {
 	docs = slices.DeleteFunc(docs, func(d model.Doc) bool {
 		return !matchesFilter(d.Tags, d.Anchors, f)
 	})
 	sortDocuments(docs)
-	return docs, nil
+	return docs
 }
 
 // matchesFilter reports whether an entity's tags and anchors satisfy the filter.
