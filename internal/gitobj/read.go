@@ -42,17 +42,27 @@ func (r *Repo) ReadCommit(ctx context.Context, tip model.SHA) (_ model.PackCommi
 // still missing fails with ErrIncompleteChain, and a commit with no ops.json
 // with ErrCorruptCommit.
 func (r *Repo) ReadChain(ctx context.Context, tip model.SHA) ([]model.PackCommit, error) {
-	chain, err := r.readChain(ctx, tip)
+	return r.readChainWithBackfill(ctx, tip, nil)
+}
+
+// ReadChainFromCommit reuses a decoded head from ReadCommit while walking its
+// reachable history, with ReadChain's missing-history backfill behavior.
+func (r *Repo) ReadChainFromCommit(ctx context.Context, head model.PackCommit) ([]model.PackCommit, error) {
+	return r.readChainWithBackfill(ctx, head.SHA, &head)
+}
+
+func (r *Repo) readChainWithBackfill(ctx context.Context, tip model.SHA, head *model.PackCommit) ([]model.PackCommit, error) {
+	chain, err := r.readChain(ctx, tip, head)
 	if r.backfill == nil || !errors.Is(err, ErrIncompleteChain) {
 		return chain, err
 	}
 	if backfillErr := r.backfill(ctx, tip); backfillErr != nil {
 		return nil, fmt.Errorf("%w: backfill: %w", err, backfillErr)
 	}
-	return r.readChain(ctx, tip)
+	return r.readChain(ctx, tip, head)
 }
 
-func (r *Repo) readChain(ctx context.Context, tip model.SHA) (_ []model.PackCommit, resultErr error) {
+func (r *Repo) readChain(ctx context.Context, tip model.SHA, head *model.PackCommit) (_ []model.PackCommit, resultErr error) {
 	if !plumbing.IsHash(string(tip)) {
 		return nil, fmt.Errorf("invalid tip sha %q", tip)
 	}
@@ -73,19 +83,25 @@ func (r *Repo) readChain(ctx context.Context, tip model.SHA) (_ []model.PackComm
 		}
 		hash := queue[0]
 		queue = queue[1:]
-		commit, err := r.lookupCommit(hash)
-		if errors.Is(err, plumbing.ErrObjectNotFound) {
-			return nil, fmt.Errorf("%w: commit %s %s", ErrIncompleteChain, hash, r.missingSuffix())
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read commit %s: %w", hash, err)
-		}
-		pc, err := r.packCommit(commit)
-		if err != nil {
-			return nil, err
+		var pc model.PackCommit
+		if head != nil && hash == start {
+			pc = *head
+		} else {
+			commit, err := r.lookupCommit(hash)
+			if errors.Is(err, plumbing.ErrObjectNotFound) {
+				return nil, fmt.Errorf("%w: commit %s %s", ErrIncompleteChain, hash, r.missingSuffix())
+			}
+			if err != nil {
+				return nil, fmt.Errorf("read commit %s: %w", hash, err)
+			}
+			pc, err = r.packCommit(commit)
+			if err != nil {
+				return nil, err
+			}
 		}
 		chain = append(chain, pc)
-		for _, parent := range commit.ParentHashes {
+		for _, sha := range pc.Parents {
+			parent := plumbing.NewHash(string(sha))
 			if !seen[parent] {
 				seen[parent] = true
 				queue = append(queue, parent)

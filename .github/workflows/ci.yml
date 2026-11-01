@@ -39,6 +39,23 @@ jobs:
           test "$result" -ne 0
           test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-parent-load-negative.log")" -eq 4
           test "$(grep -c 'PARENT_LOAD_HISTORY_REGRESSION:' "$RUNNER_TEMP/ccn-parent-load-negative.log")" -eq 4
+      - name: Reused fallback head semantics and native request cost
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestLoadFallback' ./internal/store
+      - name: Reject repeated large-head reads on the immutable public34 baseline
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-fallback-head-negative"
+          git fetch --no-tags --depth=1 origin 7268c6b97a7485874176e050ddbd9d2af5c1b423
+          git worktree add --detach "$baseline" 7268c6b97a7485874176e050ddbd9d2af5c1b423
+          cp internal/store/load_fallback_cost_test.go "$baseline/internal/store/"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestLoadFallbackFreshProcessCost$' ./internal/store) > "$RUNNER_TEMP/ccn-fallback-head-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-fallback-head-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-fallback-head-negative.log")" -eq 4
+          test "$(grep -c 'FALLBACK_HEAD_REREAD_REGRESSION:' "$RUNNER_TEMP/ccn-fallback-head-negative.log")" -eq 4
       - name: Exact duplicate contract with cold caches
         run: ./scripts/test.sh -race -count=1 -v -run '^TestCreateExactDuplicateAfterColdCache$' ./internal/store
       - name: Keyed duplicate content, survivors and held-index fallback

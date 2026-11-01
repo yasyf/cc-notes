@@ -89,7 +89,12 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 			}
 		}
 	}
-	chain, err := s.Repo.ReadChain(ctx, head)
+	var chain []model.PackCommit
+	if err == nil {
+		chain, err = s.Repo.ReadChainFromCommit(ctx, commit)
+	} else {
+		chain, err = s.Repo.ReadChain(ctx, head)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
