@@ -118,6 +118,23 @@ jobs:
           cat "$RUNNER_TEMP/ccn-147-negative.log"
           test "$result" -ne 0
           test "$(grep -c 'COLD_DUPLICATE_REGRESSION:' "$RUNNER_TEMP/ccn-147-negative.log")" -eq 6
+      - name: Anchored doc complete DTO semantics and logical read cost
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestDocAnchors' ./notes
+      - name: Reject unrelated doc body reads on the immutable accepted38 source
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-doc-anchor-negative"
+          git fetch --no-tags --depth=1 origin 469d76e4d239e9cbc46f8d835377f73c2c057901
+          git worktree add --detach "$baseline" 469d76e4d239e9cbc46f8d835377f73c2c057901
+          cp notes/doc_anchors_cost_linux_test.go "$baseline/notes/"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestDocAnchorsLogicalReadCost$' ./notes) > "$RUNNER_TEMP/ccn-doc-anchor-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-doc-anchor-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-doc-anchor-negative.log")" -eq 1
+          test "$(grep -c 'DOC_ANCHOR_CORPUS_READ_REGRESSION:' "$RUNNER_TEMP/ccn-doc-anchor-negative.log")" -eq 1
       - name: Query metadata semantic generation contracts
         run: ./scripts/test.sh -race -count=1 -v -run '^TestQueryMetadata(ExecutableIndependentReuse|SemanticGenerationIsolation)$' ./internal/store
       - name: Labeled doc complete DTO semantics and logical read cost
