@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"fix/doc-edit-snapshot-load"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"add_comment","body":"Frozen source c08c8e8a/base2e57/tree50b9 independently PASS14eefceb. Normal three-path source publication and required CI next; private1MiB full DTO plus immutable35 named logical-read negative. Actual bound is \u003c=2.5 body lengths. Preflight/extender full snapshot reads remain; physical IO and protected consumer adoption are not claimed."}]}
