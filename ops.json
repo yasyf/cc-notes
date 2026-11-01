@@ -1,1 +1,1 @@
-{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"64885dc6dc18dc2b27218035d0cd0a28","status":"met","note":"Actual raw Linux124761883515 cp cannot stat bm25_storage_test.go; PRhead8a HTTP404 versus actualintegration3c1b fixture200/dcdfa306. Exact APIparents50b+8a. FE/ccx-bm25-integration-original-affected-proof.json SHAf0d790c9. No production/fixture edit or rootcause/RSS inference."}]}
+{"v":1,"lamport":5,"ops":[{"kind":"renew"}]}
