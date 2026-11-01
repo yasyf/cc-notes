@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf/attachment-ref-batch"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"9b5005e9c024fd042b8700b1bd4b5f2b","status":"met","note":"BothOS immutable753 closed/resolved each1failed/lostreceiptdiagnostic and actualforcedcleanup-race1failed/duplicatediagnostic; current5casesPASS. Original1490af1failure5085PASSretained. Proofseb970ccb/74705232/4cef411e/bded55de."}]}
