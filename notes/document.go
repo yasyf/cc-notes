@@ -548,7 +548,15 @@ func (c *Client) Notes(ctx context.Context, f DocumentFilter) ([]model.Note, err
 // Docs folds the doc set the filter selects and returns it in UpdatedAt-desc,
 // id-asc order.
 func (c *Client) Docs(ctx context.Context, f DocumentFilter) ([]model.Doc, error) {
-	if len(f.Labels) > 0 {
+	if anchors := requestedAnchors(f.Anchor); len(anchors) > 0 {
+		docs, hit, err := c.s.IndexedAnchoredDocs(ctx, f.Labels, anchors, store.ListOpts{IncludeDeleted: f.IncludeTombstoned, IncludeSuperseded: f.IncludeSuperseded})
+		if err != nil {
+			return nil, err
+		}
+		if hit {
+			return filteredDocs(docs, f), nil
+		}
+	} else if len(f.Labels) > 0 {
 		docs, hit, err := c.s.IndexedDocs(ctx, f.Labels, store.ListOpts{IncludeDeleted: f.IncludeTombstoned, IncludeSuperseded: f.IncludeSuperseded})
 		if err != nil {
 			return nil, err
@@ -562,6 +570,21 @@ func (c *Client) Docs(ctx context.Context, f DocumentFilter) ([]model.Doc, error
 		return nil, err
 	}
 	return filteredDocs(docs, f), nil
+}
+
+func requestedAnchors(f AnchorFilter) []model.Anchor {
+	var anchors []model.Anchor
+	for _, anchor := range [4]model.Anchor{
+		{Kind: model.AnchorCommit, Value: f.Commit},
+		{Kind: model.AnchorPath, Value: f.Path},
+		{Kind: model.AnchorDir, Value: f.Dir},
+		{Kind: model.AnchorBranch, Value: f.Branch},
+	} {
+		if anchor.Value != "" {
+			anchors = append(anchors, anchor)
+		}
+	}
+	return anchors
 }
 
 func filteredDocs(docs []model.Doc, f DocumentFilter) []model.Doc {
