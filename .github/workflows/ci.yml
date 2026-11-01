@@ -120,6 +120,23 @@ jobs:
           test "$(grep -c 'COLD_DUPLICATE_REGRESSION:' "$RUNNER_TEMP/ccn-147-negative.log")" -eq 6
       - name: Query metadata semantic generation contracts
         run: ./scripts/test.sh -race -count=1 -v -run '^TestQueryMetadata(ExecutableIndependentReuse|SemanticGenerationIsolation)$' ./internal/store
+      - name: Labeled doc complete DTO semantics and logical read cost
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestDocLabels' ./notes
+      - name: Reject unrelated doc body reads on the immutable public36 baseline
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-doc-label-negative"
+          git fetch --no-tags --depth=1 origin 8ab2fd790221b2cf9469c6e844998529fd6bd3dd
+          git worktree add --detach "$baseline" 8ab2fd790221b2cf9469c6e844998529fd6bd3dd
+          cp notes/doc_labels_cost_linux_test.go "$baseline/notes/"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestDocLabelsLogicalReadCost$' ./notes) > "$RUNNER_TEMP/ccn-doc-label-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-doc-label-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-doc-label-negative.log")" -eq 1
+          test "$(grep -c 'DOC_LABEL_CORPUS_READ_REGRESSION:' "$RUNNER_TEMP/ccn-doc-label-negative.log")" -eq 1
       - name: Reject executable-bound metadata rebuilds
         run: |
           set -euo pipefail
