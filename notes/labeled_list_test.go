@@ -104,8 +104,58 @@ func TestInvestigationLabelsMatchAuthoritativeLifecycleAndAnchors(t *testing.T) 
 	}
 }
 
+func TestLedgerLabelsMatchAuthoritativeLifecycleAnchorsAndOrder(t *testing.T) {
+	c, _, ids := labeledListFixture(t, model.KindLedger)
+	appendLabeledListOps(t, c, model.KindLedger, ids["both"], model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "main"}})
+	if _, err := c.ArchiveLedger(t.Context(), ids["closed"]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RemoveLedger(t.Context(), ids["superseded"]); err != nil {
+		t.Fatal(err)
+	}
+	ids["late"] = labeledLedgerAt(t, c, "late", 101).ID
+	ids["early"] = labeledLedgerAt(t, c, "early", 99).ID
+	authoritative, err := c.s.ListLedgers(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		filter LedgerFilter
+		titles []string
+	}{
+		{"all active", LedgerFilter{}, []string{"early", "late", "both", "first", "second"}},
+		{"one label", LedgerFilter{Labels: []string{"a"}}, []string{"early", "late", "both", "first"}},
+		{"all labels", LedgerFilter{Labels: []string{"a", "b"}}, []string{"early", "late", "both"}},
+		{"repeated label", LedgerFilter{Labels: []string{"a", "a"}}, []string{"early", "late", "both", "first"}},
+		{"missing label", LedgerFilter{Labels: []string{"missing"}}, nil},
+		{"empty label", LedgerFilter{Labels: []string{""}}, nil},
+		{"anchor", LedgerFilter{Labels: []string{"a"}, Anchors: AnchorFilter{Branch: "main"}}, []string{"both"}},
+		{"missing anchor", LedgerFilter{Labels: []string{"a"}, Anchors: AnchorFilter{Branch: "other"}}, nil},
+		{"archived", LedgerFilter{Labels: []string{"a"}, IncludeArchived: true}, []string{"early", "late", "both", "first", "closed"}},
+		{"unfiltered archived", LedgerFilter{IncludeArchived: true}, []string{"early", "late", "both", "first", "second", "closed"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			selected := make(map[model.EntityID]bool, len(test.titles))
+			for _, title := range test.titles {
+				selected[ids[title]] = true
+			}
+			want := make([]model.Ledger, 0, len(selected))
+			for _, ledger := range authoritative {
+				if selected[ledger.ID] {
+					want = append(want, ledger)
+				}
+			}
+			got, err := c.Ledgers(t.Context(), test.filter)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("Ledgers(%+v) differs from complete authoritative selection: %v", test.filter, err)
+			}
+		})
+	}
+}
+
 func TestLabeledListsRetainPinnedTipsAcrossChanges(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation} {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger} {
 		t.Run(string(kind), func(t *testing.T) {
 			c, _, ids := labeledListFixture(t, kind)
 			tip, err := c.s.Repo.Tip(t.Context(), refs.For(kind, ids["both"]))
@@ -118,7 +168,7 @@ func TestLabeledListsRetainPinnedTipsAcrossChanges(t *testing.T) {
 			}
 			remove := model.Op(model.RemoveTag{Tag: "b"})
 			add := model.Op(model.AddTag{Tag: "b"})
-			if kind == model.KindTask {
+			if kind == model.KindTask || kind == model.KindLedger {
 				remove, add = model.RemoveLabel{Label: "b"}, model.AddLabel{Label: "b"}
 			}
 			appendLabeledListOps(t, c, kind, ids["both"], remove)
@@ -141,7 +191,7 @@ func TestLabeledListsRetainPinnedTipsAcrossChanges(t *testing.T) {
 }
 
 func TestLabeledListsKeepUnavailableIndexAndCancellationBehavior(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation} {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger} {
 		t.Run(string(kind), func(t *testing.T) {
 			c, _, ids := labeledListFixture(t, kind)
 			indexPath := filepath.Join(c.s.CommonDir(), "cc-notes-query")
@@ -165,7 +215,7 @@ func TestLabeledListsKeepUnavailableIndexAndCancellationBehavior(t *testing.T) {
 }
 
 func TestLabeledListsReportSelectedObjectFailures(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation} {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger} {
 		for _, broken := range []string{"missing", "corrupt"} {
 			t.Run(string(kind)+"/"+broken, func(t *testing.T) {
 				c, dir := newWBClient(t)
@@ -235,4 +285,22 @@ func appendLabeledListOps(t *testing.T, c *Client, kind model.Kind, id model.Ent
 	if _, err := c.s.Append(t.Context(), refs.For(kind, id), ops); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func labeledLedgerAt(t *testing.T, c *Client, title string, at int64) model.Ledger {
+	t.Helper()
+	ops := []model.Op{model.CreateLedger{Nonce: model.NewNonce(), Title: title, Labels: []string{"a", "b"}}}
+	tip, err := c.s.Repo.WriteOpsCommit(t.Context(), nil, gitobj.Signature{Name: "Contract User", Email: "contract@example.com", When: time.Unix(at, 0).UTC()}, "ledger label ordering fixture", model.Pack{Lamport: 1, Ops: ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := model.EntityID(tip)
+	if err := c.s.RecordsGit.UpdateRef(t.Context(), refs.For(model.KindLedger, id), tip, ""); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := c.Ledger(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ledger
 }
