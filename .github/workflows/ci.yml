@@ -41,6 +41,23 @@ jobs:
           test "$(grep -c 'PARENT_LOAD_HISTORY_REGRESSION:' "$RUNNER_TEMP/ccn-parent-load-negative.log")" -eq 4
       - name: Reused fallback head semantics and native request cost
         run: ./scripts/test.sh -race -count=1 -v -run '^TestLoadFallback' ./internal/store
+      - name: State-independent document edit semantics and logical read cost
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestDocEditSnapshotReadCost$' ./notes
+      - name: Reject redundant document snapshot reads on the immutable public35 baseline
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-doc-edit-negative"
+          git fetch --no-tags --depth=1 origin 607fbd6fc53d1f46327de990e340de895c562c66
+          git worktree add --detach "$baseline" 607fbd6fc53d1f46327de990e340de895c562c66
+          cp notes/doc_edit_cost_linux_test.go "$baseline/notes/"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestDocEditSnapshotReadCost$' ./notes) > "$RUNNER_TEMP/ccn-doc-edit-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-doc-edit-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-doc-edit-negative.log")" -eq 1
+          test "$(grep -c 'DOC_EDIT_SNAPSHOT_READ_REGRESSION:' "$RUNNER_TEMP/ccn-doc-edit-negative.log")" -eq 1
       - name: Reject repeated large-head reads on the immutable public34 baseline
         run: |
           set -euo pipefail

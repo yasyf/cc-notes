@@ -303,7 +303,7 @@ func (c *Client) EditDoc(ctx context.Context, id model.EntityID, edit DocEdit) (
 	if err := checkAttachmentCollisions(doc.Attachments, edit.Attachments); err != nil {
 		return model.Doc{}, err
 	}
-	snap, err := c.s.AppendFrom(ctx, refs.For(model.KindDoc, id), func(current model.Snapshot) ([]model.Op, error) {
+	buildOps := func(current model.Doc) []model.Op {
 		var ops []model.Op
 		if edit.Title != nil {
 			ops = append(ops, model.SetTitle{Title: *edit.Title})
@@ -312,13 +312,21 @@ func (c *Client) EditDoc(ctx context.Context, id model.EntityID, edit DocEdit) (
 			ops = append(ops, model.SetBody{Body: *edit.Body})
 		}
 		if edit.Append != nil {
-			ops = append(ops, model.SetBody{Body: appendParagraph(current.(model.Doc).Body, *edit.Append)})
+			ops = append(ops, model.SetBody{Body: appendParagraph(current.Body, *edit.Append)})
 		}
 		if edit.When != nil {
 			ops = append(ops, model.SetWhen{When: *edit.When})
 		}
-		return appendEditOps(ops, edit.AddTags, edit.RemoveTags, addAnchors, edit.RemoveAnchors, edit.RemoveAttachments, edit.Attachments, edit.ReplaceAttachments), nil
-	})
+		return appendEditOps(ops, edit.AddTags, edit.RemoveTags, addAnchors, edit.RemoveAnchors, edit.RemoveAttachments, edit.Attachments, edit.ReplaceAttachments)
+	}
+	var snap model.Snapshot
+	if edit.Append == nil {
+		snap, err = c.s.Append(ctx, refs.For(model.KindDoc, id), buildOps(doc))
+	} else {
+		snap, err = c.s.AppendFrom(ctx, refs.For(model.KindDoc, id), func(current model.Snapshot) ([]model.Op, error) {
+			return buildOps(current.(model.Doc)), nil
+		})
+	}
 	if err != nil {
 		return model.Doc{}, err
 	}
