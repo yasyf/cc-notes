@@ -1,1 +1,1 @@
-{"v":1,"lamport":4,"ops":[{"kind":"renew"}]}
+{"v":1,"lamport":5,"ops":[{"kind":"set_criterion_status","id":"d2dc85199d053bfaa7de44879564bae0","status":"met","note":"Current ff4b normal global race SUCCESS; unskipped TestLaneHistorySeedPreservesIdentityTriggerRows PASS0.58s executes exact32versus0 UPDATE assertions and all rawrecords/actual3projection equality checks. Sourcea93/semanticpeer4541/capacitypeer5ead join runtime rawb6cf/phase565c. Proof ff4b-normal-runtime-fixture-parity-and-work-proof.json4d12f0bf; actualdefaultprojections may beempty, no richprojectionclaim."}]}
