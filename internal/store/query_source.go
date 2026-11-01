@@ -96,7 +96,7 @@ func (q queryMetadataSource) load(ctx context.Context, id model.EntityID, tip mo
 	if q.tips[id] != tip || tip == "" {
 		return queryMetadata{}, nil, fmt.Errorf("query metadata tip differs from captured %s %s", q.kind, id)
 	}
-	snapshot, chain, err := q.store.loadAt(ctx, tip)
+	snapshot, publication, err := q.store.loadAt(ctx, tip)
 	if err != nil {
 		return queryMetadata{}, nil, err
 	}
@@ -107,8 +107,5 @@ func (q queryMetadataSource) load(ctx context.Context, id model.EntityID, tip mo
 	if row.ID != id || row.Kind != q.kind {
 		return queryMetadata{}, nil, fmt.Errorf("query metadata snapshot differs from captured %s %s", q.kind, id)
 	}
-	if len(chain) == 0 {
-		return row, nil, nil
-	}
-	return row, foldChainPublication(tip, snapshot, chain), nil
+	return row, publication, nil
 }
