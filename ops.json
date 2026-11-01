@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"renew"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"ee2f81e161e89de0cae7c2ef6c4fd8ce","status":"met","note":"Actual finalhead0ccb pairedCI41276045414 bothOS fixed33top-level ranking/storage controlsPASS; immutable0eae samefixture reaches intended TestBM25TermKeysOwnStorage backing-storage assertionFAIL. Independent actual88275a68, raw joins preserved. No score/order or corpus changes."}]}
