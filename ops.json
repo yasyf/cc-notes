@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"ops/watchman-registration-drain-20261101"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"5d71ccfa68b348a18e88b6549300b3cb","status":"met","note":"SOURCE-ONLY future fix9b828/c07/447a independently accepted byRoot716edf1a. Originalfailure8757 and actualmissing-first-bootstrap recovery8fd2 pinned; no current control replay. Adoption is limited to genuinely needed fresh future invocation, with same logical budget and no runtime claim."}]}
