@@ -1,0 +1,1 @@
+{"v":1,"lamport":1,"ops":[{"kind":"create_log","nonce":"c87ae2a7a75628d2fefe75ea83d70d8f","title":"CCI PR230 repeat index forward delivery","tags":["cci","delivery"],"anchors":[]},{"kind":"add_attachment","name":"cci-v0494-native-release-allocation.json","oid":"e5afbe14b088048f23df27f5fc75ced102aa73926e13d4d8b805ff622e0a8608","size":1391}]}
