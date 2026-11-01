@@ -1,1 +1,1 @@
-{"v":1,"lamport":29,"ops":[{"kind":"add_criterion","id":"75c2118ac1944dd351cff6422c91610b","text":"Empty release polling preserves behavior and passes immutable 32-writer negatives and fixed 32-call zero-writer scaling checks at histories 32 and 10000, with full required CI.","script":""}]}
+{"v":1,"lamport":30,"ops":[{"kind":"add_criterion","id":"3b80d814ca170fa466b118a1b3d73942","text":"The reviewed release no-op fix is normally merged, officially published, installed with exact source hashes, and verified by one installed affected-operation check.","script":""}]}
