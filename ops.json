@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_assignee","assignee":"/root/long_running_watch_flakes_ship"},{"kind":"set_branch","branch":""}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"d9068b6431d1d0cc2ec618c27e381143","status":"met","note":"BothOS N32/10000 admission18+oldwriter3 PASS; intended759 negatives38/10006DTO. New6/12DTO,36/72targetB,177/222VM. WholeLinux5199/6skip+Mac722/5skip allgreen f584. Canonical outerAction/selected-target frontier475f; no universal corruptDTO parity."}]}
