@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"host-pressure/hybrid-flush-lifetime-20261101"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"77cae34e79fa578b0aa69dc38ec11941","status":"met","note":"Exact three-line retained read guard publishedcd7ce057; source input45f83f71/postf37c75a1/patch23ba3d49, independent lock-order/lifetimePASS035c78fa. No new lock cycle/future-wait-under-guard; exact historical scheduling remains qualified. Product CI and installation remain separate pending criteria."}]}
