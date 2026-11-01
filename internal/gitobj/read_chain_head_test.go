@@ -83,7 +83,7 @@ func TestReadChainFromCommitMissingParentAndCancellation(t *testing.T) {
 			calls := 0
 			failed := errors.New("fixture backfill failure")
 			if mode != "missing" {
-				repo.BackfillWith(func(ctx context.Context, tip model.SHA) error {
+				repo.BackfillWith(func(_ context.Context, tip model.SHA) error {
 					calls++
 					if tip != child {
 						t.Fatalf("backfill tip = %s, want %s", tip, child)
