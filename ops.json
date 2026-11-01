@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"ci/watchman-reusable-base-cache-20261101"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"52d39cc0c8dfbc2d069611f6d5bcfd12","status":"met","note":"Actualfinal1504requests/141hits/1363misses, main0/defaultlegacy1432, exact sample absentdefault/presentPR3 and93/100duplicatePR2keys. PrimaryGitHubscope contract and raw receipts retained;5write errorsUNKNOWN. Source/deployment/affectedcache verification remain pending."}]}
