@@ -1,1 +1,1 @@
-{"v":1,"lamport":30,"ops":[{"kind":"add_criterion","id":"3b80d814ca170fa466b118a1b3d73942","text":"The reviewed release no-op fix is normally merged, officially published, installed with exact source hashes, and verified by one installed affected-operation check.","script":""}]}
+{"v":1,"lamport":31,"ops":[{"kind":"add_criterion","id":"0a8852452842ce28a8237d73db95247a","text":"Current containing controllers have fresh native, source, configuration and positive heartbeat evidence without repeated updates or forced downgrades; broad IO attribution stays open.","script":""}]}
