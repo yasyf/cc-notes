@@ -1,1 +1,1 @@
-{"v":1,"lamport":5,"ops":[{"kind":"set_criterion_status","id":"89cb9bd7517d8dddf1e4fa740e8a81d6","status":"met","note":"Exact source-only review: 6cba2a8b0026c452b2f56984f0cebe62caa421c7/tree ec5245a2ad4e7eb3d47e0dc3b8d4fc76e1f87f92, all16 blobs and parent delta verified. capt-typed-skills-runtime-corrective-published-peer-review.json PASS_SOURCE_EQUIVALENT joins accepted full source and corrective reviews. Actual current CI, release and installed-case criteria remain pending; no whole recovery claim."}]}
+{"v":1,"lamport":6,"ops":[{"kind":"renew"}]}
