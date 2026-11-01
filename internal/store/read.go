@@ -40,15 +40,13 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if snap, ok := s.cache.get(tip); ok {
 		return snap, nil
 	}
-	chain, err := s.Repo.ReadChain(ctx, tip)
+	snapshot, publication, err := s.foldAt(ctx, tip)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
-	snapshot, err := fold.Fold(chain)
-	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", ref, err)
+	if publication != nil {
+		s.cache.write(publication.name, publication.data)
 	}
-	s.cache.putChain(tip, snapshot, chain)
 	return snapshot, nil
 }
 
@@ -58,32 +56,48 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 // the base a file-edit buffer was rendered from — can reconstruct that exact
 // snapshot to diff an edit against. A head whose chain is unreadable fails.
 func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, error) {
-	snapshot, chain, err := s.loadAt(ctx, head)
+	snapshot, publication, err := s.loadAt(ctx, head)
 	if err != nil {
 		return nil, err
 	}
-	if len(chain) != 0 {
-		s.cache.putChain(head, snapshot, chain)
+	if publication != nil {
+		s.cache.write(publication.name, publication.data)
 	}
 	return snapshot, nil
 }
 
-func (s *Store) loadAt(ctx context.Context, head model.SHA) (model.Snapshot, []model.PackCommit, error) {
+func (s *Store) loadAt(ctx context.Context, head model.SHA) (model.Snapshot, *cachePublication, error) {
 	if err := s.CheckRecords(); err != nil {
 		return nil, nil, fmt.Errorf("load at %s: %w", head, err)
 	}
 	if snap, ok := s.cache.get(head); ok {
 		return snap, nil, nil
 	}
-	chain, err := s.Repo.ReadChain(ctx, head)
+	snapshot, publication, err := s.foldAt(ctx, head)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load at %s: %w", head, err)
+	}
+	return snapshot, publication, nil
+}
+
+func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *cachePublication, error) {
+	commit, err := s.Repo.ReadCommit(ctx, head)
+	if err == nil && len(commit.Parents) == 1 && !slices.ContainsFunc(commit.Pack.Ops, isCheckpoint) {
+		if base, top, floor, ok := s.cache.getTop(commit.Parents[0]); ok && commit.Pack.Lamport > floor {
+			if snapshot, err := fold.Extend(base, commit); err == nil {
+				return snapshot, foldPublication(head, snapshot, max(top, commit.Pack.Lamport), floor), nil
+			}
+		}
+	}
+	chain, err := s.Repo.ReadChain(ctx, head)
+	if err != nil {
+		return nil, nil, err
 	}
 	snapshot, err := fold.Fold(chain)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load at %s: %w", head, err)
+		return nil, nil, err
 	}
-	return snapshot, chain, nil
+	return snapshot, foldChainPublication(head, snapshot, chain), nil
 }
 
 // LoadRootedAt folds the immutable chain ending at head and returns both its

@@ -13,6 +13,29 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+// ReadCommit decodes one immutable commit without walking its parents or
+// invoking the missing-history backfill hook.
+func (r *Repo) ReadCommit(ctx context.Context, tip model.SHA) (_ model.PackCommit, resultErr error) {
+	if !plumbing.IsHash(string(tip)) {
+		return model.PackCommit{}, fmt.Errorf("invalid tip sha %q", tip)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
+	if err := r.refreshGraft(); err != nil {
+		return model.PackCommit{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return model.PackCommit{}, err
+	}
+	commit, err := r.lookupCommit(plumbing.NewHash(string(tip)))
+	if err != nil {
+		return model.PackCommit{}, fmt.Errorf("read commit %s: %w", tip, err)
+	}
+	return r.packCommit(commit)
+}
+
 // ReadChain walks every commit reachable from tip breadth-first, deduplicated,
 // and decodes each one's ops.json into a model.PackCommit. A missing object
 // is fetched through the BackfillWith hook and the walk retried once; one

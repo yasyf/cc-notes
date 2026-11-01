@@ -22,6 +22,23 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: Fresh-process cache cost and crash contracts
         run: ./scripts/test.sh -count=1 -v -run '^(TestLRUDir|TestCacheReader|TestCacheHint|TestCacheInline)' ./internal/store
+      - name: Exact-parent load semantics and native request cost
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestLoad(CachedParent|Parent)' ./internal/store
+      - name: Reject full-history reads on the immutable public 33 baseline
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-parent-load-negative"
+          git fetch --no-tags --depth=1 origin baab49cc21ad40f8b2e9772237f3fb4008137254
+          git worktree add --detach "$baseline" baab49cc21ad40f8b2e9772237f3fb4008137254
+          cp internal/store/load_parent_cost_test.go "$baseline/internal/store/"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestLoadParentFreshProcessCost$' ./internal/store) > "$RUNNER_TEMP/ccn-parent-load-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-parent-load-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-parent-load-negative.log")" -eq 4
+          test "$(grep -c 'PARENT_LOAD_HISTORY_REGRESSION:' "$RUNNER_TEMP/ccn-parent-load-negative.log")" -eq 4
       - name: Exact duplicate contract with cold caches
         run: ./scripts/test.sh -race -count=1 -v -run '^TestCreateExactDuplicateAfterColdCache$' ./internal/store
       - name: Keyed duplicate content, survivors and held-index fallback
