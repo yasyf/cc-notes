@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"fix/labeled-ledger-read-cost"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"add_comment","body":"Frozen independent labeled-ledger source66a6/base2e57/tree3a0e PASSb9a51c0f. Normal scoped6path publication/current-main integration CI next. Existing indexedLabeledList only; archive/anchors/AND labels and created/id order preserved; cold/unavailable index ordinary reads retained. Full33ledger DTO/Linux logical-rchar and immutable35 named negative planned, no physical IO or protected-consumer adoption claim."}]}
