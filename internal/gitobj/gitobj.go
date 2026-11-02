@@ -83,6 +83,7 @@ type Repo struct {
 	refDirectory string
 	reaches      map[plumbing.Hash]*reach
 	reachOrder   []plumbing.Hash
+	graph        *commitGraph
 	treeRev      model.SHA
 	treeVal      *treeIndex
 	subtrees     map[plumbing.Hash]*treeIndex
