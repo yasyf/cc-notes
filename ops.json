@@ -1,1 +1,1 @@
-{"v":1,"lamport":1,"ops":[{"kind":"create_task","nonce":"42c4c06e7242eb44e6dfc778f684a026","title":"test task","description":"","type":"task","priority":2,"branch":"main","parent":"","labels":null}]}
+{"v":1,"lamport":2,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"set_branch","branch":"cache-footprint"}]}
