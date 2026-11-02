@@ -14,7 +14,9 @@ permissions:
 
 jobs:
   bounded-cache-cost:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -171,6 +173,7 @@ jobs:
 
   release-monotonic:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -190,7 +193,9 @@ jobs:
 
 
   task-dedupe-cost:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -213,7 +218,9 @@ jobs:
         run: ./scripts/test.sh -count=1 -v -run '^TestPackedObjectIndexFreshCLICost$' ./internal/cli
 
   attachment-ref-passes:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -222,6 +229,7 @@ jobs:
 
   test:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'macos-latest' }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -245,6 +253,7 @@ jobs:
   helper:
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -291,6 +300,7 @@ jobs:
   # keep it on a cheap linux runner instead of billing macOS minutes 10x.
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       GOOS: darwin
       GOARCH: arm64
@@ -304,6 +314,7 @@ jobs:
 
   vuln:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
       GOOS: darwin
       GOARCH: arm64
@@ -317,6 +328,7 @@ jobs:
 
   hook-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
       CAPT_HOOK_VERSION: "12.89.1"
     steps:
@@ -355,6 +367,7 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
 
@@ -387,6 +400,7 @@ jobs:
 
   webui:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: web
     steps:
       - uses: actions/checkout@v7
