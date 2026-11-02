@@ -1,0 +1,1 @@
+exclude: ^internal/sourceview/testdata/golden/answer_(durable|superseded)\.md$
