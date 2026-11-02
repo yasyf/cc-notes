@@ -1,0 +1,65 @@
+name: Ledger fold cost
+
+on:
+  pull_request:
+    paths:
+      - internal/fold/**
+      - model/**
+      - scripts/ledger_fold_cost_report.py
+      - .github/workflows/ledger-fold-cost.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-fold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: "2"
+      GOFLAGS: "-p=2"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Prepare immutable comparison
+        run: |
+          set -euo pipefail
+          output="${RUNNER_TEMP:?}/ledger-fold-cost"
+          baseline="${RUNNER_TEMP:?}/ledger-fold-baseline"
+          mkdir -p "$output"
+          git rev-parse HEAD > "$output/candidate-head.txt"
+          sha256sum internal/fold/fold_ledger.go internal/fold/ledger_index_test.go scripts/ledger_fold_cost_report.py .github/workflows/ledger-fold-cost.yml > "$output/candidate-source.sha256"
+          git fetch --no-tags --depth=1 origin bd418f678c9d0e68c8c850d9d8f5822cc353900a
+          git worktree add --detach "$baseline" bd418f678c9d0e68c8c850d9d8f5822cc353900a
+          test ! -e "$baseline/internal/fold/ledger_index_test.go"
+          cp internal/fold/ledger_index_test.go "$baseline/internal/fold/ledger_index_test.go"
+          git -C "$baseline" rev-parse HEAD > "$output/baseline-head.txt"
+          git -C "$baseline" diff --exit-code -- internal/fold/fold_ledger.go
+          sha256sum "$baseline/internal/fold/fold_ledger.go" > "$output/baseline-source.sha256"
+      - name: Measure immutable old fold
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP:?}/ledger-fold-baseline"
+          ./scripts/test.sh -count=3 -cpu=2 -run '^TestLedgerIndexed' -bench '^BenchmarkLedger(FoldRows|FoldHistory|ExtendRows)$' -benchtime=1x -benchmem -v ./internal/fold > "${RUNNER_TEMP:?}/ledger-fold-cost/baseline.log" 2>&1
+          cat "${RUNNER_TEMP:?}/ledger-fold-cost/baseline.log"
+      - name: Measure indexed fold
+        run: |
+          set -euo pipefail
+          ./scripts/test.sh -count=3 -cpu=2 -run '^TestLedgerIndexed' -bench '^BenchmarkLedger(FoldRows|FoldHistory|ExtendRows)$' -benchtime=1x -benchmem -v ./internal/fold > "${RUNNER_TEMP:?}/ledger-fold-cost/candidate.log" 2>&1
+          cat "${RUNNER_TEMP:?}/ledger-fold-cost/candidate.log"
+      - name: Compare complete snapshots and retain measured work
+        run: python3 -I -B scripts/ledger_fold_cost_report.py "${RUNNER_TEMP:?}/ledger-fold-cost"
+      - name: Retire owned comparison checkout
+        if: always()
+        run: |
+          baseline="${RUNNER_TEMP:?}/ledger-fold-baseline"
+          if test -d "$baseline"; then
+            git worktree remove --force "${baseline:?}"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ledger-fold-cost
+          path: ${{ runner.temp }}/ledger-fold-cost
+          if-no-files-found: error
