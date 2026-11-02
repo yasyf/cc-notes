@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -23,10 +24,14 @@ const unknownGeneration = math.MaxUint64
 // commitGraph serves parents and topological levels from the first object
 // directory, own then alternates, that holds a commit-graph, as git loads it.
 // Graph files are mapped read-only; git replaces them by rename and never
-// rewrites one in place, so a mapping stays valid after a rewrite.
+// rewrites one in place, so a mapping stays valid after a rewrite. The
+// mappings are unmapped when the graph is replaced, or, for a Repo dropped
+// without that (a retained store reopening), once the graph is unreachable.
 type commitGraph struct {
-	index commitgraph.Index
-	stamp []pathStamp
+	index    commitgraph.Index
+	stamp    []pathStamp
+	mappings [][]byte
+	cleanup  runtime.Cleanup
 }
 
 type mappedGraph struct{ data []byte }
@@ -42,7 +47,7 @@ func (m mappedGraph) ReadAt(p []byte, off int64) (int, error) {
 	return n, nil
 }
 
-func (m mappedGraph) Close() error { return syscall.Munmap(m.data) }
+func (mappedGraph) Close() error { return nil }
 
 // refreshCommitGraph reopens the commit-graph when any candidate file moved
 // since it was opened, and drops it in a shallow repository, whose grafts the
@@ -62,22 +67,40 @@ func (r *Repo) refreshCommitGraph() error {
 	if err := r.closeCommitGraph(); err != nil {
 		return err
 	}
-	index, err := openCommitGraphIndex(paths)
+	index, mappings, err := openCommitGraphIndex(paths)
 	if err != nil || index == nil {
 		r.graph = &commitGraph{stamp: stamp}
 		return nil
 	}
-	r.graph = &commitGraph{index: index, stamp: stamp}
+	graph := &commitGraph{index: index, stamp: stamp, mappings: mappings}
+	graph.cleanup = runtime.AddCleanup(graph, func(mappings [][]byte) { _ = unmapGraphs(mappings) }, mappings)
+	r.graph = graph
 	return nil
 }
 
+// closeCommitGraph drops the open graph and the frontiers expanded under it,
+// whose generations a replaced graph, or none, would contradict. Callers hold
+// mu.
 func (r *Repo) closeCommitGraph() error {
-	if r.graph == nil || r.graph.index == nil {
-		r.graph = nil
+	if r.graph == nil {
 		return nil
 	}
-	err := r.graph.index.Close()
+	graph := r.graph
 	r.graph = nil
+	clear(r.reaches)
+	r.reachOrder = r.reachOrder[:0]
+	if len(graph.mappings) == 0 {
+		return nil
+	}
+	graph.cleanup.Stop()
+	return unmapGraphs(graph.mappings)
+}
+
+func unmapGraphs(mappings [][]byte) error {
+	var err error
+	for _, data := range mappings {
+		err = errors.Join(err, syscall.Munmap(data))
+	}
 	return err
 }
 
@@ -149,24 +172,29 @@ func alternateObjectDirs(objects string) []string {
 }
 
 // openCommitGraphIndex opens the first candidate graph present: a single file,
-// or a chain whose layers stack base first. It returns nil when none exists.
-func openCommitGraphIndex(paths []string) (commitgraph.Index, error) {
+// or a chain whose layers stack base first, with the mappings it holds. It
+// returns a nil index when none exists.
+func openCommitGraphIndex(paths []string) (commitgraph.Index, [][]byte, error) {
 	for i := 0; i < len(paths); i += 2 {
-		if index, err := mapGraph(paths[i], nil); err == nil {
-			return index, nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		index, err := openGraphChain(paths[i+1])
+		var mappings [][]byte
+		index, err := mapGraph(paths[i], nil, &mappings)
 		if errors.Is(err, os.ErrNotExist) {
-			continue
+			index, err = openGraphChain(paths[i+1], &mappings)
 		}
-		return index, err
+		if err == nil {
+			return index, mappings, nil
+		}
+		if unmapErr := unmapGraphs(mappings); unmapErr != nil {
+			return nil, nil, errors.Join(err, unmapErr)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, err
+		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
-func openGraphChain(chainPath string) (commitgraph.Index, error) {
+func openGraphChain(chainPath string, mappings *[][]byte) (commitgraph.Index, error) {
 	f, err := os.Open(chainPath) //nolint:gosec // G304: the commit-graph chain of the repository this handle opened.
 	if err != nil {
 		return nil, err
@@ -178,19 +206,14 @@ func openGraphChain(chainPath string) (commitgraph.Index, error) {
 	}
 	var index commitgraph.Index
 	for _, layer := range layers {
-		next, err := mapGraph(filepath.Join(filepath.Dir(chainPath), "graph-"+layer+".graph"), index)
-		if err != nil {
-			if index != nil {
-				_ = index.Close()
-			}
+		if index, err = mapGraph(filepath.Join(filepath.Dir(chainPath), "graph-"+layer+".graph"), index, mappings); err != nil {
 			return nil, err
 		}
-		index = next
 	}
 	return index, nil
 }
 
-func mapGraph(path string, parent commitgraph.Index) (commitgraph.Index, error) {
+func mapGraph(path string, parent commitgraph.Index, mappings *[][]byte) (commitgraph.Index, error) {
 	f, err := os.Open(path) //nolint:gosec // G304: a commit-graph layer of the repository this handle opened.
 	if err != nil {
 		return nil, err
@@ -207,12 +230,8 @@ func mapGraph(path string, parent commitgraph.Index) (commitgraph.Index, error) 
 	if err != nil {
 		return nil, err
 	}
-	index, err := commitgraph.OpenFileIndexWithParent(mappedGraph{data: data}, parent)
-	if err != nil {
-		_ = syscall.Munmap(data)
-		return nil, err
-	}
-	return index, nil
+	*mappings = append(*mappings, data)
+	return commitgraph.OpenFileIndexWithParent(mappedGraph{data: data}, parent)
 }
 
 func statStamp(path string) pathStamp {
