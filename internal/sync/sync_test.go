@@ -1033,6 +1033,7 @@ func bloblessClone(t *testing.T, refspec string) (*store.Store, model.Note) {
 	gittest.Git(t, filepath.Dir(thin), "clone", "-q", "--filter=blob:none", "file://"+bare, thin)
 	gittest.Git(t, thin, "config", "user.name", "Bob")
 	gittest.Git(t, thin, "config", "user.email", "bob@example.com")
+	gittest.InitializeEmpty(t, thin)
 	gittest.Git(t, thin, "fetch", "-q", "origin", refspec)
 	tip := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, note.ID))
 	if missing := gittest.Git(t, thin, "rev-list", "--objects", "--missing=print", tip); !strings.Contains(missing, "?") {
@@ -1085,6 +1086,7 @@ func TestSyncDefersARefWhoseObjectsTheRemoteWithholds(t *testing.T) {
 	gittest.Git(t, filepath.Dir(thin), "clone", "-q", "--filter=blob:none", "file://"+bare, thin)
 	gittest.Git(t, thin, "config", "user.name", "Bob")
 	gittest.Git(t, thin, "config", "user.email", "bob@example.com")
+	gittest.InitializeEmpty(t, thin)
 	b, err := store.Open(thin)
 	if err != nil {
 		t.Fatalf("Open(%s): %v", thin, err)
