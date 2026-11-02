@@ -1,1 +1,1 @@
-{"v":1,"lamport":19,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"set_branch","branch":"cache-footprint"}]}
+{"v":1,"lamport":20,"ops":[{"kind":"add_label","label":"delivery-deadline:2026-11-02T12:00:00Z"},{"kind":"add_label","label":"missed-deadline:2026-11-02T10:00:00Z"}]}
