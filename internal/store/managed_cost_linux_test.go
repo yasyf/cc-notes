@@ -135,7 +135,7 @@ func TestManagedFreshProcessCostHelper(t *testing.T) {
 		result.Snapshots = []model.Task{snapshot.(model.Task)}
 	case "append":
 		snapshot, err := s.Append(ctx, refs.For(model.KindTask, input.Expected.ID), []model.Op{
-			model.SetTitle{Title: "managed cost updated selection"}, model.AddTag{Tag: "after-managed-write"},
+			model.SetTitle{Title: "managed cost updated selection"}, model.AddLabel{Label: "after-managed-write"},
 		})
 		if err != nil {
 			t.Fatal(err)
