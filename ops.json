@@ -1,1 +1,1 @@
-{"v":1,"lamport":10,"ops":[{"kind":"set_criterion_status","id":"fd62193d4fff85f2738f2e04f90f7e16","status":"met","note":"Root accepted component grade: actuald85 Linux4420/hooks1028+Mac271; bothN32/N10000 new1connection/warm0/strictold32negative, fixed6506pairedactualPASS. Independentfinalmainclosure14cabe, normal1e213/public715/retained716. LiveSHMtrace pending separately."}]}
+{"v":1,"lamport":11,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"set_branch","branch":"cache-footprint"}]}
