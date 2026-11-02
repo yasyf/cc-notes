@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 	"os"
@@ -59,10 +60,21 @@ func requireManagedProjection(t *testing.T, s *Store, ref string, snapshot model
 	want := projectQueryMetadata(source.binding, tip, snapshot)
 	if err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
 		row, err := decodeQueryMetadata(tx, source, readQueryMetadata(tx, source.binding, snapshot.EntityID()))
-		if err == nil && !reflect.DeepEqual(row, want) {
-			t.Errorf("managed row=%#v; want %#v", row, want)
+		if err != nil {
+			return err
 		}
-		return err
+		actual, err := json.Marshal(row)
+		if err != nil {
+			return err
+		}
+		expected, err := json.Marshal(want)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(actual, expected) {
+			t.Errorf("managed row=%s; want %s", actual, expected)
+		}
+		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
