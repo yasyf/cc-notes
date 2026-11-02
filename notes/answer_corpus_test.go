@@ -70,7 +70,7 @@ func TestAnswerCorpusMatchesCanonicalProgramBranchUnion(t *testing.T) {
 			if cut.Binding == "" || cut.Generation == "" || len(cut.Records) != len(want) {
 				t.Fatalf("cut metadata = %+v; want %d", cut, len(want))
 			}
-			var ids []string
+			ids := make([]string, 0, len(want))
 			for i, answer := range want {
 				record := cut.Records[i]
 				if record.ID != answer.ID || record.ShortID != answer.ID.Short() || record.Path != answer.ID.Short()+".md" || record.Tip != answer.Head || !record.UpdatedAt.Equal(answer.Meta().UpdatedAt) {

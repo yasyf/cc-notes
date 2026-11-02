@@ -197,7 +197,7 @@ func TestAnswerCorpusMetadataTimeCodecAndUnionOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var selected []model.EntityID
+	selected := make([]model.EntityID, 0, len(selection.selected))
 	for _, row := range selection.selected {
 		selected = append(selected, row.ID)
 	}
@@ -313,12 +313,16 @@ func TestAnswerCorpusConcurrentColdReadersAndSourceWriter(t *testing.T) {
 	workers.Wait()
 	close(results)
 	var cuts []*AnswerCorpusCut
+	defer func() {
+		for i := len(cuts) - 1; i >= 0; i-- {
+			_ = cuts[i].Close()
+		}
+	}()
 	for result := range results {
 		if result.err != nil {
 			t.Fatal(result.err)
 		}
 		cuts = append(cuts, result.cut)
-		defer func() { _ = result.cut.Close() }()
 	}
 	if cuts[0].Generation != cuts[1].Generation || cuts[0].work.payloadWrites.Load()+cuts[1].work.payloadWrites.Load() != 1 {
 		t.Fatal("cold readers did not publish one complete payload")

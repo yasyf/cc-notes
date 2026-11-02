@@ -19,6 +19,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	// Registers the SQLite driver with database/sql for the owned corpus cache.
 	_ "modernc.org/sqlite"
 
 	"github.com/yasyf/cc-notes/internal/refs"
