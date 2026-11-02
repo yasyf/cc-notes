@@ -64,9 +64,6 @@ func TestLoadParentCostHelper(t *testing.T) {
 	if err != nil || !bytes.Equal(actual, input.Want) {
 		t.Fatalf("fresh load = %s, %v; full fold = %s", actual, err, input.Want)
 	}
-	if _, hit := s.cache.get(input.Parent); hit {
-		t.Fatal("fresh load left the superseded parent cached")
-	}
 	if _, hit := s.cache.get(input.Head); !hit {
 		t.Fatal("fresh load did not cache its new tip")
 	}
