@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"set_branch","branch":"cache-footprint"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"add_comment","body":"Deadline: 2026-11-02 03:00 America/Los_Angeles / 11:00 UTC. Complete only after full integrity and per-N checks, normal merge, official release, supported local installation and actual affected-case proof. CLI and helper criteria remain pending until proven. Report the exact blocker or risk before expiry; no silent extension."}]}
