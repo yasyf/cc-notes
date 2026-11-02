@@ -39,7 +39,7 @@ func New(cfg Config) *mcp.Server {
 	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message, hint: cfg.Hint, retained: cfg.Store}
 	ts := &toolset{srv: srv, props: map[string]toolProps{}}
 	registerAll(ts, b)
-	srv.AddReceivingMiddleware(didYouMeanMiddleware(ts.props))
+	srv.AddReceivingMiddleware(didYouMeanMiddleware(ts.props), repoMiddleware())
 	return srv
 }
 
@@ -64,7 +64,10 @@ func registerAll(ts *toolset, b *bridge) {
 // Serve resolves the project directory, chdirs once (per-call chdir would race
 // concurrent tool calls), retains one store for every tool call, writes the
 // liveness marker, and runs the server over stdio until ctx is cancelled — at
-// which point the deferred marker cleanup runs. A signal-initiated stop is a
+// which point the deferred marker cleanup runs. A project directory that opens
+// no repository, such as a session rooted in $HOME, still serves: each call
+// names its repository through the repo property or reports the open error, so
+// the client never caches a failed connection. A signal-initiated stop is a
 // clean shutdown, not a failure: the cancellation-induced transport error is
 // suppressed so the process exits 0.
 func Serve(ctx context.Context, dir string, cfg Config) error {
@@ -79,27 +82,32 @@ func Serve(ctx context.Context, dir string, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("working directory: %w", err)
 	}
-	retained, err := store.Retain(ctx, cwd)
-	if err != nil {
-		return err
+	if retained, err := store.Retain(ctx, cwd); err == nil {
+		defer func() { _ = retained.Close() }()
+		markerDir, err := liveMarkerDir(ctx, retained)
+		if err != nil {
+			return err
+		}
+		if err := WriteMarker(markerDir); err != nil {
+			return err
+		}
+		defer RemoveMarker(markerDir)
+		cfg.Store = retained
 	}
-	defer func() { _ = retained.Close() }()
-	s, err := retained.Store(ctx)
-	if err != nil {
-		return err
-	}
-	markerDir := filepath.Join(s.CommonDir(), "cc-notes", "mcp")
-	_ = s.Close()
-	if err := WriteMarker(markerDir); err != nil {
-		return err
-	}
-	defer RemoveMarker(markerDir)
-	cfg.Store = retained
 	err = New(cfg).Run(ctx, &mcp.StdioTransport{})
 	if ctx.Err() != nil {
 		return nil
 	}
 	return err
+}
+
+func liveMarkerDir(ctx context.Context, retained *store.Retained) (string, error) {
+	s, err := retained.Store(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = s.Close() }()
+	return filepath.Join(s.CommonDir(), "cc-notes", "mcp"), nil
 }
 
 // resolveWorkdir picks the project directory: the --dir flag, then

@@ -857,6 +857,73 @@ func TestServeSignalStopExitsClean(t *testing.T) {
 	}
 }
 
+// TestServeOutsideRepository pins the connection a session rooted outside any
+// repository gets, as Claude Code launches the server from $HOME: Serve stays
+// up, a call naming its repository runs against it, and a call naming none
+// reports the open error as its result.
+func TestServeOutsideRepository(t *testing.T) {
+	repo := initRepo(t)
+	outside := t.TempDir()
+	t.Chdir(outside)
+	t.Setenv("CCN_REPO", outside)
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	origIn, origOut := os.Stdin, os.Stdout
+	os.Stdin, os.Stdout = stdinR, stdoutW
+	t.Cleanup(func() {
+		os.Stdin, os.Stdout = origIn, origOut
+		for _, f := range []*os.File{stdinR, stdinW, stdoutR, stdoutW} {
+			_ = f.Close()
+		}
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- mcpserver.Serve(ctx, outside, mcpserver.Config{Version: "test", NewRoot: cli.NewRootCmd, Label: cli.Label, Message: cli.Message, Hint: cli.Hint})
+	}()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	cs, err := client.Connect(ctx, &mcp.IOTransport{Reader: stdoutR, Writer: stdinW}, nil)
+	if err != nil {
+		t.Fatalf("connect to a server started outside a repository: %v", err)
+	}
+
+	call(t, cs, "note_add", map[string]any{"repo": repo, "title": "named", "body": "named"})
+	status := decode[struct {
+		Notes struct {
+			Total int `json:"total"`
+		} `json:"notes"`
+	}](t, call(t, cs, "status", map[string]any{"repo": repo}))
+	if status.Notes.Total != 1 {
+		t.Fatalf("status with repo %s counts %d notes, want the 1 note_add wrote there", repo, status.Notes.Total)
+	}
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "status", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("status with no repo: %v", err)
+	}
+	if !res.IsError || !strings.Contains(toolText(res), "not a git repository") {
+		t.Fatalf("status with no repo = %q (error %v), want the repository open error", toolText(res), res.IsError)
+	}
+
+	_ = cs.Close()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after context cancel")
+	}
+}
+
 // waitFor polls an observable condition until it holds or the deadline lapses.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()

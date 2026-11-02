@@ -37,8 +37,12 @@ type bridge struct {
 // the error's hint line, so a caller sees the same way forward the CLI prints —
 // that the SDK renders as an error result. It never touches os.Stdout — the stdio
 // protocol owns it — and pins stdin to empty so no command blocks on the
-// protocol's own stdin.
+// protocol's own stdin. A call that names its repository runs with --repo,
+// which the CLI resolves ahead of the retained store.
 func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, any, error) {
+	if repo, ok := repoFrom(ctx); ok {
+		argv = append([]string{"--repo=" + repo}, argv...)
+	}
 	if b.retained != nil {
 		ctx = store.WithRetained(ctx, b.retained)
 	}
