@@ -15,6 +15,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -76,25 +77,26 @@ func TestQueryMetadataIndexRefreshAndPinnedViews(t *testing.T) {
 	}
 }
 
-func TestQueryMetadataIndexEmptyLiveAndMissingPinned(t *testing.T) {
+func TestQueryMetadataIndexEmptyLiveAndPinnedAuthority(t *testing.T) {
 	s := initStore(t)
 	pinned := captureAnswerMetadata(t, s.Pinned(map[string]model.SHA{}))
-	if _, hit, err := queryIndexedLabels(t.Context(), t, pinned, "none"); err != nil || hit {
-		t.Fatalf("missing pinned = %v %v", hit, err)
+	if _, hit, err := queryIndexedLabels(t.Context(), t, pinned, "none"); err != nil || !hit {
+		t.Fatalf("empty initialized pinned = %v %v", hit, err)
 	}
-	if _, err := os.Stat(pinned.indexPath()); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pinned created cache: %v", err)
+	if _, err := os.Stat(pinned.indexPath()); err != nil {
+		t.Fatalf("explicit fixture authority missing: %v", err)
 	}
 	live := captureAnswerMetadata(t, s)
 	if _, hit, err := queryIndexedLabels(t.Context(), t, live, "none"); err != nil || !hit {
 		t.Fatalf("empty live = %v %v", hit, err)
 	}
-	if _, hit, err := queryIndexedLabels(t.Context(), t, pinned, "none"); err != nil || !hit {
-		t.Fatalf("exact empty pinned = %v %v", hit, err)
+	create(t, s, answerOps("new managed entity"))
+	if _, hit, err := queryIndexedLabels(t.Context(), t, pinned, "none"); err != nil || hit {
+		t.Fatalf("historical empty pinned = %v %v", hit, err)
 	}
 }
 
-func TestQueryMetadataIndexCacheFailuresAreMisses(t *testing.T) {
+func TestQueryMetadataIndexAuthorityFailuresRequireReindex(t *testing.T) {
 	for _, kind := range []string{"unavailable", "corrupt", "incomplete"} {
 		t.Run(kind, func(t *testing.T) {
 			s := initStore(t)
@@ -136,39 +138,40 @@ func TestQueryMetadataIndexCacheFailuresAreMisses(t *testing.T) {
 					}
 				}
 			}
-			if _, hit, err := queryIndexedLabels(t.Context(), t, source, "none"); err != nil || hit {
-				t.Fatalf("failure %s = %v %v", kind, hit, err)
+			if _, hit, err := queryIndexedLabels(t.Context(), t, source, "none"); !errors.Is(err, managed.ErrReindex) || hit {
+				t.Fatalf("failure %s = %v %v; want explicit reindex", kind, hit, err)
 			}
 		})
 	}
 }
 
-func TestQueryMetadataIndexCancellationRollsBack(t *testing.T) {
+func TestQueryMetadataIndexCancellationPreservesManagedState(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, answerOps("a")).(model.Answer)
 	source := captureAnswerMetadata(t, s)
-	if _, hit, err := queryIndexedLabels(t.Context(), t, source, "none"); err != nil || !hit {
-		t.Fatalf("initial = %v %v", hit, err)
-	}
 	appendOps(t, s, answerRef(a.ID), model.AddTag{Tag: "new"})
 	current := captureAnswerMetadata(t, s)
+	generation, transaction := queryIndexGeneration(t, current)
 	ctx, cancel := context.WithCancel(t.Context())
 	_, hit, err := readQueryMetadataIndex(ctx, current, func(_ *bolt.Tx) (bool, error) { cancel(); return true, nil })
 	if hit || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel = %v %v", hit, err)
 	}
+	if afterGeneration, after := queryIndexGeneration(t, current); afterGeneration != generation || after != transaction {
+		t.Fatalf("cancelled read changed authority from %s/%d to %s/%d", generation, transaction, afterGeneration, after)
+	}
 	oldPinned := captureAnswerMetadata(t, s.Pinned(source.store.pins))
-	if _, hit, err := queryIndexedLabels(t.Context(), t, oldPinned, "none"); err != nil || !hit {
-		t.Fatalf("rollback original = %v %v", hit, err)
+	if _, hit, err := queryIndexedLabels(t.Context(), t, oldPinned, "none"); err != nil || hit {
+		t.Fatalf("historical pin = %v %v", hit, err)
 	}
 	missing := model.SHA("1111111111111111111111111111111111111111")
 	current.tips[a.ID] = missing
-	if _, hit, err := queryIndexedLabels(t.Context(), t, current, "none"); err == nil || hit {
-		t.Fatalf("authority error = %v %v", hit, err)
+	if _, hit, err := queryIndexedLabels(t.Context(), t, current, "none"); err != nil || hit {
+		t.Fatalf("uncaptured historical tip = %v %v", hit, err)
 	}
 }
 
-func TestQueryMetadataIndexConcurrentCapturedWriters(t *testing.T) {
+func TestQueryMetadataIndexConcurrentCapturedReaders(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, answerOps("a")).(model.Answer)
 	before := captureAnswerMetadata(t, s)
@@ -180,19 +183,20 @@ func TestQueryMetadataIndexConcurrentCapturedWriters(t *testing.T) {
 		wg.Go(func() {
 			<-start
 			ids, hit, err := queryIndexedLabels(t.Context(), t, source, "new")
-			want := []model.EntityID{}
-			if source.tips[a.ID] == after.tips[a.ID] {
-				want = append(want, a.ID)
+			current := source.tips[a.ID] == after.tips[a.ID]
+			var want []model.EntityID
+			if current {
+				want = []model.EntityID{a.ID}
 			}
-			if err != nil || !hit || !reflect.DeepEqual(ids, want) {
-				t.Errorf("captured concurrent = %v %v %v, want %v", ids, hit, err, want)
+			if err != nil || hit != current || !reflect.DeepEqual(ids, want) {
+				t.Errorf("captured concurrent = %v %v %v, want %v hit=%t", ids, hit, err, want, current)
 			}
 		})
 	}
 	close(start)
 	wg.Wait()
 	if ids, hit, err := queryIndexedLabels(t.Context(), t, after, "new"); err != nil || !hit || !reflect.DeepEqual(ids, []model.EntityID{a.ID}) {
-		t.Fatalf("settled = %v %v %v", ids, hit, err)
+		t.Fatalf("current = %v %v %v", ids, hit, err)
 	}
 }
 
@@ -217,28 +221,29 @@ func TestQueryMetadataIndexBindingChangeAfterReaderRollsBack(t *testing.T) {
 	}
 }
 
-func TestQueryMetadataIndexReadOnlyUnchangedLiveCacheIsHit(t *testing.T) {
+func TestQueryMetadataIndexReadOnlyManagedStateIsHit(t *testing.T) {
 	s := initStore(t)
 	create(t, s, answerOps("a"))
-	source := captureAnswerMetadata(t, s)
-	if _, hit, err := queryIndexedLabels(t.Context(), t, source, "none"); err != nil || !hit {
-		t.Fatalf("initial = %v %v", hit, err)
-	}
-	if err := os.Chmod(source.indexPath(), 0o444); err != nil {
+	old := captureAnswerMetadata(t, s)
+	create(t, s, answerOps("new"))
+	current := captureAnswerMetadata(t, s)
+	generation, transaction := queryIndexGeneration(t, current)
+	if err := os.Chmod(current.indexPath(), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(source.indexPath(), 0o600) })
-	if _, hit, err := queryIndexedLabels(t.Context(), t, source, "none"); err != nil || !hit {
-		t.Fatalf("readonly unchanged live = %v %v", hit, err)
+	t.Cleanup(func() { _ = os.Chmod(current.indexPath(), 0o600) })
+	if _, hit, err := queryIndexedLabels(t.Context(), t, current, "none"); err != nil || !hit {
+		t.Fatalf("readonly current = %v %v", hit, err)
 	}
-	pinned := captureAnswerMetadata(t, s.Pinned(source.store.pins))
+	pinned := captureAnswerMetadata(t, s.Pinned(current.store.pins))
 	if _, hit, err := queryIndexedLabels(t.Context(), t, pinned, "none"); err != nil || !hit {
 		t.Fatalf("readonly exact pinned = %v %v", hit, err)
 	}
-	create(t, s, answerOps("new"))
-	changed := captureAnswerMetadata(t, s)
-	if _, hit, err := queryIndexedLabels(t.Context(), t, changed, "none"); err != nil || hit {
-		t.Fatalf("readonly changed live = %v %v", hit, err)
+	if _, hit, err := queryIndexedLabels(t.Context(), t, old, "none"); err != nil || hit {
+		t.Fatalf("readonly historical = %v %v", hit, err)
+	}
+	if afterGeneration, after := queryIndexGeneration(t, current); afterGeneration != generation || after != transaction {
+		t.Fatalf("readonly queries changed authority from %s/%d to %s/%d", generation, transaction, afterGeneration, after)
 	}
 }
 
@@ -257,10 +262,13 @@ func TestQueryMetadataIndexPartialRefoldsAndPinnedMisses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordsGit.UpdateRef(t.Context(), answerRef(a.ID), partial, tip); err != nil {
+	if err := s.PublishRef(t.Context(), answerRef(a.ID), partial, tip); err != nil {
 		t.Fatal(err)
 	}
-	source := captureAnswerMetadata(t, s)
+	source, err := queryMetadataIdentity(t.Context(), s, model.KindAnswer)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
 		skipped, hit, err := readQueryMetadataIndex(t.Context(), source, func(tx *bolt.Tx) (int, error) {
 			var row queryMetadata
@@ -271,7 +279,11 @@ func TestQueryMetadataIndexPartialRefoldsAndPinnedMisses(t *testing.T) {
 			t.Fatalf("partial = %d %v %v", skipped, hit, err)
 		}
 	}
-	pinned := captureAnswerMetadata(t, s.Pinned(source.store.pins))
+	captured, err := s.PinnedKinds(t.Context(), model.KindAnswer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := captureAnswerMetadata(t, captured)
 	if _, hit, err := queryIndexedLabels(t.Context(), t, pinned, "none"); err != nil || hit {
 		t.Fatalf("partial pinned = %v %v", hit, err)
 	}
@@ -314,14 +326,11 @@ func TestQueryMetadataIndexUnchangedRowsRemainUnread(t *testing.T) {
 	}
 }
 
-func TestQueryMetadataIndexContendedCacheDoesNotRetryWritable(t *testing.T) {
+func TestQueryMetadataIndexContendedAuthorityHonorsCancellation(t *testing.T) {
 	s := initStore(t)
 	create(t, s, answerOps("a"))
 	source := captureAnswerMetadata(t, s)
-	if _, hit, err := queryIndexedLabels(t.Context(), t, source, "none"); err != nil || !hit {
-		t.Fatalf("initial = %v %v", hit, err)
-	}
-	owner, err := bolt.Open(source.indexPath(), 0o600, nil)
+	owner, err := managed.Lock(t.Context(), s.recordsCommonDir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,10 +344,10 @@ func TestQueryMetadataIndexContendedCacheDoesNotRetryWritable(t *testing.T) {
 	started := time.Now()
 	_, hit, err := queryIndexedLabels(ctx, t, source, "none")
 	elapsed := time.Since(started)
-	if hit || (err != nil && !errors.Is(err, context.DeadlineExceeded)) {
-		t.Fatalf("contended cache = %v %v", hit, err)
+	if hit || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("contended authority = %v %v", hit, err)
 	}
 	if elapsed > 1800*time.Millisecond {
-		t.Fatalf("contended cache took %s for one-second context; reopened after lock deadline", elapsed)
+		t.Fatalf("contended authority took %s for one-second context", elapsed)
 	}
 }

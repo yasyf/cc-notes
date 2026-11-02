@@ -319,7 +319,7 @@ func TestLoadToleratesNewerHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteOpsCommit: %v", err)
 	}
-	if err := s.RecordsGit.UpdateRef(ctx, ref, sha, tip); err != nil {
+	if err := s.PublishRef(ctx, ref, sha, tip); err != nil {
 		t.Fatalf("UpdateRef: %v", err)
 	}
 

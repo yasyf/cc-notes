@@ -14,7 +14,7 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-func TestQueryNativeGenerationRapidWork(t *testing.T) {
+func TestQueryManagedGenerationRapidWork(t *testing.T) {
 	for _, count := range []int{32, 10000} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			s := initStore(t)
@@ -39,17 +39,15 @@ func TestQueryNativeGenerationRapidWork(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(s.recordsCommonDir, "packed-refs"), []byte("# pack-refs with: peeled fully-peeled sorted \n"+strings.Join(packed, "\n")+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			if err := s.Reindex(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			appendOps(t, s, refs.For(model.KindDoc, selected), model.AddSupersededBy{ID: successor})
 			q, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if current, err := q.currentGeneration(t.Context()); err != nil || current == "" {
-				if err != nil || os.Getenv("CCN_REQUIRE_NATIVE_REF_COUNTER") == "1" {
-					t.Fatalf("recent native generation = %q %v", current, err)
-				}
-				t.Skip("filesystem does not qualify recent native generations")
-			}
+
 			var previous string
 			for cycle := range 32 {
 				appendOps(t, s, refs.For(model.KindDoc, selected), model.AddTag{Tag: fmt.Sprintf("cycle-%d", cycle)})
@@ -59,7 +57,7 @@ func TestQueryNativeGenerationRapidWork(t *testing.T) {
 				}
 				generation, transaction := queryIndexGeneration(t, q)
 				if generation == "" || generation == previous {
-					t.Fatalf("cycle %d did not publish a changed native generation", cycle)
+					t.Fatalf("cycle %d did not publish a changed managed generation", cycle)
 				}
 				ctx := &queryWorkContext{Context: t.Context()}
 				incoming, heads, hit, err = s.IndexedSupersession(ctx, model.KindDoc, selected)

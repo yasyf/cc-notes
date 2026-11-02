@@ -57,7 +57,7 @@ func TestReferencedAttachmentsPackedRefPasses(t *testing.T) {
 		}
 	}
 	t.Logf("packed-refs opens per attachment scan = %d", opens)
-	if opens != 1 {
-		t.Fatalf("packed-refs opens per attachment scan = %d, want 1", opens)
+	if opens != 0 {
+		t.Fatalf("packed-refs opens per attachment scan = %d, want 0", opens)
 	}
 }

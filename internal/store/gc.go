@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -261,7 +262,12 @@ type pruneTally struct{ pruned, failed int }
 // then deletes it on remote under the remote's tracking lock, tallying per-ref
 // git failures.
 func (s *Store) prune(ctx context.Context, remote, ref string, head model.SHA, tally *pruneTally) error {
-	if err := s.RecordsGit.DeleteRef(ctx, ref, head); err != nil {
+	if err := s.PublishRef(ctx, ref, "", head); err != nil {
+		var published *publicationError
+		var binding *BindingError
+		if errors.As(err, &published) || errors.As(err, &binding) {
+			return err
+		}
 		tally.failed++
 		return nil
 	}

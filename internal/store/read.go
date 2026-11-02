@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	bolt "go.etcd.io/bbolt"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/yasyf/cc-notes/internal/fold"
@@ -33,7 +34,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if err := s.CheckRecords(); err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
-	tip, err := s.Repo.Tip(ctx, ref)
+	tip, err := s.managedTip(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
@@ -134,11 +135,17 @@ func (s *Store) HasNotes(ctx context.Context) (bool, error) {
 	if err := s.CheckRecords(); err != nil {
 		return false, err
 	}
-	ref, err := s.RecordsGit.FirstRef(ctx, refs.Namespace)
-	if err != nil {
-		return false, err
-	}
-	return ref != "", nil
+	var present bool
+	err := s.managedView(ctx, func(tx *bolt.Tx) error {
+		root, err := managedRoot(tx)
+		if err != nil {
+			return err
+		}
+		key, _ := root.Bucket([]byte("refs")).Cursor().First()
+		present = key != nil
+		return nil
+	})
+	return present, err
 }
 
 // ListOpts are the inclusion knobs the List methods honor. A kind that does not
@@ -273,7 +280,7 @@ func (s *Store) HasSession(ctx context.Context, ref, sessionID string) (bool, er
 	if err := s.CheckRecords(); err != nil {
 		return false, err
 	}
-	tip, err := s.Repo.Tip(ctx, ref)
+	tip, err := s.managedTip(ctx, ref)
 	if err != nil {
 		return false, err
 	}
@@ -370,7 +377,7 @@ func (s *Store) PinnedKinds(ctx context.Context, kinds ...model.Kind) (*Store, e
 	for i, kind := range kinds {
 		roots[i] = refs.Root(kind)
 	}
-	tips, err := s.Repo.ListPrefixes(ctx, roots...)
+	tips, err := s.ManagedTips(ctx, roots...)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +398,7 @@ func (s *Store) childrenInRange(ctx context.Context, namespace, selection string
 	tips := s.pins
 	if tips == nil {
 		var err error
-		if tips, err = s.Repo.ListPrefix(ctx, selection); err != nil {
+		if tips, err = s.ManagedTips(ctx, selection); err != nil {
 			return nil, err
 		}
 	}

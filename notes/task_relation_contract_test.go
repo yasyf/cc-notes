@@ -73,7 +73,7 @@ func taskRelationRunbookAt(t *testing.T, c *Client, at int64, runs ...model.Star
 		t.Fatal(err)
 	}
 	id := model.EntityID(tip)
-	if err := c.s.RecordsGit.UpdateRef(t.Context(), refs.For(model.KindRunbook, id), tip, ""); err != nil {
+	if err := c.s.PublishRef(t.Context(), refs.For(model.KindRunbook, id), tip, ""); err != nil {
 		t.Fatal(err)
 	}
 	runbook, err := c.Runbook(t.Context(), id)

@@ -13,6 +13,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -159,23 +160,29 @@ func TestIndexedAnswersRefreshesOnlyChangedTips(t *testing.T) {
 	}
 }
 
-func TestIndexedAnswersCancellationAndUnavailableCache(t *testing.T) {
+func TestIndexedAnswersCancellationAndUnavailableAuthority(t *testing.T) {
 	s := initStore(t)
-	create(t, s, append(answerOps("selected"), model.AddTag{Tag: "target"}))
+	selected := create(t, s, append(answerOps("selected"), model.AddTag{Tag: "target"})).EntityID()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if got, hit, err := s.IndexedAnswers(ctx, []string{"target"}, ListOpts{}); got != nil || hit || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled = %v %v %v", got, hit, err)
 	}
-	cachePath := filepath.Join(s.recordsCommonDir, "cc-notes-query")
-	if err := os.RemoveAll(cachePath); err != nil {
+	cachePath := managed.Path(s.recordsCommonDir)
+	if err := os.Remove(cachePath); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(cachePath, []byte("unavailable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, hit, err := s.IndexedAnswers(t.Context(), []string{"target"}, ListOpts{}); got != nil || hit || err != nil {
+	if got, hit, err := s.IndexedAnswers(t.Context(), []string{"target"}, ListOpts{}); got != nil || hit || !errors.Is(err, managed.ErrReindex) {
 		t.Fatalf("unavailable = %v %v %v", got, hit, err)
+	}
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, hit, err := s.IndexedAnswers(t.Context(), []string{"target"}, ListOpts{}); err != nil || !hit || len(got) != 1 || got[0].ID != selected {
+		t.Fatalf("reindexed = %v %v %v", got, hit, err)
 	}
 }
 
@@ -195,7 +202,7 @@ func TestIndexedAnswersNeverCachesPartialMatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordsGit.UpdateRef(t.Context(), ref, partial, tip); err != nil {
+	if err := s.PublishRef(t.Context(), ref, partial, tip); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

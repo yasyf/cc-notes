@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -51,12 +52,16 @@ func readQueryExecutableResult(t *testing.T, s *Store) queryExecutableResult {
 	}
 	ctx := &queryWorkContext{Context: t.Context()}
 	result, hit, err := readQueryMetadataIndex(ctx, q, func(tx *bolt.Tx) (queryExecutableResult, error) {
+		root, err := managedRoot(tx)
+		if err != nil {
+			return queryExecutableResult{}, err
+		}
 		return queryExecutableResult{
 			Binding:     q.binding,
 			Path:        q.indexPath(),
 			Identity:    identity,
 			GenericKey:  s.listCacheName(model.KindDoc, []byte("generic-result"), foldCacheGeneration, identity),
-			Generation:  string(queryMetadataBinding(tx, q.binding).Get(queryMetadataGenerationKey)),
+			Generation:  strconv.FormatUint(root.Sequence(), 10),
 			Transaction: tx.ID(),
 			Count:       queryMetadataKindTips(tx, q.binding, model.KindDoc).Sequence(),
 		}, nil
@@ -164,6 +169,9 @@ func TestQueryMetadataExecutableIndependentReuse(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(s.recordsCommonDir, "packed-refs"), []byte("# pack-refs with: peeled fully-peeled sorted \n"+strings.Join(packed, "\n")+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			if err := s.Reindex(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			first := runQueryExecutable(t, os.Args[0], queryExecutableRequest{Repo: s.Git.Dir, Output: filepath.Join(t.TempDir(), "first.json"), Version: "same-semantics-first"})
 			second := runQueryExecutable(t, executable, queryExecutableRequest{Repo: s.Git.Dir, Output: filepath.Join(t.TempDir(), "second.json"), Version: "same-semantics-unrelated"})
 			if first.Identity == second.Identity || first.GenericKey == second.GenericKey {
@@ -172,18 +180,10 @@ func TestQueryMetadataExecutableIndependentReuse(t *testing.T) {
 			if first.Binding != second.Binding || first.Path != second.Path {
 				t.Fatalf("EXECUTABLE_METADATA_REBUILD: count=%d first=%s second=%s", count, first.Binding, second.Binding)
 			}
-			promoted := first.Generation == "" && second.Generation != ""
-			wantTransaction := first.Transaction
-			if promoted {
-				wantTransaction++
-			}
-			if first.Count != uint64(count) || second.Count != first.Count || second.Transaction != wantTransaction || (!promoted && second.Generation != first.Generation) {
+			if first.Count != uint64(count) || second.Count != first.Count || second.Transaction != first.Transaction || second.Generation != first.Generation || first.Generation == "" || second.Checks > 32 {
 				t.Fatalf("count=%d first=%+v second=%+v", count, first, second)
 			}
-			if os.Getenv("CCN_REQUIRE_NATIVE_REF_COUNTER") == "1" && (first.Generation == "" || second.Generation == "" || second.Checks > 32) {
-				t.Fatalf("count=%d unqualified or unbounded cross-executable reuse: %+v", count, second)
-			}
-			t.Logf("count=%d first_checks=%d second_checks=%d transaction=%d generation_promoted=%t native_generation=%t", count, first.Checks, second.Checks, second.Transaction, promoted, second.Generation != "")
+			t.Logf("count=%d first_checks=%d second_checks=%d transaction=%d managed_generation=%s", count, first.Checks, second.Checks, second.Transaction, second.Generation)
 		})
 	}
 }
@@ -209,18 +209,35 @@ func TestQueryMetadataSemanticGenerationIsolation(t *testing.T) {
 			if other.binding == q.binding {
 				t.Fatalf("foreign semantic generation shares binding %s", q.binding)
 			}
-			if err := os.MkdirAll(filepath.Dir(other.indexPath()), 0o750); err != nil {
+			sentinel := []byte("foreign projection must not be read or changed")
+			db, err := bolt.Open(q.indexPath(), 0o600, nil)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(other.indexPath(), []byte("foreign query metadata must not be opened"), 0o600); err != nil {
+			err = db.Update(func(tx *bolt.Tx) error {
+				binding, err := ensureQueryMetadataBinding(tx, other.binding)
+				if err != nil {
+					return err
+				}
+				return binding.Bucket(queryMetadataRowsBucket).Put([]byte("foreign"), sentinel)
+			})
+			if closeErr := db.Close(); err == nil {
+				err = closeErr
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
-			if result := readQueryExecutableResult(t, s); result.Count != 1 {
-				t.Fatalf("semantic query returned %d rows, want 1", result.Count)
+			before := readQueryExecutableResult(t, s)
+			if result := readQueryExecutableResult(t, s); result.Count != 1 || result.Generation != before.Generation || result.Transaction != before.Transaction {
+				t.Fatalf("semantic query changed managed view: before=%+v result=%+v", before, result)
 			}
-			data, err := os.ReadFile(other.indexPath())
-			if err != nil || string(data) != "foreign query metadata must not be opened" {
-				t.Fatalf("foreign index changed: %q, %v", data, err)
+			if err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
+				if data := readQueryMetadata(tx, other.binding, "foreign"); string(data) != string(sentinel) {
+					t.Fatalf("foreign projection changed: %q", data)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

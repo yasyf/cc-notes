@@ -107,13 +107,13 @@ func TestAnswerCorpusPreopenedWriterAndDirectRefLifecycle(t *testing.T) {
 	appendOps(t, writer, answerRef(a.ID), model.RemoveSupersededBy{ID: model.EntityID(strings.Repeat("f", 40))})
 	restored := openCorpus(t, s, cache)
 	tip := restored.Records[0].Tip
-	if err := writer.RecordsGit.UpdateRef(t.Context(), answerRef(a.ID), "", tip); err != nil {
+	if err := writer.PublishRef(t.Context(), answerRef(a.ID), "", tip); err != nil {
 		t.Fatal(err)
 	}
 	if got := openCorpus(t, s, cache); len(got.Records) != 0 {
 		t.Fatal("deleted ref selected")
 	}
-	if err := writer.RecordsGit.UpdateRef(t.Context(), answerRef(a.ID), tip, ""); err != nil {
+	if err := writer.PublishRef(t.Context(), answerRef(a.ID), tip, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := openCorpus(t, s, cache); got.Generation != restored.Generation || len(got.Records) != 1 {
@@ -136,7 +136,7 @@ func TestAnswerCorpusLazyPayloadSurvivesSourcePruneAndReplacement(t *testing.T) 
 	if cut.work.payloadReads.Load() != 0 {
 		t.Fatal("open hydrated a payload")
 	}
-	if err := s.RecordsGit.UpdateRef(t.Context(), answerRef(a.ID), "", a.Head); err != nil {
+	if err := s.PublishRef(t.Context(), answerRef(a.ID), "", a.Head); err != nil {
 		t.Fatal(err)
 	}
 	gittest.Git(t, s.Git.Dir, "reflog", "expire", "--expire=now", "--all")

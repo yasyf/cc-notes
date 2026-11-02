@@ -87,6 +87,7 @@ func serve(argv []string) int {
 	}
 	//nolint:gosec // G204: git is a fixed argv[0]; argv is the caller's internal git subcommand.
 	git := exec.CommandContext(ctx, "git", argv...)
+	git.Stdin = os.Stdin
 	git.Stdout, git.Stderr = outWrite, errWrite
 	if err := git.Start(); err != nil {
 		return fail(err)

@@ -51,6 +51,9 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+			if err := s.Reindex(ctx); err != nil {
+				return err
+			}
 			if _, err := installRecords(ctx, s, remote); err != nil {
 				return err
 			}

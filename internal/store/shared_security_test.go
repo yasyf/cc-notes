@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/sourceindex"
@@ -383,6 +384,27 @@ func TestPublishRefRechecksBinding(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), refs) {
 		t.Fatalf("error %q does not name the published ref %s", err, refs)
+	}
+}
+
+func TestManagedPruneReportsBindingChangeAfterDeletion(t *testing.T) {
+	f := newSharedFixture(t)
+	s, err := Open(f.thin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	note := create(t, s, append(noteOps("prune binding race"), model.DeleteNote{}))
+	ref := refs.For(model.KindNote, note.EntityID())
+	shimGit(t, `*"update-ref --stdin"*`, "config", "--file", f.config(), bindingKey, bindingFor(t, f.sourceCommon).String())
+	var tally pruneTally
+	err = s.prune(t.Context(), "origin", ref, note.Meta().Head, &tally)
+	_ = assertBindingError(t, err, ErrBindingChanged, f.config(), "")
+	if !strings.Contains(err.Error(), ref) || tally.failed != 0 || tally.pruned != 0 {
+		t.Fatalf("post-deletion binding error=%v tally=%+v", err, tally)
+	}
+	if _, err := s.Repo.Tip(t.Context(), ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("published deletion tip=%v", err)
 	}
 }
 

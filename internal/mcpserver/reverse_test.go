@@ -19,6 +19,7 @@ import (
 // agent-facing MCP tool set, keyed by their top-level command word (the whole
 // subtree is skipped).
 var excludedCommands = map[string]bool{
+	"reindex":   true,
 	"init":      true, // one-time repo adoption, a human-operator step
 	"package":   true, // installs or removes the macOS machine package
 	"service":   true, // installs or deactivates the macOS machine service

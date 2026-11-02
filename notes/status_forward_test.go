@@ -38,6 +38,9 @@ func appendForeignOp(t *testing.T, c *Client, kind model.Kind, id model.EntityID
 	if err := c.s.Git.UpdateRef(ctx, ref, sha, tip); err != nil {
 		t.Fatalf("UpdateRef(%s): %v", ref, err)
 	}
+	if err := c.s.Reindex(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestStatusCountsSkippedOps folds real chains carrying ops this binary cannot

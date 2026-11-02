@@ -103,7 +103,7 @@ func TestAnswerCorpusPreservesTolerantPartialAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.s.RecordsGit.UpdateRef(t.Context(), refs.For(model.KindAnswer, a.ID), partial, a.Head); err != nil {
+	if err := c.s.PublishRef(t.Context(), refs.For(model.KindAnswer, a.ID), partial, a.Head); err != nil {
 		t.Fatal(err)
 	}
 	cache := t.TempDir()

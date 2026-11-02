@@ -8,6 +8,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -170,6 +171,13 @@ func queryMetadataRowTip(tx *bolt.Tx, source queryMetadataSource, id model.Entit
 	}
 	if len(tip) < 2 || tip[0] > 1 {
 		return "", fmt.Errorf("invalid metadata tip summary for %s", id)
+	}
+	root, err := managedRoot(tx)
+	if err != nil {
+		return "", err
+	}
+	if string(root.Bucket([]byte("refs")).Get([]byte(refs.For(source.kind, id)))) != string(tip[1:]) {
+		return "", fmt.Errorf("metadata tip differs from managed %s %s", source.kind, id)
 	}
 	return model.SHA(tip[1:]), nil
 }

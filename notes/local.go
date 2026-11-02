@@ -28,7 +28,7 @@ func (c *Client) LocalEntities(ctx context.Context) ([]LocalEntity, error) {
 	if err := c.s.CheckRecords(); err != nil {
 		return nil, err
 	}
-	tips, err := c.s.RecordsGit.Refs(ctx, refs.Namespace)
+	tips, err := c.s.ManagedTips(ctx, refs.Namespace)
 	if err != nil {
 		return nil, err
 	}

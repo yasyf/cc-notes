@@ -267,15 +267,27 @@ func (s *Store) CheckRecords() error { return s.storage.check() }
 // CheckRecords, so a binding moved meanwhile fails naming the published refs.
 // A failed compare-and-swap returns gitcmd's error unchanged.
 func (s *Store) PublishRefs(ctx context.Context, updates []gitcmd.RefUpdate) error {
-	if err := s.RecordsGit.UpdateRefs(ctx, updates); err != nil {
+	return s.publishRefs(ctx, updates, nil)
+}
+
+type publicationError struct{ error }
+
+func (e *publicationError) Unwrap() error { return e.error }
+
+func publicationFailure(updates []gitcmd.RefUpdate, err error) error {
+	names := make([]string, len(updates))
+	for i, update := range updates {
+		names[i] = update.Ref
+	}
+	return &publicationError{fmt.Errorf("published %s: %w", strings.Join(names, ", "), err)}
+}
+
+func (s *Store) publishRefs(ctx context.Context, updates []gitcmd.RefUpdate, snapshots map[model.SHA]model.Snapshot) error {
+	if err := s.publishManaged(ctx, updates, snapshots); err != nil {
 		return err
 	}
 	if err := s.CheckRecords(); err != nil {
-		names := make([]string, len(updates))
-		for i, update := range updates {
-			names[i] = update.Ref
-		}
-		return fmt.Errorf("published %s: %w", strings.Join(names, ", "), err)
+		return publicationFailure(updates, err)
 	}
 	return nil
 }

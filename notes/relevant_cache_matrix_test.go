@@ -254,7 +254,7 @@ func seedNotes(tb testing.TB, dir string, n, relevant int, branch func(i int) st
 		}
 		updates[i] = prepared.RefUpdate()
 	}
-	if err := s.Git.UpdateRefs(tb.Context(), updates); err != nil {
+	if err := s.PublishRefs(tb.Context(), updates); err != nil {
 		tb.Fatalf("UpdateRefs: %v", err)
 	}
 }

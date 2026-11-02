@@ -1,7 +1,3 @@
-# Reconcile merged tasks onto the default branch in CI, using the release
-# binary so this runs in any repo. Requires cc-notes >= 0.3.0 (the release that
-# introduced `reconcile`). Installed by `cc-notes init --ci` or
-# `cc-notes workflows install`.
 name: cc-notes
 
 on:
@@ -36,6 +32,7 @@ jobs:
             echo "no remote configured; nothing to reconcile"
             exit 0
           fi
+          cc-notes reindex
           cc-notes sync
           cc-notes reconcile --into "${{ github.event.repository.default_branch }}"
           cc-notes sync

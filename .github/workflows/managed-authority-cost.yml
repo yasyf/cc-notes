@@ -1,0 +1,86 @@
+name: Managed authority cost
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  managed-authority-cost:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Install syscall tracer
+        run: sudo apt-get update && sudo apt-get install -y strace
+      - name: Validate counter and trace evidence
+        run: |
+          ./scripts/test.sh -race -count=1 -v -run '^TestReadWorkCountsNativeRefsAndPackDecodes$' ./internal/gitobj
+          ./scripts/test.sh -count=1 -v -run '^TestManagedCostTrace' ./internal/store
+      - name: Prepare immutable baseline
+        if: matrix.lane == 'baseline'
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/managed-authority-baseline"
+          git fetch --no-tags --depth=1 origin dca1bbac0bcc43fe8d4873b3542989fb172b1db9
+          git worktree add --detach "$baseline" dca1bbac0bcc43fe8d4873b3542989fb172b1db9
+          cp internal/gitobj/read_work.go internal/gitobj/read_work_test.go "$baseline/internal/gitobj/"
+          cp internal/store/managed_cost_linux_test.go internal/store/managed_cost_trace_linux_test.go "$baseline/internal/store/"
+          BASELINE="$baseline" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path(os.environ['BASELINE']) / 'internal/gitobj/read.go'
+          source = path.read_text()
+          for before, after in [
+              ('\treturn tips, nil\n', '\trecordRefListing(ctx, len(tips))\n\treturn tips, nil\n'),
+              ('\tpack, err := model.DecodePack(data)\n', '\trecordPackDecode(r.storage.scope.ctx)\n\tpack, err := model.DecodePack(data)\n'),
+          ]:
+              if source.count(before) != 1:
+                  raise SystemExit('baseline instrumentation anchor differs')
+              source = source.replace(before, after)
+          path.write_text(source)
+          PY
+      - name: Reject corpus work on immutable baseline
+        if: matrix.lane == 'baseline'
+        env:
+          CCN_REQUIRE_MANAGED_COST: '1'
+          CCN_MANAGED_COST_ARTIFACT_DIR: ${{ runner.temp }}/managed-baseline-artifacts
+        run: |
+          set -euo pipefail
+          set +e
+          (cd "$RUNNER_TEMP/managed-authority-baseline" && ./scripts/test.sh -count=1 -v -run '^TestManagedFreshProcessCost$' ./internal/store) > "$RUNNER_TEMP/managed-baseline.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/managed-baseline.log"
+          test "$result" -ne 0
+          test "$(grep -c 'MANAGED_COST_RESULT:' "$RUNNER_TEMP/managed-baseline.log")" -eq 14
+          grep -q 'MANAGED_AUTHORITY_COST_REGRESSION:' "$RUNNER_TEMP/managed-baseline.log"
+      - name: Grade managed operations
+        if: matrix.lane == 'candidate'
+        env:
+          CCN_REQUIRE_MANAGED_COST: '1'
+          CCN_MANAGED_COST_REINDEX: '1'
+          CCN_MANAGED_COST_ARTIFACT_DIR: ${{ runner.temp }}/managed-candidate-artifacts
+        run: |
+          set -euo pipefail
+          ./scripts/test.sh -count=1 -v -run '^TestManagedFreshProcessCost$' ./internal/store | tee "$RUNNER_TEMP/managed-candidate.log"
+          test "$(grep -c 'MANAGED_COST_RESULT:' "$RUNNER_TEMP/managed-candidate.log")" -eq 14
+      - name: Verify managed authority integrity
+        if: matrix.lane == 'candidate'
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestManaged' ./internal/store
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: managed-authority-${{ matrix.lane }}
+          path: |
+            ${{ runner.temp }}/managed-*-artifacts
+            ${{ runner.temp }}/managed-*.log
+          if-no-files-found: error

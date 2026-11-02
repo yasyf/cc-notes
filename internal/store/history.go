@@ -52,7 +52,7 @@ func (s *Store) historyChain(ctx context.Context, ref string) ([]model.PackCommi
 	if err := s.CheckRecords(); err != nil {
 		return nil, fmt.Errorf("history %s: %w", ref, err)
 	}
-	tip, err := s.Repo.Tip(ctx, ref)
+	tip, err := s.managedTip(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("history %s: %w", ref, err)
 	}

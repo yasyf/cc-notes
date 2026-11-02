@@ -370,7 +370,7 @@ func labeledLedgerAt(t *testing.T, c *Client, title string, at int64) model.Ledg
 		t.Fatal(err)
 	}
 	id := model.EntityID(tip)
-	if err := c.s.RecordsGit.UpdateRef(t.Context(), refs.For(model.KindLedger, id), tip, ""); err != nil {
+	if err := c.s.PublishRef(t.Context(), refs.For(model.KindLedger, id), tip, ""); err != nil {
 		t.Fatal(err)
 	}
 	ledger, err := c.Ledger(t.Context(), id)
