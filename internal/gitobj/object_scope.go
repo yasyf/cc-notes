@@ -125,7 +125,7 @@ type objectReadScope struct {
 	ctx     context.Context
 	pool    *batchPool
 	batches []*gitcmd.ObjectBatch
-	unbind  []func()
+	unbind  []func() bool
 	err     error
 	refresh bool
 	closed  bool
@@ -149,7 +149,7 @@ func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
 			return nil, err
 		}
 		s.batches = append(s.batches, batch)
-		s.unbind = append(s.unbind, func() {})
+		s.unbind = append(s.unbind, func() bool { return true })
 		return batch, nil
 	}
 	batch, err := s.pool.take()
@@ -169,8 +169,7 @@ func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
 func (s *objectReadScope) release() error {
 	result := s.err
 	for i, batch := range s.batches {
-		if s.pool != nil && batch.Idle() && s.ctx.Err() == nil {
-			s.unbind[i]()
+		if s.pool != nil && batch.Idle() && s.ctx.Err() == nil && s.unbind[i]() {
 			result = errors.Join(result, s.pool.put(batch))
 			continue
 		}

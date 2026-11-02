@@ -78,17 +78,19 @@ func (g Git) ObjectBatch(ctx context.Context) (*ObjectBatch, error) {
 
 // Bind scopes later requests, and the streams they open, to ctx: once ctx
 // ends the child is reaped and those reads fail with its error. The returned
-// unbind detaches ctx, so an idle reader can serve the next operation.
-func (b *ObjectBatch) Bind(ctx context.Context) (unbind func()) {
+// unbind detaches ctx and reports whether it did so before ctx's reaping
+// started; only then may the idle reader serve another operation.
+func (b *ObjectBatch) Bind(ctx context.Context) (unbind func() bool) {
 	b.mu.Lock()
 	b.call = ctx
 	b.mu.Unlock()
 	stop := context.AfterFunc(ctx, func() { _ = b.abort() })
-	return func() {
-		stop()
+	return func() bool {
+		stopped := stop()
 		b.mu.Lock()
 		b.call = b.ctx
 		b.mu.Unlock()
+		return stopped
 	}
 }
 
