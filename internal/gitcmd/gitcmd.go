@@ -891,6 +891,27 @@ func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
 	return strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), nil
 }
 
+// ConfigLocal lists every entry of the repository-local config in file
+// order, as key/value pairs keyed the way git config --list spells them:
+// section and variable names lowercased, subsection names verbatim. A
+// multi-valued key yields one pair per value, and a bare "[section] key" line
+// an empty value. It is the single-read form of ConfigGetAll over every key.
+func (g Git) ConfigLocal(ctx context.Context) ([][2]string, error) {
+	out, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--list", "-z")
+	if err != nil {
+		return nil, fmt.Errorf("config list --local: %w", err)
+	}
+	if out == "" {
+		return nil, nil
+	}
+	var pairs [][2]string
+	for _, entry := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		pairs = append(pairs, [2]string{key, value})
+	}
+	return pairs, nil
+}
+
 // ConfigAdd appends value as a new line for key in the repository-local
 // config, keeping any existing values.
 func (g Git) ConfigAdd(ctx context.Context, key, value string) error {

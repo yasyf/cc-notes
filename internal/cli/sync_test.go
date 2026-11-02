@@ -38,6 +38,29 @@ func initRepoWithRemote(t *testing.T) (dir, bare string) {
 	return dir, bare
 }
 
+// TestWiredWriteReadsLocalConfigOnce pins auto-install's cost on a write to an
+// already wired repository: one local config listing decides every refspec
+// line, with no per-key reads and no remote listing.
+func TestWiredWriteReadsLocalConfigOnce(t *testing.T) {
+	dir, _ := initRepoWithRemote(t)
+	mustRun(t, dir, "note", "add", "First")
+	trace := traceGit(t)
+	var lists, perKey, remotes []string
+	for _, call := range trace.of(t, dir, "note", "add", "Second") {
+		switch {
+		case strings.Contains(call, "\x1fconfig\x1f--local\x1f--list\x1f"):
+			lists = append(lists, call)
+		case strings.Contains(call, "\x1f--get-all\x1f"):
+			perKey = append(perKey, call)
+		case strings.HasSuffix(call, "\x1fremote\x1f"):
+			remotes = append(remotes, call)
+		}
+	}
+	if len(lists) != 1 || len(perKey) != 0 || len(remotes) != 0 {
+		t.Fatalf("wired write ran %d local config listings, %d per-key reads %q, %d remote listings, want 1, 0, 0", len(lists), len(perKey), perKey, len(remotes))
+	}
+}
+
 func TestInitInstallsRefspecs(t *testing.T) {
 	dir, _ := initRepoWithRemote(t)
 	out := mustRun(t, dir, "init")
