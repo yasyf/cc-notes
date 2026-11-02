@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ const (
 	foldCacheBudget     = 512 << 20
 	relevantCacheBudget = 256 << 20
 	retireAfter         = 24 * time.Hour
+	orphanAfter         = time.Hour
 )
 
 var retiredObjectIndexes = []string{"objects-v1.sqlite", "objects-v2.sqlite"}
@@ -48,10 +50,13 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 
 // RetireLocal deletes derived state no current binary reads once it has gone a
 // day untouched: the fold- and relevance-cache generations beside the current
-// ones, with their lock files, and the repository's retired SQLite object
-// indexes under the per-user root. A generation an older binary still writes
-// keeps a fresh mtime, and one whose writer lock is held is skipped, so both
-// survive. It returns the number of generations and indexes deleted.
+// ones, with their lock files, the query metadata indexes of other metadata
+// versions and fold generations, and the repository's retired SQLite object
+// indexes under the per-user root. A generation or index an older binary still
+// writes keeps a fresh mtime, and one whose lock is held is skipped, so both
+// survive. It also removes the temporary attachment-index files a writer
+// killed mid-publish left behind an hour ago or more. It returns the number of
+// generations, indexes, and temporary files deleted.
 func (s *Store) RetireLocal() (int, error) {
 	cutoff := time.Now().Add(-retireAfter)
 	current := []string{filepath.Base(s.cache.dir), filepath.Base(s.relevant.dir)}
@@ -77,6 +82,16 @@ func (s *Store) RetireLocal() (int, error) {
 			}
 		}
 	}
+	indexes, err := s.retireQueryIndexes(cutoff)
+	if err != nil {
+		return retired, err
+	}
+	retired += indexes
+	orphans, err := retireOrphanedTemps(filepath.Join(s.recordsCommonDir, attachIndexSubdir), attachIndexName, time.Now().Add(-orphanAfter))
+	if err != nil {
+		return retired, err
+	}
+	retired += orphans
 	for _, common := range distinct(s.commonDir, s.recordsCommonDir) {
 		home, err := ccnhome.ForRepo(common)
 		if err != nil {
@@ -94,6 +109,74 @@ func (s *Store) RetireLocal() (int, error) {
 		}
 	}
 	return retired, nil
+}
+
+func (s *Store) retireQueryIndexes(cutoff time.Time) (int, error) {
+	dir := filepath.Join(s.recordsCommonDir, queryIndexSubdir)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("list query indexes: %w", err)
+	}
+	current := make(map[string]bool, len(model.Kinds()))
+	for _, kind := range model.Kinds() {
+		current[s.queryMetadataBindingName(kind)+".db"] = true
+	}
+	retired := 0
+	for _, entry := range entries {
+		if current[entry.Name()] || !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".db" {
+			continue
+		}
+		done, err := retireUnlocked(cutoff, filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return retired, err
+		}
+		if done {
+			retired++
+		}
+	}
+	return retired, nil
+}
+
+// retireUnlocked removes a bbolt file idle since cutoff whose flock nobody
+// holds; bbolt locks the database file itself for every open.
+func retireUnlocked(cutoff time.Time, path string) (bool, error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // G304: a query index under the store's own common dir.
+	if err != nil {
+		return false, nil
+	}
+	defer func() { _ = f.Close() }()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return false, nil
+	}
+	return retire(cutoff, path)
+}
+
+func retireOrphanedTemps(dir, name string, cutoff time.Time) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("list %s: %w", dir, err)
+	}
+	removed := 0
+	for _, entry := range entries {
+		suffix, ok := strings.CutPrefix(entry.Name(), name+".")
+		if !ok || suffix == "" || strings.Trim(suffix, "0123456789") != "" || !entry.Type().IsRegular() {
+			continue
+		}
+		done, err := retire(cutoff, filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return removed, err
+		}
+		if done {
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 func distinct(values ...string) []string {

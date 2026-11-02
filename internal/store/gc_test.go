@@ -477,3 +477,61 @@ func TestRetireLocalDeletesOnlyIdleRetiredState(t *testing.T) {
 		}
 	}
 }
+
+// TestRetireLocalRetiresSupersededQueryIndexesAndOrphanedTemps pins the query
+// index and temporary-file bar: an index no current kind binds goes once it has
+// sat a day untouched and unlocked, every current binding stays whatever its
+// age, and a temporary attachment index goes once it has sat an hour.
+func TestRetireLocalRetiresSupersededQueryIndexesAndOrphanedTemps(t *testing.T) {
+	s := initStore(t)
+	create(t, s, noteOps("cached"))
+	idle := time.Now().Add(-2 * retireAfter)
+	fixture := func(path string, mtime time.Time) string {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	indexes := filepath.Join(s.RecordsCommonDir(), queryIndexSubdir)
+	current := fixture(filepath.Join(indexes, s.queryMetadataBindingName(model.KindNote)+".db"), idle)
+	stale := fixture(filepath.Join(indexes, "list-stale.db"), idle)
+	fresh := fixture(filepath.Join(indexes, "list-fresh.db"), time.Now())
+	locked := fixture(filepath.Join(indexes, "list-locked.db"), idle)
+	held, err := os.Open(locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	temps := filepath.Join(s.RecordsCommonDir(), attachIndexSubdir)
+	orphan := fixture(filepath.Join(temps, attachIndexName+".1401421366"), time.Now().Add(-2*orphanAfter))
+	inflight := fixture(filepath.Join(temps, attachIndexName+".2136355974"), time.Now())
+	foreign := fixture(filepath.Join(temps, attachIndexName+".bak"), idle)
+
+	retired, err := s.RetireLocal()
+	if err != nil {
+		t.Fatalf("RetireLocal: %v", err)
+	}
+	if retired != 2 {
+		t.Fatalf("retired = %d, want 2: list-stale.db and the orphaned temporary index", retired)
+	}
+	for _, gone := range []string{stale, orphan} {
+		if _, err := os.Stat(gone); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s survived retirement: %v", gone, err)
+		}
+	}
+	for _, kept := range []string{current, fresh, locked, inflight, foreign} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("%s was retired: %v", kept, err)
+		}
+	}
+}
