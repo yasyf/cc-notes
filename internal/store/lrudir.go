@@ -208,19 +208,11 @@ func (l *lruDir) writerFile() (*os.File, error) {
 }
 
 func (l *lruDir) lockWriter() (*os.File, bool) {
-	return l.flockWriter(syscall.LOCK_EX | syscall.LOCK_NB)
-}
-
-func (l *lruDir) awaitWriter() (*os.File, bool) {
-	return l.flockWriter(syscall.LOCK_EX)
-}
-
-func (l *lruDir) flockWriter(how int) (*os.File, bool) {
 	file, err := l.writerFile()
 	if err != nil {
 		return nil, false
 	}
-	if err := syscall.Flock(int(file.Fd()), how); err != nil {
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = file.Close()
 		return nil, false
 	}
@@ -584,7 +576,7 @@ func (l *lruDir) sweep(stale func(cacheHint) bool, budget int64) int {
 	}
 	l.writer.Lock()
 	defer l.writer.Unlock()
-	lock, ok := l.awaitWriter()
+	lock, ok := l.lockWriter()
 	if !ok {
 		return 0
 	}

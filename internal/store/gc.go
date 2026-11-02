@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/ccnhome"
@@ -49,8 +50,8 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 // day untouched: the fold- and relevance-cache generations beside the current
 // ones, with their lock files, and the repository's retired SQLite object
 // indexes under the per-user root. A generation an older binary still writes
-// keeps a fresh mtime and survives. It returns the number of generations and
-// indexes deleted.
+// keeps a fresh mtime, and one whose writer lock is held is skipped, so both
+// survive. It returns the number of generations and indexes deleted.
 func (s *Store) RetireLocal() (int, error) {
 	cutoff := time.Now().Add(-retireAfter)
 	current := []string{filepath.Base(s.cache.dir), filepath.Base(s.relevant.dir)}
@@ -67,8 +68,11 @@ func (s *Store) RetireLocal() (int, error) {
 			}
 		}
 		for name := range generations {
-			dir := filepath.Join(parent, name)
-			if retire(cutoff, dir, filepath.Join(dir, cacheHintFile), filepath.Join(dir, cacheInlineFile), dir+".lock") {
+			done, err := retireGeneration(cutoff, filepath.Join(parent, name))
+			if err != nil {
+				return retired, err
+			}
+			if done {
 				retired++
 			}
 		}
@@ -80,7 +84,11 @@ func (s *Store) RetireLocal() (int, error) {
 		}
 		for _, index := range retiredObjectIndexes {
 			path := filepath.Join(home.Dir, index)
-			if retire(cutoff, path, path+"-wal", path+"-shm", path+"-journal") {
+			done, err := retire(cutoff, path, path+"-wal", path+"-shm", path+"-journal")
+			if err != nil {
+				return retired, err
+			}
+			if done {
 				retired++
 			}
 		}
@@ -100,7 +108,17 @@ func supersededGeneration(name string, current []string) bool {
 	})
 }
 
-func retire(cutoff time.Time, paths ...string) bool {
+func retireGeneration(cutoff time.Time, dir string) (bool, error) {
+	if lock, err := os.OpenFile(dir+".lock", os.O_RDWR, 0); err == nil { //nolint:gosec // G304,G703: The lock is the sibling of a cache generation under the store's git common dir.
+		defer func() { _ = lock.Close() }()
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			return false, nil
+		}
+	}
+	return retire(cutoff, dir, filepath.Join(dir, cacheHintFile), filepath.Join(dir, cacheInlineFile), dir+".lock")
+}
+
+func retire(cutoff time.Time, paths ...string) (bool, error) {
 	found := false
 	for _, path := range paths {
 		info, err := os.Stat(path)
@@ -108,17 +126,19 @@ func retire(cutoff time.Time, paths ...string) bool {
 			continue
 		}
 		if info.ModTime().After(cutoff) {
-			return false
+			return false, nil
 		}
 		found = true
 	}
 	if !found {
-		return false
+		return false, nil
 	}
 	for _, path := range paths {
-		_ = os.RemoveAll(path)
+		if err := os.RemoveAll(path); err != nil {
+			return false, fmt.Errorf("retire %s: %w", path, err)
+		}
 	}
-	return true
+	return true, nil
 }
 
 // PruneTombstones physically deletes tombstoned note, doc, log, runbook,

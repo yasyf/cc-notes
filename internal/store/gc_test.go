@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -408,8 +409,8 @@ func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 
 // TestRetireLocalDeletesOnlyIdleRetiredState pins the retirement bar: a cache
 // generation or object index beside the current ones goes once every file of
-// it has sat a day untouched, and anything still written — or current, or not
-// a generation at all — stays.
+// it has sat a day untouched, and anything still written, write-locked,
+// current, or not a generation at all stays.
 func TestRetireLocalDeletesOnlyIdleRetiredState(t *testing.T) {
 	s := initStore(t)
 	create(t, s, noteOps("cached"))
@@ -447,6 +448,16 @@ func TestRetireLocalDeletesOnlyIdleRetiredState(t *testing.T) {
 	fixture(filepath.Join(home.Dir, "objects-v1.sqlite"), false, idle)
 	fixture(filepath.Join(home.Dir, "objects-v2.sqlite"), false, idle)
 	fixture(filepath.Join(home.Dir, "objects-v2.sqlite-wal"), false, time.Now())
+	fixture(filepath.Join(parent, "folds-v4"), true, idle)
+	fixture(filepath.Join(parent, "folds-v4.lock"), false, idle)
+	held, err := os.OpenFile(filepath.Join(parent, "folds-v4.lock"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
 
 	retired, err := s.RetireLocal()
 	if err != nil {
@@ -460,7 +471,7 @@ func TestRetireLocalDeletesOnlyIdleRetiredState(t *testing.T) {
 			t.Errorf("%s survived retirement: %v", gone, err)
 		}
 	}
-	for _, kept := range []string{filepath.Join(parent, "folds-v5"), filepath.Join(parent, "folds-vx"), filepath.Join(parent, "attachments-v1.json"), s.cache.dir, filepath.Join(home.Dir, "objects-v2.sqlite"), filepath.Join(home.Dir, "objects-v2.sqlite-wal")} {
+	for _, kept := range []string{filepath.Join(parent, "folds-v4"), filepath.Join(parent, "folds-v4.lock"), filepath.Join(parent, "folds-v5"), filepath.Join(parent, "folds-vx"), filepath.Join(parent, "attachments-v1.json"), s.cache.dir, filepath.Join(home.Dir, "objects-v2.sqlite"), filepath.Join(home.Dir, "objects-v2.sqlite-wal")} {
 		if _, err := os.Stat(kept); err != nil {
 			t.Errorf("%s was retired: %v", kept, err)
 		}
