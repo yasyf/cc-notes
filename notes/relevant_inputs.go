@@ -1134,14 +1134,12 @@ func (in *relevantInputs) racy() bool {
 // racyRefs reports whether every racy fingerprint is a relevance kind's ref
 // directory, which restampUnanchoredWrites reads afresh rather than trusts.
 func (in *relevantInputs) racyRefs() bool {
-	if in.untrusted || slices.ContainsFunc(in.guards, func(s fileStamp) bool { return s.racy(in.start) }) {
-		return false
-	}
 	dirs := in.client.entityRootDirs()
-	return !slices.ContainsFunc(in.stamps, func(s fileStamp) bool {
+	racyElsewhere := func(s fileStamp) bool {
 		_, dir := dirs[s.Path]
 		return s.racy(in.start) && !dir
-	})
+	}
+	return !in.untrusted && !slices.ContainsFunc(in.stamps, racyElsewhere) && !slices.ContainsFunc(in.guards, racyElsewhere)
 }
 
 func (in *relevantInputs) fill(e *relevantCacheEntry) {

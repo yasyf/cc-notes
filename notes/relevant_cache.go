@@ -100,7 +100,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 			// directory stamp (go-git setRef) is not covered.
 			cached, hit, cachedOK = readRelevantCacheEntry(f, now)
 			if !hit && cachedOK {
-				hit = c.restampUnanchoredWrites(ctx, name, cached, now)
+				hit = c.restampUnanchoredWrites(ctx, name, cached, filter, now)
 			}
 			if hit {
 				if _, bound := c.s.Binding(); bound {
@@ -326,19 +326,22 @@ func (e relevantCacheEntry) built(now time.Time) bool {
 }
 
 // restampUnanchoredWrites serves an entry whose only moved fingerprints are
-// entity ref directories holding none of the refs it renders, when every ref
-// written there since the entry was built names an entity with no anchors.
+// entity ref directories, each the same directory as before and holding none
+// of the refs the entry renders or resolves a branch, base, or commit
+// through, when every ref written there since the entry was built names an
+// entity with no anchors.
 // Such an entity scores nothing against any path, so a ledger's row writes,
 // the bulk of a drive's churn, leave every rendering standing. An entry racy
 // only in those directories qualifies too, since they are read afresh rather
 // than trusted. The moved stamps, taken before the directories are read,
 // persist with the check's start as the entry's build time once they are
 // older than the racy window.
-func (c *Client) restampUnanchoredWrites(ctx context.Context, name string, e relevantCacheEntry, now time.Time) bool {
+func (c *Client) restampUnanchoredWrites(ctx context.Context, name string, e relevantCacheEntry, filter RelevantFilter, now time.Time) bool {
 	if (e.Racy && !e.RacyRefs) || !e.built(now) || !e.filesValid() {
 		return false
 	}
 	roots := c.entityRootDirs()
+	resolved := slices.Concat(e.Deps.Branches, e.Deps.Commits, []string{filter.Branch, filter.Base})
 	built := time.Unix(0, e.Built)
 	stamps := slices.Clone(e.Stamps)
 	var moved []int
@@ -347,7 +350,11 @@ func (c *Client) restampUnanchoredWrites(ctx context.Context, name string, e rel
 			continue
 		}
 		root, ok := roots[s.Path]
-		if !ok || s.Link || s.Ident || slices.ContainsFunc(e.Rendered, func(ref string) bool { return strings.HasPrefix(ref, root) }) {
+		if !ok || s.Link || s.Ident || stamps[i].Missing || stamps[i].Inode != s.Inode || stamps[i].Mode != s.Mode {
+			return false
+		}
+		if slices.ContainsFunc(e.Rendered, func(ref string) bool { return strings.HasPrefix(ref, root) }) ||
+			slices.ContainsFunc(resolved, func(rev string) bool { return strings.Contains(rev, strings.TrimPrefix(root, "refs/")) }) {
 			return false
 		}
 		moved = append(moved, i)
