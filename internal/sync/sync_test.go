@@ -205,6 +205,36 @@ func TestInstallUnknownRemote(t *testing.T) {
 	}
 }
 
+// TestInstallWiresARemoteOnlyGlobalConfigNames pins the remote lookup Install
+// falls through to when the local config has no line for the remote: git
+// still lists a remote the global config defines, so Install wires it into
+// the local config like any other.
+func TestInstallWiresARemoteOnlyGlobalConfigNames(t *testing.T) {
+	bare := gittest.InitBare(t)
+	s := clone(t, bare, "Alice", "alice@example.com")
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	gittest.Git(t, s.Git.Dir, "config", "--file", global, "remote.upstream.url", gittest.InitBare(t))
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+
+	report, err := ccsync.Install(t.Context(), s.Git, "upstream")
+	if err != nil {
+		t.Fatalf("Install upstream: %v", err)
+	}
+	const upstreamFetchRefspec = "+refs/cc-notes/*:refs/cc-notes-sync/upstream/*"
+	wantAdded := []string{
+		"remote.upstream.fetch=" + upstreamFetchRefspec,
+		"remote.upstream.push=HEAD",
+		"remote.upstream.push=" + ccPushRefspec,
+		"core.logAllRefUpdates=always",
+	}
+	if !slices.Equal(report.Added, wantAdded) || !report.HeadPushAdded {
+		t.Errorf("report = %+v, want Added %q with HeadPushAdded", report, wantAdded)
+	}
+	if got, want := configAll(t, s, "remote.upstream.fetch"), []string{upstreamFetchRefspec}; !slices.Equal(got, want) {
+		t.Errorf("local upstream fetch = %q, want %q", got, want)
+	}
+}
+
 // TestInstallUpgradesOldFetchRefspec pins the upgrade path: a repo wired before
 // the prune-safety fix carries the same-namespace force-mirror
 // +refs/cc-notes/*:refs/cc-notes/*, which a plain fetch --prune uses to delete

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -80,17 +81,21 @@ func Install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, e
 
 func install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, error) {
 	var report InstallReport
-	if err := ensureRemote(ctx, g, remote); err != nil {
-		return report, err
-	}
-	if err := upgradeFetch(ctx, g, remote, true, &report); err != nil {
-		return report, err
-	}
-	pushKey := "remote." + remote + ".push"
-	push, err := g.ConfigGetAll(ctx, pushKey)
+	pairs, err := g.ConfigLocal(ctx)
 	if err != nil {
 		return report, err
 	}
+	local := localConfig(pairs)
+	if !local.configures(remote) {
+		if err := ensureRemote(ctx, g, remote); err != nil {
+			return report, err
+		}
+	}
+	if err := upgradeFetch(ctx, g, remote, local.values("remote."+remote+".fetch"), true, &report); err != nil {
+		return report, err
+	}
+	pushKey := "remote." + remote + ".push"
+	push := local.values(pushKey)
 	if len(push) == 0 {
 		if err := g.ConfigAdd(ctx, pushKey, headRefspec); err != nil {
 			return report, err
@@ -104,32 +109,57 @@ func install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, e
 		}
 		report.Added = append(report.Added, pushKey+"="+pushRefspec)
 	}
-	reflog, err := g.ConfigGetAll(ctx, "core.logAllRefUpdates")
-	if err != nil {
-		return report, err
-	}
-	if !slices.Equal(reflog, []string{"always"}) {
+	if !slices.Equal(local.values("core.logallrefupdates"), []string{"always"}) {
 		if err := g.ConfigSet(ctx, "core.logAllRefUpdates", "always"); err != nil {
 			return report, err
 		}
 		report.Added = append(report.Added, "core.logAllRefUpdates=always")
 	}
-	// Sweep every other configured remote for the pre-fix killer fetch refspec
-	// and rewrite it in place; a remote carrying neither the old nor the new
-	// refspec was never wired for cc-notes and is left untouched.
-	remotes, err := g.Remotes(ctx)
-	if err != nil {
-		return report, err
-	}
-	for _, other := range remotes {
+	// Only a remote with local fetch lines can carry the pre-fix killer refspec.
+	for _, other := range local.fetchRemotes() {
 		if other == remote {
 			continue
 		}
-		if err := upgradeFetch(ctx, g, other, false, &report); err != nil {
+		if err := upgradeFetch(ctx, g, other, local.values("remote."+other+".fetch"), false, &report); err != nil {
 			return report, err
 		}
 	}
 	return report, nil
+}
+
+type localConfig [][2]string
+
+func (c localConfig) values(key string) []string {
+	var values []string
+	for _, pair := range c {
+		if pair[0] == key {
+			values = append(values, pair[1])
+		}
+	}
+	return values
+}
+
+func (c localConfig) configures(remote string) bool {
+	prefix := "remote." + remote + "."
+	return slices.ContainsFunc(c, func(pair [2]string) bool {
+		rest, ok := strings.CutPrefix(pair[0], prefix)
+		return ok && !strings.Contains(rest, ".")
+	})
+}
+
+func (c localConfig) fetchRemotes() []string {
+	var remotes []string
+	for _, pair := range c {
+		rest, ok := strings.CutPrefix(pair[0], "remote.")
+		if !ok {
+			continue
+		}
+		if name, ok := strings.CutSuffix(rest, ".fetch"); ok && name != "" && !slices.Contains(remotes, name) {
+			remotes = append(remotes, name)
+		}
+	}
+	slices.Sort(remotes)
+	return remotes
 }
 
 // upgradeFetch reconciles remote's fetch refspecs with the prune-safe
@@ -138,12 +168,8 @@ func install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, e
 // — only when wiring the target remote — adds the tracking refspec to a remote
 // that carries neither. It is idempotent: a remote already on the new refspec
 // is a no-op.
-func upgradeFetch(ctx context.Context, g gitcmd.Git, remote string, target bool, report *InstallReport) error {
+func upgradeFetch(ctx context.Context, g gitcmd.Git, remote string, fetch []string, target bool, report *InstallReport) error {
 	fetchKey := "remote." + remote + ".fetch"
-	fetch, err := g.ConfigGetAll(ctx, fetchKey)
-	if err != nil {
-		return err
-	}
 	want := fetchRefspec(remote)
 	hasOld := slices.Contains(fetch, oldFetchRefspec)
 	hasNew := slices.Contains(fetch, want)
