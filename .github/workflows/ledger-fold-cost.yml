@@ -2,6 +2,7 @@ name: Ledger fold cost
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - internal/fold/**
       - model/**
