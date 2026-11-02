@@ -39,7 +39,7 @@ func (l *lruDir) payloadFile(access cacheAccess) (*os.File, error) {
 		if access == cacheLookup {
 			return l.data, nil
 		}
-		info, err := os.Stat(l.inlinePath())
+		info, err := os.Stat(l.inlinePath()) //nolint:gosec // G703: The inline payload file is fixed inside the store's cache directory.
 		if err == nil && os.SameFile(info, l.dataInfo) && (!writable || l.dataWritable) {
 			return l.data, nil
 		}
@@ -54,7 +54,7 @@ func (l *lruDir) payloadFile(access cacheAccess) (*os.File, error) {
 	if access == cacheWrite {
 		flags |= os.O_CREATE
 	}
-	file, err := os.OpenFile(l.inlinePath(), flags, 0o600)
+	file, err := os.OpenFile(l.inlinePath(), flags, 0o600) //nolint:gosec // G703: The inline payload file is fixed inside the store's cache directory.
 	if err != nil {
 		l.dataMissing = errors.Is(err, os.ErrNotExist)
 		return nil, err
