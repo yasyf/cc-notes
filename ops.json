@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"ci/watchman-rust-sccache-20261102"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"e9d05a29bcd7fc37e6f5d5b549eac65f","status":"met","note":"ActualRust76s/C++-only1504stats source-bound; inheritedCargoenv lacks wrapper and pinned officialdocs requireit. Root sourcePASSa6864dde for3ccb/posta633/patch950b, onejobenvline only. Normal sourced501b776 PR6/fullautoCI41375509633 published; actualRustrequest/cacheability and fullCI/merge acceptance remain pending. No all76s savings/globalRust claim."}]}
