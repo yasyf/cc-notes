@@ -392,6 +392,9 @@ func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error)
 }
 
 func (s *Store) childrenInRange(ctx context.Context, namespace, selection string) ([]tipEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := s.CheckRecords(); err != nil {
 		return nil, err
 	}

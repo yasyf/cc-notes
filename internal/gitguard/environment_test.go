@@ -96,8 +96,8 @@ func TestJoinDrainsWaitsForEveryResult(t *testing.T) {
 	}
 	for _, d := range drains {
 		select {
-		case <-d.done:
-			t.Fatal("drain result was not consumed")
+		case err := <-d.done:
+			t.Fatalf("drain result was not consumed: %v", err)
 		default:
 		}
 	}
