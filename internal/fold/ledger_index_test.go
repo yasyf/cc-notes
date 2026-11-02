@@ -109,10 +109,11 @@ func ledgerFoldCostChain(rows, history int) []model.PackCommit {
 	for i := range rows {
 		ops[i] = model.UpsertRow{Key: fmt.Sprintf("row-%08d", i), Fields: map[string]string{"value": strconv.Itoa(i)}, Position: fmt.Sprintf("%08d", rows-i)}
 	}
-	chain := []model.PackCommit{
+	chain := make([]model.PackCommit, 0, 2+history)
+	chain = append(chain,
 		mk("aaa", nil, "alice", 100, 1, model.CreateLedger{Nonce: "n", Title: "cost"}),
 		mk("rows", []string{"aaa"}, "bob", 200, 2, ops...),
-	}
+	)
 	for i := range history {
 		chain = append(chain, mk(fmt.Sprintf("history-%08d", i), []string{string(chain[len(chain)-1].SHA)}, "carol", int64(300+i), uint64(3+i), model.UpsertRow{Key: fmt.Sprintf("row-%08d", rows-1), Fields: map[string]string{"pass": strconv.Itoa(i)}}))
 	}
