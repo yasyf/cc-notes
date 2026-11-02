@@ -111,7 +111,7 @@ func Open(gitDir, commonDir string) (*Repo, error) {
 		return nil, err
 	}
 	r := &Repo{
-		storage:      &objectStorage{Storage: storage, backend: gitcmd.Backend(commonDir, commonDir), objects: objects},
+		storage:      &objectStorage{Storage: storage, dir: dotgit.New(fs), backend: gitcmd.Backend(commonDir, commonDir), objects: objects},
 		fs:           fs,
 		refDirectory: commonDir,
 		reaches:      make(map[plumbing.Hash]*reach, reachCap),

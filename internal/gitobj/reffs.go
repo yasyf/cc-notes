@@ -29,13 +29,33 @@ const (
 // walk aborts the whole listing on the first empty file. It also serves the
 // loose-<hash> packs git maintenance's loose-objects task writes under their
 // pack-<hash> names, because go-git only ever lists and opens pack-<hash>.
+// Reads open and stat the joined path directly: the chroot helper lstats
+// every component of every path to chase symlinks, which made each loose
+// object and ref probe cost a dozen system calls.
 type gitDirFS struct {
 	billy.Filesystem
 }
 
+type directFile struct {
+	*os.File
+	name string
+}
+
+func (f directFile) Name() string  { return f.name }
+func (f directFile) Lock() error   { return billy.ErrNotSupported }
+func (f directFile) Unlock() error { return billy.ErrNotSupported }
+
+func (fs gitDirFS) open(path string) (billy.File, error) {
+	file, err := os.Open(filepath.Join(fs.Root(), path)) //nolint:gosec // G304: paths go-git derives inside this git directory.
+	if err != nil {
+		return nil, err
+	}
+	return directFile{File: file, name: path}, nil
+}
+
 func (fs gitDirFS) ReadDir(path string) ([]os.FileInfo, error) {
 	if underRefs(path) {
-		if _, err := fs.Filesystem.Stat(path); err != nil {
+		if _, err := fs.Stat(path); err != nil {
 			return nil, err
 		}
 		entries, err := os.ReadDir(filepath.Join(fs.Root(), path))
@@ -77,9 +97,9 @@ func referenceFileInfos(entries []os.DirEntry) ([]os.FileInfo, error) {
 }
 
 func (fs gitDirFS) Open(path string) (billy.File, error) {
-	file, err := fs.Filesystem.Open(path)
+	file, err := fs.open(path)
 	if loose, ok := loosePackPath(path); ok && errors.Is(err, os.ErrNotExist) {
-		file, err = fs.Filesystem.Open(loose)
+		file, err = fs.open(loose)
 	}
 	if err != nil || !packIndexPath(path) {
 		return file, err
@@ -113,9 +133,9 @@ func packIndexPath(path string) bool {
 }
 
 func (fs gitDirFS) Stat(path string) (os.FileInfo, error) {
-	info, err := fs.Filesystem.Stat(path)
+	info, err := os.Stat(filepath.Join(fs.Root(), path))
 	if loose, ok := loosePackPath(path); ok && errors.Is(err, os.ErrNotExist) {
-		return fs.Filesystem.Stat(loose)
+		return os.Stat(filepath.Join(fs.Root(), loose))
 	}
 	return info, err
 }

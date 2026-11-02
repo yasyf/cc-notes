@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -12,18 +13,71 @@ import (
 )
 
 const (
-	// batchPoolCap bounds the idle readers a handle keeps between
-	// operations; reads hold mu, so one serves them and a second covers a
+	// batchPoolCap bounds the idle readers one handle keeps between reads;
+	// reads hold the handle's mu, so one serves them and a second covers a
 	// stream left open across a lookup.
 	batchPoolCap = 2
-	// batchIdleTTL retires a pooled reader before a long-lived handle pins
+	// batchIdleTTL retires a pooled reader before a long-running command pins
 	// pack files a repack has since deleted.
 	batchIdleTTL = 10 * time.Second
 )
 
-// batchPool keeps native readers alive across operations, so a command that
-// performs thousands of reads starts one git child, not one per read.
-// Callers hold the Repo's mu.
+// Readers owns the native readers each handle keeps between the reads of one
+// command, so a command that reads thousands of objects starts one git child
+// per handle, not one per read. Close reaps them.
+type Readers struct {
+	mu     sync.Mutex
+	pools  map[*Repo]*batchPool
+	closed bool
+}
+
+type readersKey struct{}
+
+// WithReaders returns ctx carrying a fresh Readers for the reads made under it.
+// Reads under a context without one start and reap a reader per operation.
+func WithReaders(ctx context.Context) (context.Context, *Readers) {
+	readers := &Readers{pools: make(map[*Repo]*batchPool)}
+	return context.WithValue(ctx, readersKey{}, readers), readers
+}
+
+func readersFrom(ctx context.Context) *Readers {
+	readers, _ := ctx.Value(readersKey{}).(*Readers)
+	return readers
+}
+
+func (rs *Readers) pool(r *Repo) *batchPool {
+	if rs == nil {
+		return nil
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.closed {
+		return nil
+	}
+	pool, ok := rs.pools[r]
+	if !ok {
+		pool = &batchPool{}
+		rs.pools[r] = pool
+	}
+	return pool
+}
+
+// Close reaps every idle reader and stops pooling new ones.
+func (rs *Readers) Close() error {
+	rs.mu.Lock()
+	pools := rs.pools
+	rs.pools, rs.closed = nil, true
+	rs.mu.Unlock()
+	var result error
+	for repo, pool := range pools {
+		repo.mu.Lock()
+		result = errors.Join(result, pool.drain())
+		repo.mu.Unlock()
+	}
+	return result
+}
+
+// batchPool holds one handle's idle readers. Callers hold the handle's mu.
 type batchPool struct {
 	idle []idleBatch
 }
@@ -89,11 +143,19 @@ func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
 			return batch, nil
 		}
 	}
+	if s.pool == nil {
+		batch, err := git.ObjectBatch(s.ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.batches = append(s.batches, batch)
+		s.unbind = append(s.unbind, func() {})
+		return batch, nil
+	}
 	batch, err := s.pool.take()
 	s.err = errors.Join(s.err, err)
 	if batch == nil {
-		batch, err = git.ObjectBatch(context.WithoutCancel(s.ctx))
-		if err != nil {
+		if batch, err = git.ObjectBatch(context.WithoutCancel(s.ctx)); err != nil {
 			return nil, err
 		}
 	}
@@ -107,7 +169,7 @@ func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
 func (s *objectReadScope) release() error {
 	result := s.err
 	for i, batch := range s.batches {
-		if batch.Idle() && s.ctx.Err() == nil {
+		if s.pool != nil && batch.Idle() && s.ctx.Err() == nil {
 			s.unbind[i]()
 			result = errors.Join(result, s.pool.put(batch))
 			continue
@@ -118,10 +180,13 @@ func (s *objectReadScope) release() error {
 	return result
 }
 
-// closeBatches retires every reader this operation and the pool hold, after a
+// closeBatches retires every reader this operation and its pool hold, after a
 // reindex showed the pack set moved under them.
 func (s *objectReadScope) closeBatches() error {
-	result := s.pool.drain()
+	var result error
+	if s.pool != nil {
+		result = s.pool.drain()
+	}
 	for _, batch := range s.batches {
 		result = errors.Join(result, batch.Release())
 	}
