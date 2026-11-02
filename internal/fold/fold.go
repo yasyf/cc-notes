@@ -152,6 +152,9 @@ func Stream(base model.Snapshot, next func() (model.PackCommit, bool, error)) (m
 		if !ok {
 			return nil, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
 		}
+		if len(first.Parents) > 0 {
+			return nil, fmt.Errorf("%w: %s is not a root", ErrMissingParent, first.SHA)
+		}
 		kf, err := dispatch(firstOp([]model.PackCommit{first}))
 		if err != nil {
 			return nil, err

@@ -534,7 +534,7 @@ func invalidationCases() []matrixCase {
 		},
 		{
 			name: "no-op entity update",
-			writes: []matrixWrite{{name: "update-ref to the current tip", want: tierRevalidate, do: func(t *testing.T, fx *matrixFixture) {
+			writes: []matrixWrite{{name: "update-ref to the current tip", want: tierHit, do: func(t *testing.T, fx *matrixFixture) {
 				fx.run(t, "update-ref", fx.noteRef(), fx.run(t, "rev-parse", fx.noteRef()))
 			}}},
 		},
