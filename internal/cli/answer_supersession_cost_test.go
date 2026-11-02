@@ -69,6 +69,7 @@ func TestAnswerShowFreshCLICost(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(gitDir, "packed-refs"), []byte(data), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			mustBin(t, dir, actorA, "reindex")
 			for attempt := range 2 {
 				if attempt > 0 {
 					time.Sleep(2100 * time.Millisecond)

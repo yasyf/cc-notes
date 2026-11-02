@@ -189,6 +189,7 @@ func TestSyncBoundResolvesRelativeRemoteFromSource(t *testing.T) {
 			gittest.Git(t, root, "init", "-q", "-b", "main", "source")
 			gittest.Git(t, source, "config", "user.name", "Test User")
 			gittest.Git(t, source, "config", "user.email", "test@example.com")
+			gittest.InitializeEmpty(t, source)
 			gittest.Git(t, source, "commit", "-q", "--allow-empty", "-m", "base")
 			gittest.Git(t, root, "init", "-q", "--bare", "origin.git")
 			gittest.Git(t, source, "init", "-q", "--bare", "origin.git")

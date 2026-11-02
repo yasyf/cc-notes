@@ -66,6 +66,7 @@ func newGitRepoOn(t *testing.T, branch string) *gitRepo {
 	r.git("init", "-q", "-b", branch)
 	r.git("config", "user.name", fxName)
 	r.git("config", "user.email", fxEmail)
+	gittest.InitializeEmpty(t, r.dir)
 	return r
 }
 

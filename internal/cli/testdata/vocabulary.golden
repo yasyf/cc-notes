@@ -1848,6 +1848,16 @@ command: cc-notes reconcile
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
 
+command: cc-notes reindex
+  use: reindex
+  aliases: -
+  short: Import Git entity refs into the managed authority
+  hidden: false
+  flags:
+    (none)
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
+
 command: cc-notes relevant
   use: relevant PATH
   aliases: -

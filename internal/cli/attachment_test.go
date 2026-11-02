@@ -390,6 +390,7 @@ func TestSyncTransfersAttachments(t *testing.T) {
 
 	clone := t.TempDir()
 	gittest.Git(t, clone, "clone", "-q", bare, "repo")
+	gittest.InitializeEmpty(t, filepath.Join(clone, "repo"))
 	cloneDir := filepath.Join(clone, "repo")
 	gittest.Git(t, cloneDir, "config", "user.name", "Test User")
 	gittest.Git(t, cloneDir, "config", "user.email", "test@example.com")

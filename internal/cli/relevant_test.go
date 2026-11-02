@@ -28,6 +28,7 @@ func relevantRepo(t *testing.T) string {
 	relevantGit(t, dir, relevantMe, "init", "-q", "-b", "main")
 	relevantGit(t, dir, relevantMe, "config", "user.name", "Me")
 	relevantGit(t, dir, relevantMe, "config", "user.email", relevantMe)
+	gittest.InitializeEmpty(t, dir)
 	t.Chdir(dir)
 	return dir
 }

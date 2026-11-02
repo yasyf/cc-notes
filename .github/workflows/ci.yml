@@ -230,6 +230,9 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Guardian protocol, delayed drains, and active race detection
+        run: ./scripts/test.sh -race -count=1 -v ./internal/gitguard
+
       - name: Test (race, via the process-cap harness)
         run: ./scripts/test.sh -race -count=1 ./...
 
@@ -255,6 +258,8 @@ jobs:
       # file is invisible to the ubuntu test job.
       - name: Home-discipline contract over the darwin file set
         run: ./scripts/test.sh -race -count=1 ./internal/homeguard
+      - name: Guardian protocol, delayed drains, and active race detection
+        run: ./scripts/test.sh -race -count=1 -v ./internal/gitguard
       - name: Native reference generations and rapid query authority
         env:
           CCN_REQUIRE_NATIVE_REF_COUNTER: "1"

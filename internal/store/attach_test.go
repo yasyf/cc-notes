@@ -445,7 +445,10 @@ func TestReferencedAttachmentsPinnedAndFresh(t *testing.T) {
 	if got := referenced(t, pinned); !reflect.DeepEqual(got, want[:1]) {
 		t.Fatalf("pinned referenced with an unrelated empty ref = %+v, want %+v", got, want[:1])
 	}
-	if _, err := s.ReferencedAttachments(t.Context()); !errors.Is(err, dotgit.ErrEmptyRefFile) {
-		t.Fatalf("fresh referenced with an empty selected ref = %v, want dotgit.ErrEmptyRefFile", err)
+	if got := referenced(t, s); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unimported direct ref changed managed attachments = %+v, want %+v", got, want)
+	}
+	if err := s.Reindex(t.Context()); !errors.Is(err, dotgit.ErrEmptyRefFile) {
+		t.Fatalf("reindex with an empty selected ref = %v, want dotgit.ErrEmptyRefFile", err)
 	}
 }

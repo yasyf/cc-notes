@@ -44,6 +44,7 @@ func clone(t *testing.T, bare, name, email string) *store.Store {
 	gittest.Git(t, dir, "remote", "add", "origin", bare)
 	gittest.Git(t, dir, "config", "user.name", name)
 	gittest.Git(t, dir, "config", "user.email", email)
+	gittest.InitializeEmpty(t, dir)
 	s, err := store.Open(dir)
 	if err != nil {
 		t.Fatalf("Open(%s): %v", dir, err)

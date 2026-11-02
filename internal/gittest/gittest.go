@@ -66,6 +66,15 @@ func Dirs(t testing.TB, dir string) (gitDir, commonDir string) {
 	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
 }
 
+// InitializeEmpty installs managed state for a fixture known to contain no entity refs.
+func InitializeEmpty(t testing.TB, dir string) {
+	t.Helper()
+	_, common := Dirs(t, dir)
+	if err := managed.Initialize(context.Background(), common); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // InitRepo scrubs the git environment and creates a repository on branch
 // main with a local "Test User <test@example.com>" identity, returning its
 // directory.

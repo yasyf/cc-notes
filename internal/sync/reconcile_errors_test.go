@@ -14,8 +14,6 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// TestReconcileNamesEveryRefAMovedBindingHid pins that reconcile joins every
-// worker's failure: two refs published into a moved binding are both named.
 func TestReconcileNamesEveryRefAMovedBindingHid(t *testing.T) {
 	ctx := t.Context()
 	source := gittest.InitRepo(t)
@@ -52,12 +50,13 @@ func TestReconcileNamesEveryRefAMovedBindingHid(t *testing.T) {
 	if !errors.Is(err, store.ErrBindingChanged) {
 		t.Fatalf("reconcile = %v, want ErrBindingChanged", err)
 	}
-	for ref, tip := range scope {
-		if !strings.Contains(err.Error(), "published "+ref) {
+	for ref := range scope {
+		if !strings.Contains(err.Error(), "reconcile "+ref) {
 			t.Fatalf("reconcile error does not name %s:\n%v", ref, err)
 		}
-		if got := model.SHA(gittest.Git(t, source, "rev-parse", "--verify", ref)); got != tip {
-			t.Fatalf("%s = %s after reconcile, want the published tip %s", ref, got, tip)
+		_, tipErr := s.Repo.Tip(ctx, ref)
+		if !errors.Is(tipErr, gitobj.ErrRefNotFound) {
+			t.Fatalf("refused reconcile published %s: %v", ref, tipErr)
 		}
 	}
 }

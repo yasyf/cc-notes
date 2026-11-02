@@ -379,7 +379,9 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 	for i, ref := range ordered {
 		e.reconciled.Add(1)
 		g.Go(func() error {
-			errs[i] = e.ensure(ctx, ref, scope[ref])
+			if err := e.ensure(ctx, ref, scope[ref]); err != nil {
+				errs[i] = fmt.Errorf("reconcile %s: %w", ref, err)
+			}
 			return errs[i]
 		})
 	}
