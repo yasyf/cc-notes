@@ -332,7 +332,7 @@ func TestLRUDirProcessBatchCrashAndGC(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			l := newProcessCache(t, 3)
 			a, b, c := "old:a", "old:b", strings.Repeat("old:c", cacheChunkSize)
-			l.writeBatch([]cachePublication{{"a", []byte(a)}, {"b", []byte(b)}, {"c", []byte(c)}})
+			l.writeBatch([]cachePublication{{name: "a", data: []byte(a)}, {name: "b", data: []byte(b)}, {name: "c", data: []byte(c)}})
 			runCacheProcess(t, cacheProcessRequest{Mode: mode, Dir: l.dir, Capacity: l.capacity, Names: []string{"a", "b"}, Data: "new:"}, 77)
 			want := map[string]*string{"a": nil, "b": nil, "c": &c}
 			if mode == "batch-commit" {
