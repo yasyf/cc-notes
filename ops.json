@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"claim","assignee":"Yasyf Mohamedali \u003cyasyf@poetic.com\u003e"}]}
+{"v":1,"lamport":3,"ops":[{"kind":"add_comment","body":"Root capability-admission decision is durable note f77d1780fcd8a9a1791528e3d3314d077b03c533. Native-GPT authorization is explicit; no new permission question. DiagnosticPR274/fullCI and exact semantic/write/provisioning/security gates remain. No production schema/API implementation or criterion change yet."}]}
