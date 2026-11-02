@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"ops":[{"kind":"set_status","status":"in_progress"},{"kind":"set_assignee","assignee":"/root/ccn_managed_hotpath"},{"kind":"set_branch","branch":"perf/managed-writer-authority"}]}
+{"v":1,"lamport":3,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"set_branch","branch":"cache-footprint"}]}
