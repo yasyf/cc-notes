@@ -483,7 +483,7 @@ func (l *lruDir) hintName(slot cacheHintSlot) (string, bool) {
 		}
 		return cachePayloadName(io.NewSectionReader(file, int64(slot.slot)*cacheInlineStride, cacheInlineStride), slot)
 	}
-	file, err := os.Open(l.slotPath(slot.slot))
+	file, err := os.Open(l.slotPath(slot.slot)) //nolint:gosec // G703: Integer slot paths derive only from the store's cache directory.
 	if err != nil {
 		return "", false
 	}
@@ -559,7 +559,7 @@ func (l *lruDir) clear(file *os.File, slot int) {
 	if payload, err := l.payloadFile(cacheErase); err == nil {
 		_ = eraseInlineCachePayload(payload, slot)
 	}
-	_ = os.Remove(l.slotPath(slot))
+	_ = os.Remove(l.slotPath(slot)) //nolint:gosec // G703: Integer slot paths derive only from the store's cache directory.
 	_ = writeCacheHint(file, slot, cacheHint{empty: true})
 }
 
