@@ -221,17 +221,35 @@ func (c *Client) CommentLedger(ctx context.Context, id model.EntityID, body stri
 
 // SetRow writes fields into the row keyed by key, inserting the row when the
 // ledger has none. Replace drops the fields the map omits instead of leaving
-// them standing. The ledger must be active.
+// them standing. The ledger must be active. A write that would leave the row
+// exactly as it stands writes nothing and returns the ledger unchanged.
 func (c *Client) SetRow(ctx context.Context, id model.EntityID, key string, fields map[string]string, replace bool) (model.Ledger, error) {
 	l, err := c.activeLedger(ctx, id)
 	if err != nil {
 		return model.Ledger{}, err
 	}
 	op := model.UpsertRow{Key: key, Fields: fields, Replace: replace}
-	if RowIndex(l, key) < 0 {
+	switch i := RowIndex(l, key); {
+	case i < 0:
 		op.Position = nextPosition(l.Rows)
+	case rowHolds(l.Rows[i].Fields, fields, replace):
+		return l, nil
 	}
 	return c.appendLedger(ctx, id, []model.Op{op})
+}
+
+// rowHolds reports whether writing fields into a row holding have leaves its
+// field map unchanged.
+func rowHolds(have, fields map[string]string, replace bool) bool {
+	if replace {
+		return maps.Equal(have, fields)
+	}
+	for name, value := range fields {
+		if current, ok := have[name]; !ok || current != value {
+			return false
+		}
+	}
+	return true
 }
 
 // RemoveRow removes the row keyed by key. A key the ledger does not carry is
