@@ -37,7 +37,7 @@ type relevantCacheEntry struct {
 	Revalidate bool         `json:"revalidate,omitempty"`
 	Stamps     []fileStamp  `json:"stamps,omitempty"`
 	Files      []fileStamp  `json:"files,omitempty"`
-	Rendered   []string     `json:"rendered,omitempty"`
+	LooseRefs  []string     `json:"loose_refs,omitempty"`
 	Deps       relevantDeps `json:"-"`
 	Output     []byte       `json:"-"`
 }
@@ -100,7 +100,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 			// directory stamp (go-git setRef) is not covered.
 			cached, hit, cachedOK = readRelevantCacheEntry(f, now)
 			if !hit && cachedOK {
-				hit = c.restampUnanchoredWrites(ctx, name, cached, filter, now)
+				hit = c.restampUnscoredWrites(ctx, name, cached, p, filter, now)
 			}
 			if hit {
 				if _, bound := c.s.Binding(); bound {
@@ -152,7 +152,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if !slices.Equal(before, after) || slices.ContainsFunc(after, func(f fileStamp) bool { return f.racyMtime(in.start) }) || in.noCache || !in.close() {
 		return out, nil
 	}
-	entry := relevantCacheEntry{Key: in.key(), Files: after, Rendered: renderedRefs(entries), Output: out}
+	entry := relevantCacheEntry{Key: in.key(), Files: after, LooseRefs: c.looseRefs(entries), Output: out}
 	in.fill(&entry)
 	for _, e := range entries {
 		if fe, ok := freshOf(e); ok && e.Verdict == "" && fe.StaleAt == 0 && fe.VerifiedAt != 0 {
@@ -325,18 +325,19 @@ func (e relevantCacheEntry) built(now time.Time) bool {
 	return err == nil && git == e.Git
 }
 
-// restampUnanchoredWrites serves an entry whose only moved fingerprints are
+// restampUnscoredWrites serves an entry whose only moved fingerprints are
 // entity ref directories, each the same directory as before and holding none
 // of the refs the entry renders or resolves a branch, base, or commit
 // through, when every ref written there since the entry was built names an
-// entity with no anchors.
-// Such an entity scores nothing against any path, so a ledger's row writes,
-// the bulk of a drive's churn, leave every rendering standing. An entry racy
-// only in those directories qualifies too, since they are read afresh rather
-// than trusted. The moved stamps, taken before the directories are read,
-// persist with the check's start as the entry's build time once they are
-// older than the racy window.
-func (c *Client) restampUnanchoredWrites(ctx context.Context, name string, e relevantCacheEntry, filter RelevantFilter, now time.Time) bool {
+// entity that scores nothing against p: one with no anchors, or with path
+// and dir anchors nowhere at, above, or beside p. Such an entity cannot enter
+// p's rendering, so a ledger's row writes, the bulk of a drive's churn, and
+// edits to records anchored elsewhere leave it standing. An entry racy only
+// in those directories qualifies too, since they are read afresh rather than
+// trusted. The moved stamps, taken before the directories are read, persist
+// with the check's start as the entry's build time once they are older than
+// the racy window.
+func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relevantCacheEntry, p string, filter RelevantFilter, now time.Time) bool {
 	if (e.Racy && !e.RacyRefs) || !e.built(now) || !e.filesValid() {
 		return false
 	}
@@ -353,7 +354,7 @@ func (c *Client) restampUnanchoredWrites(ctx context.Context, name string, e rel
 		if !ok || s.Link || s.Ident || stamps[i].Missing || stamps[i].Inode != s.Inode || stamps[i].Mode != s.Mode {
 			return false
 		}
-		if slices.ContainsFunc(e.Rendered, func(ref string) bool { return strings.HasPrefix(ref, root) }) ||
+		if slices.ContainsFunc(e.LooseRefs, func(ref string) bool { return strings.HasPrefix(ref, root) && !c.looseRef(ref) }) ||
 			slices.ContainsFunc(resolved, func(rev string) bool { return strings.Contains(rev, strings.TrimPrefix(root, "refs/")) }) {
 			return false
 		}
@@ -361,7 +362,7 @@ func (c *Client) restampUnanchoredWrites(ctx context.Context, name string, e rel
 	}
 	cutoff := e.Built - relevantRacyWindow.Nanoseconds()
 	for _, i := range moved {
-		if !c.unanchoredSince(ctx, e.Stamps[i].Path, cutoff) {
+		if !c.unscoredSince(ctx, e.Stamps[i].Path, p, cutoff) {
 			return false
 		}
 	}
@@ -381,10 +382,10 @@ func (c *Client) entityRootDirs() map[string]string {
 	return dirs
 }
 
-// unanchoredSince reports whether every loose ref in dir written at or after
-// cutoff (nanoseconds) holds an entity with no anchors. A ref removed since is
-// no rendered entry's, so it changes nothing.
-func (c *Client) unanchoredSince(ctx context.Context, dir string, cutoff int64) bool {
+// unscoredSince reports whether every loose ref in dir written at or after
+// cutoff (nanoseconds) holds an entity that scores nothing against p. A ref
+// removed since is no rendered entry's, so it changes nothing.
+func (c *Client) unscoredSince(ctx context.Context, dir, p string, cutoff int64) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
@@ -412,19 +413,41 @@ func (c *Client) unanchoredSince(ctx context.Context, dir string, cutoff int64) 
 		if err != nil {
 			return false
 		}
-		if e, ok := snapshotEntry(snapshot); !ok || len(e.anchors()) > 0 {
+		if e, ok := snapshotEntry(snapshot); !ok || !scoresNothingAt(e.anchors(), p) {
 			return false
 		}
 	}
 	return true
 }
 
-func renderedRefs(entries []RelevantEntry) []string {
-	rendered := make([]string, len(entries))
-	for i, e := range entries {
-		rendered[i] = refs.For(e.Kind, e.id())
+// scoresNothingAt reports whether anchors earn no score for p in any
+// repository state: every anchor is a path or dir anchor, and none is at p,
+// above it, or beside it. Branch and commit anchors score from history, so
+// an entity carrying one never qualifies.
+func scoresNothingAt(anchors []model.Anchor, p string) bool {
+	for _, a := range anchors {
+		if a.Kind != model.AnchorPath && a.Kind != model.AnchorDir {
+			return false
+		}
 	}
-	return rendered
+	return !hasAnchorIn(anchors, model.AnchorPath, p) && deepestDirAnchor(anchors, p) == "" && len(siblingAnchors(anchors, p)) == 0
+}
+
+// looseRefs lists the refs of the rendered entries that are loose files, the
+// ones whose deletion leaves packed-refs untouched.
+func (c *Client) looseRefs(entries []RelevantEntry) []string {
+	var loose []string
+	for _, e := range entries {
+		if ref := refs.For(e.Kind, e.id()); c.looseRef(ref) {
+			loose = append(loose, ref)
+		}
+	}
+	return loose
+}
+
+func (c *Client) looseRef(ref string) bool {
+	info, err := os.Lstat(joinPath(c.s.RecordsCommonDir(), filepath.FromSlash(ref)))
+	return err == nil && info.Mode().IsRegular()
 }
 
 func (e relevantCacheEntry) clockValid(now time.Time) bool {

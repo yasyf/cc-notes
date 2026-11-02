@@ -554,6 +554,13 @@ func invalidationCases() []matrixCase {
 			writes: []matrixWrite{{name: "second client sets a row", want: tierRebuild, changes: true, do: setLedgerRow("a")}},
 		},
 		{
+			name: "ledger anchored elsewhere written by a second client",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.ledger = makeLedger(t, fx.c, "elsewhere desk", notes.AnchorSpec{Paths: []string{"elsewhere/other.go"}, Dirs: []string{"elsewhere"}})
+			},
+			writes: []matrixWrite{{name: "second client sets a row", want: tierHit, do: setLedgerRow("a")}},
+		},
+		{
 			name:  "anchored ledger created beside an unanchored one",
 			setup: func(t *testing.T, fx *matrixFixture) { fx.ledger = makeLedger(t, fx.c, "desk", notes.AnchorSpec{}) },
 			writes: []matrixWrite{{name: "second client creates an anchored ledger", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
