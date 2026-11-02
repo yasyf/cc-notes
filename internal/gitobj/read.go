@@ -111,6 +111,57 @@ func (r *Repo) readChain(ctx context.Context, tip model.SHA, head *model.PackCom
 	return chain, nil
 }
 
+// LinearHistory walks first parents back from head while every commit has at
+// most one, and returns the commits it passed newest first, head included:
+// down to the root, or to the first commit below head that stop reports,
+// which it leaves out. It reads parents from the commit-graph where one holds
+// them, so a long chain costs no object reads. linear is false when the walk
+// meets a merge first, or in a shallow repository, whose grafts it does not
+// follow.
+func (r *Repo) LinearHistory(ctx context.Context, head model.SHA, stop func(model.SHA) bool) (_ []model.SHA, linear bool, resultErr error) {
+	if !plumbing.IsHash(string(head)) {
+		return nil, false, fmt.Errorf("invalid head sha %q", head)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.beginRead(ctx)
+	defer r.endRead(&resultErr)
+	if err := r.refreshAncestry(); err != nil {
+		return nil, false, err
+	}
+	if len(r.shallow) > 0 {
+		return nil, false, nil
+	}
+	hash := plumbing.NewHash(string(head))
+	var walked []model.SHA
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		sha := model.SHA(hash.String())
+		if len(walked) > 0 && stop(sha) {
+			return walked, true, nil
+		}
+		walked = append(walked, sha)
+		parents, ok := r.graphParents(hash)
+		if !ok {
+			commit, err := r.lookupCommit(hash)
+			if err != nil {
+				return nil, false, fmt.Errorf("read commit %s: %w", sha, err)
+			}
+			parents = commit.ParentHashes
+		}
+		switch len(parents) {
+		case 0:
+			return walked, true, nil
+		case 1:
+			hash = parents[0]
+		default:
+			return nil, false, nil
+		}
+	}
+}
+
 // Tip resolves ref (symbolic refs included) to the commit it points at. It
 // fails with ErrRefNotFound when the ref does not exist.
 func (r *Repo) Tip(ctx context.Context, ref string) (model.SHA, error) {
