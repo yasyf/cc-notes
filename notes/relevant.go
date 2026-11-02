@@ -426,30 +426,39 @@ func loadRelevant(ctx context.Context, s *store.Store, rows []store.StatusRecord
 		if err != nil {
 			return nil, err
 		}
-		e := RelevantEntry{Kind: stub.Kind, Score: stub.Score, Reasons: stub.Reasons}
-		switch value := snapshot.(type) {
-		case model.Note:
-			e.Note = value
-		case model.Doc:
-			e.Doc = value
-		case model.Answer:
-			e.Answer = value
-		case model.Ledger:
-			e.Ledger = value
-		case model.Log:
-			e.Log = value
-		case model.Runbook:
-			e.Runbook = value
-		case model.Investigation:
-			e.Investigation = value
-		case model.Plan:
-			e.Plan = value
-		default:
+		e, ok := snapshotEntry(snapshot)
+		if !ok || e.Kind != stub.Kind {
 			return nil, fmt.Errorf("relevant %s %s folded to %T", stub.Kind, stub.id(), snapshot)
 		}
+		e.Score, e.Reasons = stub.Score, stub.Reasons
 		scored[i] = e
 	}
 	return scored, nil
+}
+
+// snapshotEntry wraps a folded snapshot of a relevance kind as an entry, or
+// reports false for any other kind.
+func snapshotEntry(snapshot model.Snapshot) (RelevantEntry, bool) {
+	switch value := snapshot.(type) {
+	case model.Note:
+		return RelevantEntry{Kind: model.KindNote, Note: value}, true
+	case model.Doc:
+		return RelevantEntry{Kind: model.KindDoc, Doc: value}, true
+	case model.Answer:
+		return RelevantEntry{Kind: model.KindAnswer, Answer: value}, true
+	case model.Ledger:
+		return RelevantEntry{Kind: model.KindLedger, Ledger: value}, true
+	case model.Log:
+		return RelevantEntry{Kind: model.KindLog, Log: value}, true
+	case model.Runbook:
+		return RelevantEntry{Kind: model.KindRunbook, Runbook: value}, true
+	case model.Investigation:
+		return RelevantEntry{Kind: model.KindInvestigation, Investigation: value}, true
+	case model.Plan:
+		return RelevantEntry{Kind: model.KindPlan, Plan: value}, true
+	default:
+		return RelevantEntry{}, false
+	}
 }
 
 func (c *Client) relevantVerdicts(ctx context.Context, scored []RelevantEntry, in *relevantInputs, worktree bool) error {

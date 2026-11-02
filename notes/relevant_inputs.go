@@ -1131,12 +1131,26 @@ func (in *relevantInputs) racy() bool {
 	return in.untrusted || slices.ContainsFunc(in.stamps, racyAt) || slices.ContainsFunc(in.guards, racyAt)
 }
 
+// racyRefs reports whether every racy fingerprint is a relevance kind's ref
+// directory, which restampUnanchoredWrites reads afresh rather than trusts.
+func (in *relevantInputs) racyRefs() bool {
+	if in.untrusted || slices.ContainsFunc(in.guards, func(s fileStamp) bool { return s.racy(in.start) }) {
+		return false
+	}
+	dirs := in.client.entityRootDirs()
+	return !slices.ContainsFunc(in.stamps, func(s fileStamp) bool {
+		_, dir := dirs[s.Path]
+		return s.racy(in.start) && !dir
+	})
+}
+
 func (in *relevantInputs) fill(e *relevantCacheEntry) {
 	e.Built = in.start.UnixNano()
 	e.Env = in.env
 	e.Exe = in.exe
 	e.Git = in.git
 	e.Racy = in.racy()
+	e.RacyRefs = in.racyRefs()
 	e.Revalidate = in.revalidate
 	e.Stamps = in.stamps
 	e.Deps = in.deps
