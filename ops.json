@@ -1,1 +1,1 @@
-{"v":1,"lamport":10,"ops":[{"kind":"add_criterion","id":"94caebddcc0fb778880087e8e1728a85","text":"Reuse existing command parsing and bounded path metadata to reject observed broad home/cache/marketplace/upward searches while preserving targeted checkouts, with strict deny/allow regression controls and no directory traversal, Git process, transcript or model hot-path reads.","script":""}]}
+{"v":1,"lamport":11,"ops":[{"kind":"remove_criterion","id":"79f09ec6e4db7e525caf44dd4365f69e"}]}
