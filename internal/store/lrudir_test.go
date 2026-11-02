@@ -208,6 +208,27 @@ func TestLRUDirSweepTrimsOldestWritesToBudget(t *testing.T) {
 	}
 }
 
+func TestLRUDirWritesHoldItsBudget(t *testing.T) {
+	l := &lruDir{capacity: 8, budget: 250, dir: t.TempDir()}
+	t.Cleanup(func() { _ = l.close() })
+	payload := bytes.Repeat([]byte("x"), 100)
+	for _, step := range []struct {
+		name string
+		want []string
+	}{
+		{"a", []string{"a"}},
+		{"b", []string{"a", "b"}},
+		{"c", []string{"b", "c"}},
+		{"b", []string{"b", "c"}},
+		{"d", []string{"b", "d"}},
+	} {
+		l.write(step.name, payload)
+		if got := l.names(); !slices.Equal(got, step.want) {
+			t.Fatalf("after writing %s entries = %v, want %v", step.name, got, step.want)
+		}
+	}
+}
+
 func TestLRUDirSweepCreatesNoCache(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "absent")
 	l := &lruDir{capacity: 8, dir: dir}
