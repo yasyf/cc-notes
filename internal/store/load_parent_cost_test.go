@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -46,8 +45,7 @@ func TestLoadParentCostHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, top, floor, hit := s.cache.getTop(input.Parent)
-	if !hit {
+	if _, hit := s.cache.get(input.Parent); !hit {
 		t.Fatal("fresh reader missed the genuine parent snapshot")
 	}
 	if _, hit := s.cache.get(input.Head); hit {
@@ -65,10 +63,6 @@ func TestLoadParentCostHelper(t *testing.T) {
 	actual, err := json.Marshal(snapshot)
 	if err != nil || !bytes.Equal(actual, input.Want) {
 		t.Fatalf("fresh load = %s, %v; full fold = %s", actual, err, input.Want)
-	}
-	after, afterTop, afterFloor, hit := s.cache.getTop(input.Parent)
-	if !hit || !reflect.DeepEqual(before, after) || top != afterTop || floor != afterFloor {
-		t.Fatal("fresh load mutated the parent snapshot")
 	}
 	if _, hit := s.cache.get(input.Head); !hit {
 		t.Fatal("fresh load did not cache its new tip")

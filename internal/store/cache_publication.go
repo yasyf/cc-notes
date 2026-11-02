@@ -14,11 +14,12 @@ const (
 )
 
 type cachePublication struct {
-	name string
-	data []byte
+	name       string
+	data       []byte
+	supersedes []string
 }
 
-func foldPublication(tip model.SHA, snap model.Snapshot, top, floor model.Lamport) *cachePublication {
+func foldPublication(tip model.SHA, snap model.Snapshot, top, floor model.Lamport, superseded ...model.SHA) *cachePublication {
 	if snap.Meta().SkippedOps > 0 {
 		return nil
 	}
@@ -26,11 +27,15 @@ func foldPublication(tip model.SHA, snap model.Snapshot, top, floor model.Lampor
 	if !ok {
 		return nil
 	}
-	return &cachePublication{name: string(tip), data: data}
+	supersedes := make([]string, len(superseded))
+	for i, old := range superseded {
+		supersedes[i] = string(old)
+	}
+	return &cachePublication{name: string(tip), data: data, supersedes: supersedes}
 }
 
-func foldChainPublication(tip model.SHA, snap model.Snapshot, chain []model.PackCommit) *cachePublication {
-	return foldPublication(tip, snap, topLamport(chain), fold.ExtendFloor(chain))
+func foldChainPublication(tip model.SHA, snap model.Snapshot, chain []model.PackCommit, superseded ...model.SHA) *cachePublication {
+	return foldPublication(tip, snap, topLamport(chain), fold.ExtendFloor(chain), superseded...)
 }
 
 type foldPublicationBatch struct {

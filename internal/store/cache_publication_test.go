@@ -124,7 +124,7 @@ func TestLRUDirPublicationBatchCapacityAndRepeatedKeys(t *testing.T) {
 	for _, capacity := range []int{0, 1, 3} {
 		t.Run(strconv.Itoa(capacity), func(t *testing.T) {
 			l := newProcessCache(t, capacity)
-			l.writeBatch([]cachePublication{{"a", []byte("first")}, {"b", []byte("b")}, {"a", []byte("last")}, {"c", []byte("c")}, {"d", []byte("d")}})
+			l.writeBatch([]cachePublication{{name: "a", data: []byte("first")}, {name: "b", data: []byte("b")}, {name: "a", data: []byte("last")}, {name: "c", data: []byte("c")}, {name: "d", data: []byte("d")}})
 			var want []string
 			switch capacity {
 			case 1:
@@ -140,7 +140,7 @@ func TestLRUDirPublicationBatchCapacityAndRepeatedKeys(t *testing.T) {
 					t.Fatalf("repeated key = %q, %v", data, ok)
 				}
 				l.remove("a")
-				l.writeBatch([]cachePublication{{"e", []byte("e")}, {"f", []byte("f")}})
+				l.writeBatch([]cachePublication{{name: "e", data: []byte("e")}, {name: "f", data: []byte("f")}})
 				if got := l.names(); !slices.Equal(got, []string{"d", "e", "f"}) {
 					t.Fatalf("free-slot batch = %v", got)
 				}
@@ -170,7 +170,7 @@ func TestLRUDirPublicationBatchRetainsValidPrefixAfterRenameFailure(t *testing.T
 	if err := os.Mkdir(blocked, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l.writeBatch([]cachePublication{{"a", []byte("new a")}, {"b", bytes.Repeat([]byte("new b"), cacheChunkSize)}})
+	l.writeBatch([]cachePublication{{name: "a", data: []byte("new a")}, {name: "b", data: bytes.Repeat([]byte("new b"), cacheChunkSize)}})
 	if data, ok := l.read("a"); !ok || string(data) != "new a" {
 		t.Fatalf("valid prefix = %q, %v", data, ok)
 	}
@@ -183,7 +183,7 @@ func TestLRUDirPublicationBatchRetainsValidPrefixAfterRenameFailure(t *testing.T
 	if err := os.Remove(blocked); err != nil {
 		t.Fatal(err)
 	}
-	l.writeBatch([]cachePublication{{"a", []byte("repaired a")}, {"b", []byte("repaired b")}})
+	l.writeBatch([]cachePublication{{name: "a", data: []byte("repaired a")}, {name: "b", data: []byte("repaired b")}})
 	for _, name := range []string{"a", "b"} {
 		if data, ok := l.read(name); !ok || string(data) != "repaired "+name {
 			t.Fatalf("repaired %s = %q, %v", name, data, ok)

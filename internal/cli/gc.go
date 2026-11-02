@@ -9,8 +9,10 @@ import (
 )
 
 // newGCCmd builds "cc-notes gc": local maintenance. By default it tidies local
-// state only — pruning fold-cache entries whose tip is no longer any entity ref
-// tip, orphaned by appends, compaction, and merges — and touches no remote.
+// state only — erasing fold-cache entries whose tip is no longer any entity ref
+// tip, trimming the derived caches to their byte budgets, and retiring derived
+// state no current binary reads — and touches no remote. A sync that moves refs
+// runs the same tidy on its own.
 // With --prune-remote it additionally physically deletes tombstoned note, doc,
 // log, runbook, investigation, plan, and answer refs locally and on the default remote
 // via `git push --delete`. Physical prune is best-effort and non-convergent — a
@@ -22,8 +24,11 @@ func newGCCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gc",
 		Short: "Tidy local state; --prune-remote physically deletes tombstoned refs",
-		Long: "Local maintenance. By default it tidies local state only, pruning fold-cache\n" +
-			"entries whose tip is no longer any entity ref tip; no network.\n\n" +
+		Long: "Local maintenance. By default it tidies local state only: it erases fold-cache\n" +
+			"entries whose tip is no longer any entity ref tip, trims the fold and relevance\n" +
+			"caches to their byte budgets, deletes cache generations and object indexes no\n" +
+			"current binary has touched in a day, and reaps the per-user state of deleted\n" +
+			"clones; no network. A sync that moves refs runs the same tidy on its own.\n\n" +
 			"--prune-remote additionally deletes tombstoned note, doc, log, runbook,\n" +
 			"investigation, plan, and answer refs locally and on the default remote via\n" +
 			"`git push --delete`. This is best-effort and non-convergent:\n" +
@@ -42,7 +47,7 @@ func newGCCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSON(out, gcDTO{Tidied: report.Tidied, Pruned: report.Pruned, Failed: report.Failed})
+				return printJSON(out, gcDTO{Tidied: report.Tidied, Retired: report.Retired, Pruned: report.Pruned, Failed: report.Failed})
 			}
 			for _, line := range []struct {
 				verb   string
@@ -52,6 +57,7 @@ func newGCCmd() *cobra.Command {
 				{"pruned", report.Pruned, false},
 				{"failed", report.Failed, false},
 				{"tidied", report.Tidied, true},
+				{"retired", report.Retired, false},
 			} {
 				if !line.always && line.count == 0 {
 					continue
@@ -69,11 +75,12 @@ func newGCCmd() *cobra.Command {
 	return cmd
 }
 
-// gcDTO fixes the JSON field order for a gc report: local entries tidied, and
-// the tombstoned refs pruned and failed under --prune-remote (both zero
-// without it).
+// gcDTO fixes the JSON field order for a gc report: local entries tidied,
+// derived state retired, and the tombstoned refs pruned and failed under
+// --prune-remote (both zero without it).
 type gcDTO struct {
-	Tidied int `json:"tidied"`
-	Pruned int `json:"pruned"`
-	Failed int `json:"failed"`
+	Tidied  int `json:"tidied"`
+	Retired int `json:"retired"`
+	Pruned  int `json:"pruned"`
+	Failed  int `json:"failed"`
 }

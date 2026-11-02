@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -370,6 +371,9 @@ func (l *lruDir) writeBatch(values []cachePublication) {
 		if err := writeCacheHint(file, slot, hint); err != nil {
 			return
 		}
+		for _, superseded := range value.supersedes {
+			l.erase(file, superseded)
+		}
 		l.mu.Lock()
 		l.active = true
 		l.rank = max(l.rank, rank)
@@ -471,7 +475,7 @@ func (l *lruDir) hintName(slot cacheHintSlot) (string, bool) {
 		}
 		return cachePayloadName(io.NewSectionReader(file, int64(slot.slot)*cacheInlineStride, cacheInlineStride), slot)
 	}
-	file, err := os.Open(l.slotPath(slot.slot))
+	file, err := os.Open(l.slotPath(slot.slot)) //nolint:gosec // G703: Integer slot paths derive only from the store's cache directory.
 	if err != nil {
 		return "", false
 	}
@@ -521,23 +525,94 @@ func (l *lruDir) remove(name string) {
 	if err != nil {
 		return
 	}
+	l.erase(file, name)
+}
+
+func (l *lruDir) erase(file *os.File, name string) {
+	tag := cacheNameTag(name)
 	pages := cacheHintPages{file: file, capacity: l.capacity}
-	window, err := pages.window(cacheNameTag(name))
+	window, err := pages.window(tag)
 	if err != nil {
 		return
 	}
 	for _, candidate := range window.slots[:window.count] {
-		if candidate.empty || candidate.tag != cacheNameTag(name) {
+		if candidate.empty || candidate.tag != tag {
 			continue
 		}
 		if found, ok := l.hintName(candidate); ok && found != name {
 			continue
 		}
-		if payload, err := l.payloadFile(cacheErase); err == nil {
-			_ = eraseInlineCachePayload(payload, candidate.slot)
-		}
-		_ = os.Remove(l.slotPath(candidate.slot))
-		_ = writeCacheHint(file, candidate.slot, cacheHint{empty: true})
+		l.clear(file, candidate.slot)
 		return
 	}
+}
+
+func (l *lruDir) clear(file *os.File, slot int) {
+	if payload, err := l.payloadFile(cacheErase); err == nil {
+		_ = eraseInlineCachePayload(payload, slot)
+	}
+	_ = os.Remove(l.slotPath(slot)) //nolint:gosec // G703: Integer slot paths derive only from the store's cache directory.
+	_ = writeCacheHint(file, slot, cacheHint{empty: true})
+}
+
+func (l *lruDir) watermark() uint64 {
+	file, err := l.hintFile(cacheEnumerate)
+	if err != nil {
+		return 0
+	}
+	rank, err := readCacheHintHeader(file, l.capacity)
+	if err != nil {
+		return 0
+	}
+	return rank
+}
+
+func (l *lruDir) sweep(stale func(cacheHint) bool, budget int64) int {
+	if l.capacity <= 0 {
+		return 0
+	}
+	if _, err := os.Stat(filepath.Join(l.dir, cacheHintFile)); err != nil { //nolint:gosec // G703: path is the fixed routing file inside the store's cache directory.
+		return 0
+	}
+	l.writer.Lock()
+	defer l.writer.Unlock()
+	lock, ok := l.lockWriter()
+	if !ok {
+		return 0
+	}
+	defer func() { _ = lock.Close() }()
+	file, err := l.hintFile(cacheWrite)
+	if err != nil {
+		return 0
+	}
+	records := make([]byte, l.capacity*cacheHintRecordSize)
+	if _, err := file.ReadAt(records, cacheHintHeaderSize); err != nil {
+		return 0
+	}
+	var kept []cacheHintSlot
+	var total int64
+	erased := 0
+	for slot := range l.capacity {
+		hint, err := decodeCacheHint(records[slot*cacheHintRecordSize : (slot+1)*cacheHintRecordSize])
+		if err != nil || hint.empty {
+			continue
+		}
+		if stale != nil && stale(hint) {
+			l.clear(file, slot)
+			erased++
+			continue
+		}
+		kept = append(kept, cacheHintSlot{slot: slot, cacheHint: hint})
+		total += hint.size
+	}
+	slices.SortFunc(kept, func(a, b cacheHintSlot) int { return cmp.Compare(a.rank, b.rank) })
+	for _, entry := range kept {
+		if total <= budget {
+			break
+		}
+		l.clear(file, entry.slot)
+		total -= entry.size
+		erased++
+	}
+	return erased
 }

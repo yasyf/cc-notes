@@ -45,7 +45,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
 	if publication != nil {
-		s.cache.write(publication.name, publication.data)
+		s.cache.writeBatch([]cachePublication{*publication})
 	}
 	return snapshot, nil
 }
@@ -61,7 +61,7 @@ func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, err
 		return nil, err
 	}
 	if publication != nil {
-		s.cache.write(publication.name, publication.data)
+		s.cache.writeBatch([]cachePublication{*publication})
 	}
 	return snapshot, nil
 }
@@ -85,7 +85,7 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 	if err == nil && len(commit.Parents) == 1 && !slices.ContainsFunc(commit.Pack.Ops, isCheckpoint) {
 		if base, top, floor, ok := s.cache.getTop(commit.Parents[0]); ok && commit.Pack.Lamport > floor {
 			if snapshot, err := fold.Extend(base, commit); err == nil {
-				return snapshot, foldPublication(head, snapshot, max(top, commit.Pack.Lamport), floor), nil
+				return snapshot, foldPublication(head, snapshot, max(top, commit.Pack.Lamport), floor, commit.Parents[0]), nil
 			}
 		}
 	}

@@ -155,7 +155,7 @@ func (s *Store) appendBuilt(ctx context.Context, ref string, build func(context.
 		}
 		switch err := s.PublishRef(ctx, ref, sha, tip); {
 		case err == nil:
-			s.cache.put(sha, snapshot, max(top, pack.Lamport), floor)
+			s.cache.put(sha, snapshot, max(top, pack.Lamport), floor, tip)
 			return snapshot, nil
 		case errors.Is(err, gitcmd.ErrCASMismatch):
 			lastErr = err
@@ -223,7 +223,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 		}
 		switch err := s.PublishRef(ctx, ref, sha, tip); {
 		case err == nil:
-			s.cache.putChain(sha, snapshot, append(chain, commit))
+			s.cache.putChain(sha, snapshot, append(chain, commit), tip)
 			return snapshot, nil
 		case errors.Is(err, gitcmd.ErrCASMismatch):
 			lastErr = err
@@ -277,7 +277,7 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 	if err := s.PublishRef(ctx, ref, sha, ours); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	s.cache.putChain(sha, merged, append(combined, merge))
+	s.cache.putChain(sha, merged, append(combined, merge), ours, theirs)
 	return sha, nil
 }
 

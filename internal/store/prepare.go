@@ -111,11 +111,12 @@ func (s *Store) PrepareAppendAt(ctx context.Context, ref string, expected model.
 }
 
 // RememberPrepared admits an already-published prepared snapshot into the
-// local fold cache. It does not inspect or move refs.
+// local fold cache, superseding the snapshot cached for the tip it replaced.
+// It does not inspect or move refs.
 func (s *Store) RememberPrepared(prepared ...PreparedRef) {
 	for _, value := range prepared {
 		if value.New != "" && value.Snapshot != nil {
-			s.cache.put(value.New, value.Snapshot, value.top, value.floor)
+			s.cache.put(value.New, value.Snapshot, value.top, value.floor, value.Old)
 		}
 	}
 }

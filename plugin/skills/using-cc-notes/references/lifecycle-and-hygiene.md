@@ -185,13 +185,21 @@ Event logs grow without bound — the cost of never clobbering a write. Three me
 
 ### The local fold cache
 
-Folding an entity means replaying its whole op-log into a snapshot. To skip re-folding from scratch on every read, cc-notes caches folded snapshots under the git common dir at `cc-notes/folds/` (so `.git/cc-notes/folds/` in a plain repo, shared across linked worktrees). The cache is local and never synced — a pure read accelerator derived entirely from the ODB, so a missing or stale cache is always safe to discard and rebuild. It carries no authority; the log is the truth.
+Folding an entity means replaying its whole op-log into a snapshot. To skip re-folding from scratch on every read, cc-notes caches folded snapshots under the git common dir at `cc-notes/folds-v6/` (so `.git/cc-notes/folds-v6/` in a plain repo, shared across linked worktrees), and keeps list and relevance results beside them in `cc-notes/relevant-v6/`. Both caches are local and never synced. They are pure read accelerators derived entirely from the ODB, so a missing or stale entry is always safe to discard and rebuild. They carry no authority; the log is the truth.
 
-`cc-notes gc` (no flags) tidies this cache: it drops entries whose tip is no longer the current tip of any entity ref — the orphans left by appends, compaction, and merges. It touches no remote.
+The caches stay near their live working set without any action from you. Each fold-cache entry names the chain tip it folds, and every append, compaction, or merge that caches a new tip erases the entry for the tip it replaced in the same step. Refs that move any other way, such as a fetch fast-forwarding a ref or an older cc-notes binary appending, leave orphans behind, so every `cc-notes sync` that creates, fast-forwards, merges, or pushes a ref ends with the local tidy `cc-notes gc` runs:
+
+- It erases fold-cache entries whose tip is no longer the current tip of any entity ref.
+- It trims the fold cache to 512 MiB and the list and relevance cache to 256 MiB, least recently written entries first.
+- It deletes the directories of other cache versions (`folds-v2/`, `relevant-v3/`, and so on) and the retired `objects-v1.sqlite` and `objects-v2.sqlite` indexes under `~/.cc-notes/repos/`, once nothing has written them for a day, so an older binary that is still running keeps its cache.
+- It removes the `~/.cc-notes/repos/` state of clones that no longer exist.
+
+Run `cc-notes gc` (no flags) to do the same by hand. It touches no remote.
 
 ```console
 $ cc-notes gc
 tidied: 7
+retired: 2
 ```
 
 ### Op-log compaction

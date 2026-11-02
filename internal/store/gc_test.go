@@ -3,8 +3,13 @@ package store
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -369,31 +374,24 @@ func TestGCLocalKeepsEveryKindsLiveEntry(t *testing.T) {
 	}
 }
 
+// TestGCLocalPrunesOrphanedCacheEntry moves a ref outside the store, the way a
+// fetch or an older binary does, so no publish supersedes the entry it orphans.
 func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 	s := initStore(t)
 	ctx := t.Context()
 	note := create(t, s, noteOps("v1")).(model.Note)
 	ref := refs.For(model.KindNote, note.ID)
-
-	// Populate the cache against the current tip, then append so that tip is
-	// orphaned and a fresh entry is written for the new tip.
+	appended, err := s.Append(ctx, ref, []model.Op{model.AddTag{Tag: "x"}})
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	gittest.Git(t, s.Git.Dir, "update-ref", ref, string(note.Head), string(appended.Meta().Head))
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)
 	}
-	oldTip, err := s.Repo.Tip(ctx, ref)
-	if err != nil {
-		t.Fatalf("Tip pre: %v", err)
-	}
-	if _, err := s.Append(ctx, ref, []model.Op{model.AddTag{Tag: "x"}}); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-	newTip, err := s.Repo.Tip(ctx, ref)
-	if err != nil {
-		t.Fatalf("Tip post: %v", err)
-	}
 
-	orphan := cacheEntryFrame(t, &s.cache.lruDir, string(oldTip))
-	live := cacheEntryFrame(t, &s.cache.lruDir, string(newTip))
+	orphan := cacheEntryFrame(t, &s.cache.lruDir, string(appended.Meta().Head))
+	live := cacheEntryFrame(t, &s.cache.lruDir, string(note.Head))
 	liveFrame := live.read(t)
 
 	tidied, err := s.GCLocal(ctx)
@@ -406,5 +404,76 @@ func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 	orphan.assertErased(t)
 	if !bytes.Equal(live.read(t), liveFrame) {
 		t.Fatal("live entry changed by gc")
+	}
+}
+
+// TestRetireLocalDeletesOnlyIdleRetiredState pins the retirement bar: a cache
+// generation or object index beside the current ones goes once every file of
+// it has sat a day untouched, and anything still written, write-locked,
+// current, or not a generation at all stays.
+func TestRetireLocalDeletesOnlyIdleRetiredState(t *testing.T) {
+	s := initStore(t)
+	create(t, s, noteOps("cached"))
+	parent := filepath.Dir(s.cache.dir)
+	home, err := ccnhome.ForRepo(s.CommonDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle := time.Now().Add(-2 * retireAfter)
+	fixture := func(path string, dir bool, mtime time.Time) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if dir {
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture(filepath.Join(parent, "folds-v2", "slot-00000000"), false, idle)
+	fixture(filepath.Join(parent, "folds-v2"), true, idle)
+	fixture(filepath.Join(parent, "folds-v2.lock"), false, idle)
+	fixture(filepath.Join(parent, "relevant-v3.lock"), false, idle)
+	fixture(filepath.Join(parent, "folds-v5", cacheHintFile), false, time.Now())
+	fixture(filepath.Join(parent, "folds-v5"), true, idle)
+	fixture(filepath.Join(parent, "folds-vx"), true, idle)
+	fixture(filepath.Join(parent, "attachments-v1.json"), false, idle)
+	fixture(s.cache.dir, true, idle)
+	fixture(filepath.Join(home.Dir, "objects-v1.sqlite"), false, idle)
+	fixture(filepath.Join(home.Dir, "objects-v2.sqlite"), false, idle)
+	fixture(filepath.Join(home.Dir, "objects-v2.sqlite-wal"), false, time.Now())
+	fixture(filepath.Join(parent, "folds-v4"), true, idle)
+	fixture(filepath.Join(parent, "folds-v4.lock"), false, idle)
+	held, err := os.OpenFile(filepath.Join(parent, "folds-v4.lock"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+
+	retired, err := s.RetireLocal()
+	if err != nil {
+		t.Fatalf("RetireLocal: %v", err)
+	}
+	if retired != 3 {
+		t.Fatalf("retired = %d, want 3: folds-v2, relevant-v3, objects-v1", retired)
+	}
+	for _, gone := range []string{filepath.Join(parent, "folds-v2"), filepath.Join(parent, "folds-v2.lock"), filepath.Join(parent, "relevant-v3.lock"), filepath.Join(home.Dir, "objects-v1.sqlite")} {
+		if _, err := os.Stat(gone); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s survived retirement: %v", gone, err)
+		}
+	}
+	for _, kept := range []string{filepath.Join(parent, "folds-v4"), filepath.Join(parent, "folds-v4.lock"), filepath.Join(parent, "folds-v5"), filepath.Join(parent, "folds-vx"), filepath.Join(parent, "attachments-v1.json"), s.cache.dir, filepath.Join(home.Dir, "objects-v2.sqlite"), filepath.Join(home.Dir, "objects-v2.sqlite-wal")} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("%s was retired: %v", kept, err)
+		}
 	}
 }
