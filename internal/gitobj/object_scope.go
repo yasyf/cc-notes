@@ -40,6 +40,17 @@ func WithReaders(ctx context.Context) (context.Context, *Readers) {
 	return context.WithValue(ctx, readersKey{}, readers), readers
 }
 
+// ShareReaders returns ctx carrying Readers, so a run of separate reads shares
+// pooled readers: ctx itself when it already carries one, otherwise ctx with a
+// fresh one, along with the func that closes what it added.
+func ShareReaders(ctx context.Context) (context.Context, func() error) {
+	if readersFrom(ctx) != nil {
+		return ctx, func() error { return nil }
+	}
+	ctx, readers := WithReaders(ctx)
+	return ctx, readers.Close
+}
+
 func readersFrom(ctx context.Context) *Readers {
 	readers, _ := ctx.Value(readersKey{}).(*Readers)
 	return readers
