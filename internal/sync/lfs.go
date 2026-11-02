@@ -20,14 +20,11 @@ func (e *engine) client(ctx context.Context, operation string) (*lfs.Client, err
 	if c, ok := e.clients[operation]; ok {
 		return c, nil
 	}
-	if !e.endpointSet {
-		ep, err := lfs.Discover(ctx, e.store.RecordsGit, e.remote)
-		if err != nil {
-			return nil, err
-		}
-		e.endpoint, e.endpointSet = ep, true
+	ep, err := e.lfsEndpoint(ctx)
+	if err != nil {
+		return nil, err
 	}
-	c, err := lfs.NewClient(ctx, e.store.RecordsGit, e.endpoint, operation)
+	c, err := lfs.NewClient(ctx, e.store.RecordsGit, ep, operation)
 	if err != nil {
 		return nil, err
 	}
@@ -38,11 +35,24 @@ func (e *engine) client(ctx context.Context, operation string) (*lfs.Client, err
 	return c, nil
 }
 
+func (e *engine) lfsEndpoint(ctx context.Context) (lfs.Endpoint, error) {
+	if !e.endpointSet {
+		ep, err := lfs.Discover(ctx, e.store.RecordsGit, e.remote)
+		if err != nil {
+			return lfs.Endpoint{}, err
+		}
+		e.endpoint, e.endpointSet = ep, true
+	}
+	return e.endpoint, nil
+}
+
 // uploadAttachments pushes every referenced, locally-present attachment
 // object before the ref push and records in e.blocked the refs the push must
 // hold back and in e.uploadErr why — the objects-before-refs invariant: a ref visible on the remote never
 // references content the server lacks. The batch reply decides what the
-// server already has, so re-upload is a natural no-op, and the
+// server already has, so re-upload is a natural no-op; an object the
+// endpoint's upload log already confirms skips the batch unless the sync is
+// full, and every object a batch confirms joins the log. The
 // referenced-∧-present intersection keeps merged-in remote refs whose content
 // was never downloaded out of the upload set. An object only secluded
 // entities reference never uploads. A failure holds back only the refs
@@ -70,16 +80,52 @@ func (e *engine) uploadAttachments(ctx context.Context, secluded map[string]bool
 	if len(present) == 0 {
 		return nil
 	}
+	ep, err := e.lfsEndpoint(ctx)
+	if err != nil {
+		e.blocked, e.uploadErr = blockedBy(present, err), transferError("upload", err, present)
+		return nil
+	}
+	if !e.full {
+		confirmed, err := e.store.UploadedAttachments(ep.Href)
+		if err != nil {
+			return fmt.Errorf("upload attachments: %w", err)
+		}
+		present = slices.DeleteFunc(present, func(obj store.ReferencedObject) bool { return confirmed[obj.OID] })
+		if len(present) == 0 {
+			return nil
+		}
+	}
 	c, err := e.client(ctx, "upload")
 	if err == nil {
 		var uploaded int
 		uploaded, err = c.Upload(ctx, content, transferObjects(present))
 		e.uploaded += uploaded
 	}
+	if err := e.store.RecordUploadedAttachments(ep.Href, confirmedBy(present, err)); err != nil {
+		return fmt.Errorf("upload attachments: %w", err)
+	}
 	if err != nil {
 		e.blocked, e.uploadErr = blockedBy(present, err), transferError("upload", err, present)
 	}
 	return nil
+}
+
+func confirmedBy(candidates []store.ReferencedObject, err error) []string {
+	objErrs := objectErrors(err)
+	if err != nil && len(objErrs) == 0 {
+		return nil
+	}
+	failed := make(map[string]bool, len(objErrs))
+	for _, oe := range objErrs {
+		failed[oe.OID] = true
+	}
+	var oids []string
+	for _, obj := range candidates {
+		if !failed[obj.OID] {
+			oids = append(oids, obj.OID)
+		}
+	}
+	return oids
 }
 
 // blockedBy returns the refs referencing an object err implicates: the failed
@@ -132,6 +178,9 @@ func (e *engine) downloadAttachments(ctx context.Context) error {
 	}
 	downloaded, err := c.Download(ctx, content, transferObjects(missing))
 	e.downloaded += downloaded
+	if err := e.store.RecordUploadedAttachments(e.endpoint.Href, confirmedBy(missing, err)); err != nil {
+		return fmt.Errorf("download attachments: %w", err)
+	}
 	if err != nil {
 		return transferError("download", err, missing)
 	}

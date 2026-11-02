@@ -111,6 +111,7 @@ const (
 type engine struct {
 	store  *store.Store
 	remote string
+	full   bool
 
 	created       atomic.Int64
 	fastForwarded atomic.Int64
@@ -144,8 +145,9 @@ type engine struct {
 // union merge, never a clobber. A non-fast-forward push means the remote
 // moved mid-round: the next round merges the new tips. full forces a
 // whole-namespace reconcile each round, the escape hatch when the scoped
-// scan is suspect. Exhausting maxRounds fails wrapping ErrSyncContended; an
-// unconfigured remote fails wrapping ErrRemoteNotFound.
+// scan is suspect, and re-asks the LFS server about every attachment the
+// upload log already confirms. Exhausting maxRounds fails wrapping
+// ErrSyncContended; an unconfigured remote fails wrapping ErrRemoteNotFound.
 //
 // Referenced, locally-present attachment objects upload each round before
 // the push; a failed upload holds back only the refs referencing the failed
@@ -166,7 +168,7 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 	if err := ensureRemote(ctx, s.RecordsGit, remote); err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
 	}
-	e := &engine{store: s, remote: remote}
+	e := &engine{store: s, remote: remote, full: full}
 	trackingPrefix := syncNamespace + remote + "/"
 	fetchSpec := "+" + namespace + "*:" + trackingPrefix + "*"
 	for round := 1; round <= maxRounds; round++ {

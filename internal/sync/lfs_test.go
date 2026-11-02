@@ -71,6 +71,13 @@ func (f *fakeLFS) remove(oid string) {
 	delete(f.objects, oid)
 }
 
+func (f *fakeLFS) stored(oid string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.objects[oid]
+	return ok
+}
+
 func (f *fakeLFS) isVerified(oid string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -273,6 +280,39 @@ func TestSyncAttachmentRoundTrip(t *testing.T) {
 	// own pushed ref into tracking, a no-op fold.
 	if got, want := sync(t, a), (ccsync.Report{Reconciled: 1, Rounds: 1}); got != want {
 		t.Errorf("A quiescent report = %+v, want %+v", got, want)
+	}
+}
+
+// TestSyncAsksTheLFSServerOncePerObject pins the upload log: once the server
+// confirms an attachment, later syncs never batch it again, while a full sync
+// re-asks and re-uploads what the server lost.
+func TestSyncAsksTheLFSServerOncePerObject(t *testing.T) {
+	bare := gittest.InitBare(t)
+	f, endpoint := newFakeLFS(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+	note := createNote(t, a, "logged")
+	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "logged.bin", []byte("confirmed once"))
+	if got := sync(t, a); got.Uploaded != 1 {
+		t.Fatalf("first sync report = %+v, want one upload", got)
+	}
+
+	before := f.requestCount()
+	createNote(t, a, "later")
+	if got := sync(t, a); got.Pushed != 1 || got.Uploaded != 0 {
+		t.Fatalf("second sync report = %+v, want one push and no upload", got)
+	}
+	if got := f.requestCount(); got != before {
+		t.Fatalf("second sync made %d LFS requests, want none for a confirmed attachment", got-before)
+	}
+
+	f.remove(att.OID)
+	report, err := ccsync.Sync(t.Context(), a, "origin", true)
+	if err != nil {
+		t.Fatalf("full sync: %v", err)
+	}
+	if report.Uploaded != 1 || !f.stored(att.OID) {
+		t.Fatalf("full sync report = %+v, stored = %v, want the lost attachment re-uploaded", report, f.stored(att.OID))
 	}
 }
 
