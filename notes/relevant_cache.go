@@ -37,6 +37,7 @@ type relevantCacheEntry struct {
 	Revalidate bool         `json:"revalidate,omitempty"`
 	Stamps     []fileStamp  `json:"stamps,omitempty"`
 	Files      []fileStamp  `json:"files,omitempty"`
+	Rendered   []string     `json:"rendered,omitempty"`
 	LooseRefs  []string     `json:"loose_refs,omitempty"`
 	Deps       relevantDeps `json:"-"`
 	Output     []byte       `json:"-"`
@@ -121,6 +122,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 		return nil, err
 	}
 	if cachedOK && cached.Key == in.key() && cached.clockValid(in.start) && cached.filesValid() {
+		cached.LooseRefs = c.looseRefs(cached.Rendered)
 		if in.close() {
 			in.fill(&cached)
 			c.writeRelevantCache(name, cached)
@@ -148,11 +150,13 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if err != nil {
 		return nil, err
 	}
+	rendered := renderedRefs(entries)
+	loose := c.looseRefs(rendered)
 	after := stampsOf(paths)
 	if !slices.Equal(before, after) || slices.ContainsFunc(after, func(f fileStamp) bool { return f.racyMtime(in.start) }) || in.noCache || !in.close() {
 		return out, nil
 	}
-	entry := relevantCacheEntry{Key: in.key(), Files: after, LooseRefs: c.looseRefs(entries), Output: out}
+	entry := relevantCacheEntry{Key: in.key(), Files: after, Rendered: rendered, LooseRefs: loose, Output: out}
 	in.fill(&entry)
 	for _, e := range entries {
 		if fe, ok := freshOf(e); ok && e.Verdict == "" && fe.StaleAt == 0 && fe.VerifiedAt != 0 {
@@ -362,7 +366,7 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 	}
 	cutoff := e.Built - relevantRacyWindow.Nanoseconds()
 	for _, i := range moved {
-		if !c.unscoredSince(ctx, e.Stamps[i].Path, p, cutoff) {
+		if !c.unscoredSince(ctx, e.Stamps[i].Path, roots[e.Stamps[i].Path], p, e.Rendered, cutoff) {
 			return false
 		}
 	}
@@ -382,10 +386,11 @@ func (c *Client) entityRootDirs() map[string]string {
 	return dirs
 }
 
-// unscoredSince reports whether every loose ref in dir written at or after
-// cutoff (nanoseconds) holds an entity that scores nothing against p. A ref
-// removed since is no rendered entry's, so it changes nothing.
-func (c *Client) unscoredSince(ctx context.Context, dir, p string, cutoff int64) bool {
+// unscoredSince reports whether every loose ref in dir, the directory of
+// root, written at or after cutoff (nanoseconds) holds an entity that scores
+// nothing against p and is not one the entry renders. A ref removed since is
+// no rendered entry's, the caller having checked those, so it changes nothing.
+func (c *Client) unscoredSince(ctx context.Context, dir, root, p string, rendered []string, cutoff int64) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
@@ -401,7 +406,7 @@ func (c *Client) unscoredSince(ctx context.Context, dir, p string, cutoff int64)
 		if ctime, _ := gitobj.StatIdentity(info); ctime < cutoff && info.ModTime().UnixNano() < cutoff {
 			continue
 		}
-		if !info.Mode().IsRegular() || strings.HasSuffix(entry.Name(), ".lock") {
+		if !info.Mode().IsRegular() || strings.HasSuffix(entry.Name(), ".lock") || slices.Contains(rendered, root+entry.Name()) {
 			return false
 		}
 		data, err := os.ReadFile(filepath.Join(dir, entry.Name())) //nolint:gosec // G304: a loose ref under this store's own ref directory.
@@ -433,16 +438,25 @@ func scoresNothingAt(anchors []model.Anchor, p string) bool {
 	return !hasAnchorIn(anchors, model.AnchorPath, p) && deepestDirAnchor(anchors, p) == "" && len(siblingAnchors(anchors, p)) == 0
 }
 
-// looseRefs lists the refs of the rendered entries that are loose files, the
-// ones whose deletion leaves packed-refs untouched.
-func (c *Client) looseRefs(entries []RelevantEntry) []string {
+// looseRefs lists the rendered refs that are loose files, the ones whose
+// deletion leaves packed-refs untouched. Callers take it before the inputs'
+// final validation, which a deletion racing it fails.
+func (c *Client) looseRefs(rendered []string) []string {
 	var loose []string
-	for _, e := range entries {
-		if ref := refs.For(e.Kind, e.id()); c.looseRef(ref) {
+	for _, ref := range rendered {
+		if c.looseRef(ref) {
 			loose = append(loose, ref)
 		}
 	}
 	return loose
+}
+
+func renderedRefs(entries []RelevantEntry) []string {
+	rendered := make([]string, len(entries))
+	for i, e := range entries {
+		rendered[i] = refs.For(e.Kind, e.id())
+	}
+	return rendered
 }
 
 func (c *Client) looseRef(ref string) bool {
