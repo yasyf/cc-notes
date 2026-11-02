@@ -196,11 +196,8 @@ func TestGCTidiesOrphanedCacheEntry(t *testing.T) {
 	note := storeCreate(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "n"}).(model.Note)
 	ref := refs.For(model.KindNote, note.ID)
 
-	// Load caches the current tip; the append orphans it behind a new tip.
-	if _, err := c.Note(ctx, note.ID); err != nil {
-		t.Fatalf("Note (populate cache): %v", err)
-	}
 	storeAppend(t, dir, ref, model.AddTag{Tag: "x"})
+	orphanRef(t, dir, ref, note.Head)
 
 	report, err := c.GC(ctx, notes.GCOptions{})
 	if err != nil {
@@ -212,6 +209,39 @@ func TestGCTidiesOrphanedCacheEntry(t *testing.T) {
 	if report.Pruned != 0 || report.Failed != 0 {
 		t.Errorf("Pruned/Failed = %d/%d, want 0/0 without PruneRemote", report.Pruned, report.Failed)
 	}
+}
+
+func TestSyncThatMovesRefsTidiesTheCache(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	bare := gittest.InitBare(t)
+	gittest.Git(t, dir, "remote", "add", "origin", bare)
+	note := storeCreate(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "n"}).(model.Note)
+	ref := refs.For(model.KindNote, note.ID)
+	storeAppend(t, dir, ref, model.AddTag{Tag: "x"})
+	orphanRef(t, dir, ref, note.Head)
+
+	report, err := c.Sync(ctx, notes.SyncOptions{Remote: "origin"})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if report.Pushed != 1 {
+		t.Fatalf("Pushed = %d, want 1", report.Pushed)
+	}
+	gc, err := c.GC(ctx, notes.GCOptions{})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if gc.Tidied != 0 {
+		t.Errorf("GC after sync Tidied = %d, want 0: the sync left the orphaned entry for a manual gc", gc.Tidied)
+	}
+}
+
+// orphanRef points ref back at tip with plain git, leaving the snapshot cached
+// for the tip it replaced orphaned.
+func orphanRef(t *testing.T, dir, ref string, tip model.SHA) {
+	t.Helper()
+	gittest.Git(t, dir, "update-ref", ref, string(tip))
 }
 
 func TestGCPruneRemoteDeletesTombstone(t *testing.T) {

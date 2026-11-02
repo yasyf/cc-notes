@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -162,5 +163,61 @@ func (p cacheFrameLocation) assertRecordZero(t *testing.T) {
 	}
 	if !bytes.Equal(record[:n], make([]byte, n)) {
 		t.Fatal("removed inline payload remains")
+	}
+}
+
+func TestLRUDirSweepSparesWritesAfterTheWatermark(t *testing.T) {
+	l := &lruDir{capacity: 8, dir: t.TempDir()}
+	t.Cleanup(func() { _ = l.close() })
+	for _, name := range []string{"a", "b"} {
+		l.write(name, []byte(name))
+	}
+	floor := l.watermark()
+	l.write("c", []byte("c"))
+	if erased := l.sweep(func(hint cacheHint) bool { return hint.rank <= floor }, 1<<20); erased != 2 {
+		t.Fatalf("erased = %d, want 2", erased)
+	}
+	if got, want := l.names(), []string{"c"}; !slices.Equal(got, want) {
+		t.Fatalf("entries = %v, want %v", got, want)
+	}
+}
+
+func TestLRUDirSweepTrimsOldestWritesToBudget(t *testing.T) {
+	l := &lruDir{capacity: 8, dir: t.TempDir()}
+	t.Cleanup(func() { _ = l.close() })
+	payload := bytes.Repeat([]byte("x"), 100)
+	for _, name := range []string{"a", "b", "c", "a"} {
+		l.write(name, payload)
+	}
+	for _, step := range []struct {
+		budget int64
+		erased int
+		want   []string
+	}{
+		{200, 1, []string{"a", "c"}},
+		{200, 0, []string{"a", "c"}},
+		{100, 1, []string{"a"}},
+		{0, 1, nil},
+	} {
+		if erased := l.sweep(nil, step.budget); erased != step.erased {
+			t.Fatalf("budget %d erased %d, want %d", step.budget, erased, step.erased)
+		}
+		if got := l.names(); !slices.Equal(got, step.want) {
+			t.Fatalf("budget %d left %v, want %v", step.budget, got, step.want)
+		}
+	}
+}
+
+func TestLRUDirSweepCreatesNoCache(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent")
+	l := &lruDir{capacity: 8, dir: dir}
+	t.Cleanup(func() { _ = l.close() })
+	if erased := l.sweep(nil, 0); erased != 0 {
+		t.Fatalf("erased = %d from a cache that does not exist", erased)
+	}
+	for _, path := range []string{dir, dir + ".lock"} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("sweep created %s: %v", path, err)
+		}
 	}
 }

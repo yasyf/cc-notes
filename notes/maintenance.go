@@ -2,7 +2,9 @@ package notes
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -47,7 +49,10 @@ type SyncReport struct {
 // cc-notes-wired remote in git-config order (or the default remote when none is
 // wired), attempting every remote even after an earlier one fails and folding
 // the tallies into one report. The first remote's error propagates alongside the
-// report, which still carries everything the run pushed.
+// report, which still carries everything the run pushed. A clean run that moved
+// a ref in either direction ends with GC's local tidy, the one point that sees
+// refs moved by a fetch or by a writer that could not supersede its own cache
+// entry.
 func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error) {
 	remotes := []string{opts.Remote}
 	if opts.Remote == "" {
@@ -74,6 +79,11 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		report.Deferred += rep.Deferred
 		if err != nil && syncErr == nil {
 			syncErr = err
+		}
+	}
+	if syncErr == nil && report.Created+report.FastForwarded+report.Merged+report.Pushed > 0 {
+		if _, err := c.tidy(ctx); err != nil {
+			return report, fmt.Errorf("tidy after sync: %w", err)
 		}
 	}
 	return report, syncErr
@@ -176,38 +186,40 @@ func (c *Client) Reconcile(ctx context.Context, opts ReconcileOptions) (Reconcil
 	return report, nil
 }
 
-// GCOptions selects a GC run's work. GCLocal always runs, tidying local
-// fold-cache state. PruneRemote additionally physically deletes tombstoned note,
-// doc, and log refs locally and on a remote; Remote names that remote, and an
-// empty Remote resolves to the sole cc-notes-wired remote when exactly one is
-// wired, else the default remote.
+// GCOptions selects a GC run's work. The local tidy always runs. PruneRemote
+// additionally physically deletes tombstoned note, doc, and log refs locally and
+// on a remote; Remote names that remote, and an empty Remote resolves to the
+// sole cc-notes-wired remote when exactly one is wired, else the default remote.
 type GCOptions struct {
 	PruneRemote bool
 	Remote      string
 }
 
-// GCReport tallies a GC run: Tidied fold-cache entries removed, and — under
-// PruneRemote — the tombstoned refs Pruned and the per-ref deletes that Failed.
-// Pruned and Failed stay zero without PruneRemote.
+// GCReport tallies a GC run: Tidied cache entries erased, Retired derived-state
+// directories and files deleted, and — under PruneRemote — the tombstoned refs
+// Pruned and the per-ref deletes that Failed. Pruned and Failed stay zero
+// without PruneRemote.
 type GCReport struct {
-	Tidied int
-	Pruned int
-	Failed int
+	Tidied  int
+	Retired int
+	Pruned  int
+	Failed  int
 }
 
 // GC tidies local state and, with opts.PruneRemote, physically deletes
 // tombstoned note, doc, and log refs locally and on a remote. The local tidy
-// prunes fold-cache entries whose tip is no longer any entity ref tip and
-// touches no remote. PruneRemote resolves the remote (opts.Remote, else the sole
-// cc-notes-wired remote, else the default) and deletes each tombstoned ref via
-// git push --delete — best-effort and non-convergent, tallying Pruned and
-// Failed.
+// touches no remote: it erases fold-cache entries whose tip is no longer any
+// entity ref tip, trims the fold and relevance caches to their byte budgets,
+// retires cache generations and object indexes no current binary reads, and
+// reaps the per-user state of clones that no longer exist. PruneRemote resolves
+// the remote (opts.Remote, else the sole cc-notes-wired remote, else the
+// default) and deletes each tombstoned ref via git push --delete — best-effort
+// and non-convergent, tallying Pruned and Failed.
 func (c *Client) GC(ctx context.Context, opts GCOptions) (GCReport, error) {
-	tidied, err := c.s.GCLocal(ctx)
+	report, err := c.tidy(ctx)
 	if err != nil {
 		return GCReport{}, err
 	}
-	report := GCReport{Tidied: tidied}
 	if opts.PruneRemote {
 		remote := opts.Remote
 		if remote == "" {
@@ -220,4 +232,20 @@ func (c *Client) GC(ctx context.Context, opts GCOptions) (GCReport, error) {
 		}
 	}
 	return report, nil
+}
+
+func (c *Client) tidy(ctx context.Context) (GCReport, error) {
+	tidied, err := c.s.GCLocal(ctx)
+	if err != nil {
+		return GCReport{}, err
+	}
+	retired, err := c.s.RetireLocal()
+	if err != nil {
+		return GCReport{}, err
+	}
+	reaped, err := ccnhome.Reap()
+	if err != nil {
+		return GCReport{}, err
+	}
+	return GCReport{Tidied: tidied, Retired: retired + len(reaped)}, nil
 }

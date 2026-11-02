@@ -64,6 +64,7 @@ func TestLoadCachedParentMatchesFullFold(t *testing.T) {
 				}
 				for _, mode := range []string{"ref", "head"} {
 					s.cache.delete(prepared.New)
+					s.cache.put(parent, before, top, floor)
 					var got model.Snapshot
 					if mode == "ref" {
 						got, err = s.Load(t.Context(), ref)
@@ -76,12 +77,15 @@ func TestLoadCachedParentMatchesFullFold(t *testing.T) {
 					if _, cachedTop, cachedFloor, ok := s.cache.getTop(prepared.New); !ok || cachedTop != topLamport(chain) || cachedFloor != fold.ExtendFloor(chain) {
 						t.Fatalf("%s cache top/floor = %d/%d hit=%v", mode, cachedTop, cachedFloor, ok)
 					}
+					if _, ok := s.cache.get(parent); ok {
+						t.Fatalf("%s load left the superseded parent cached", mode)
+					}
+					cached, _ := s.cache.get(prepared.New)
 					if ledger, ok := got.(model.Ledger); ok && len(ledger.Rows) != 0 {
 						ledger.Rows[0].Fields["state"] = "mutated result"
 					}
-					after, afterTop, afterFloor, ok := s.cache.getTop(parent)
-					if !ok || !reflect.DeepEqual(before, after) || top != afterTop || floor != afterFloor {
-						t.Fatal("loading or mutating the child changed its cached parent")
+					if after, ok := s.cache.get(prepared.New); !ok || !reflect.DeepEqual(cached, after) {
+						t.Fatal("mutating the loaded child changed its cached snapshot")
 					}
 				}
 				base = want

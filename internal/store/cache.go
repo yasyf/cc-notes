@@ -95,31 +95,16 @@ func (c *foldCache) getEntry(tip model.SHA, entry cacheEntry) (model.Snapshot, b
 	return snap, true
 }
 
-func (c *foldCache) put(tip model.SHA, snap model.Snapshot, top, floor model.Lamport) {
-	if value := foldPublication(tip, snap, top, floor); value != nil {
-		c.write(value.name, value.data)
+func (c *foldCache) put(tip model.SHA, snap model.Snapshot, top, floor model.Lamport, superseded ...model.SHA) {
+	if value := foldPublication(tip, snap, top, floor, superseded...); value != nil {
+		c.writeBatch([]cachePublication{*value})
 	}
 }
 
-func (c *foldCache) putChain(tip model.SHA, snap model.Snapshot, chain []model.PackCommit) {
-	c.put(tip, snap, topLamport(chain), fold.ExtendFloor(chain))
+func (c *foldCache) putChain(tip model.SHA, snap model.Snapshot, chain []model.PackCommit, superseded ...model.SHA) {
+	c.put(tip, snap, topLamport(chain), fold.ExtendFloor(chain), superseded...)
 }
 
-// tips lists the chain tips currently cached on disk, best-effort: an
-// unreadable directory yields an empty slice. GCLocal walks it to find entries
-// orphaned by appends, compaction, and merges.
-func (c *foldCache) tips() []model.SHA {
-	names := c.names()
-	tips := make([]model.SHA, len(names))
-	for i, name := range names {
-		tips[i] = model.SHA(name)
-	}
-	return tips
-}
-
-// delete removes the cache entry for tip and drops it from the LRU index. It is
-// best-effort: a missing file is a no-op. GCLocal and physical prune call it to
-// evict entries orphaned by appends, compaction, merges, and tombstone removal.
 func (c *foldCache) delete(tip model.SHA) {
 	c.remove(string(tip))
 }

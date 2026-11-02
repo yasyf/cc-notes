@@ -3,31 +3,122 @@ package store
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
 
+	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// GCLocal tidies local-only state: it removes fold-cache entries whose tip is
-// no longer the current tip of any entity ref, orphaned by appends, compaction,
-// and merges. It touches no remote and folds nothing — the cache is a pure
-// accelerator derived from the object database, always safe to discard and
-// rebuild — and returns the number of entries removed.
+const (
+	foldCacheBudget     = 512 << 20
+	relevantCacheBudget = 256 << 20
+	retireAfter         = 24 * time.Hour
+)
+
+var retiredObjectIndexes = []string{"objects-v1.sqlite", "objects-v2.sqlite"}
+
+// GCLocal tidies the derived caches and returns the number of entries it
+// erased. One pass over the fold cache's hint index erases every entry whose
+// name tag matches no current entity ref tip and that was written before the
+// refs were read, so a snapshot cached by a concurrent append survives; then the
+// fold and relevance caches are each trimmed to a byte budget, oldest write
+// first. It touches no remote and folds nothing — both caches are pure
+// accelerators derived from the object database, always safe to discard and
+// rebuild.
 func (s *Store) GCLocal(ctx context.Context) (int, error) {
+	floor := s.cache.watermark()
 	live, err := s.liveTips(ctx)
 	if err != nil {
 		return 0, err
 	}
-	tidied := 0
-	for _, tip := range s.cache.tips() {
-		if live[tip] {
+	tags := make(map[uint64]bool, len(live))
+	for tip := range live {
+		tags[cacheNameTag(string(tip))] = true
+	}
+	tidied := s.cache.sweep(func(hint cacheHint) bool { return hint.rank <= floor && !tags[hint.tag] }, foldCacheBudget)
+	return tidied + s.relevant.sweep(nil, relevantCacheBudget), nil
+}
+
+// RetireLocal deletes derived state no current binary reads once it has gone a
+// day untouched: the fold- and relevance-cache generations beside the current
+// ones, with their lock files, and the repository's retired SQLite object
+// indexes under the per-user root. A generation an older binary still writes
+// keeps a fresh mtime and survives. It returns the number of generations and
+// indexes deleted.
+func (s *Store) RetireLocal() (int, error) {
+	cutoff := time.Now().Add(-retireAfter)
+	current := []string{filepath.Base(s.cache.dir), filepath.Base(s.relevant.dir)}
+	retired := 0
+	for _, parent := range distinct(filepath.Dir(s.cache.dir), filepath.Dir(s.relevant.dir)) {
+		entries, err := os.ReadDir(parent)
+		if err != nil {
 			continue
 		}
-		s.cache.delete(tip)
-		tidied++
+		generations := map[string]bool{}
+		for _, entry := range entries {
+			if name := strings.TrimSuffix(entry.Name(), ".lock"); supersededGeneration(name, current) {
+				generations[name] = true
+			}
+		}
+		for name := range generations {
+			dir := filepath.Join(parent, name)
+			if retire(cutoff, dir, filepath.Join(dir, cacheHintFile), filepath.Join(dir, cacheInlineFile), dir+".lock") {
+				retired++
+			}
+		}
 	}
-	return tidied, nil
+	for _, common := range distinct(s.commonDir, s.recordsCommonDir) {
+		home, err := ccnhome.ForRepo(common)
+		if err != nil {
+			return retired, err
+		}
+		for _, index := range retiredObjectIndexes {
+			path := filepath.Join(home.Dir, index)
+			if retire(cutoff, path, path+"-wal", path+"-shm", path+"-journal") {
+				retired++
+			}
+		}
+	}
+	return retired, nil
+}
+
+func distinct(values ...string) []string {
+	slices.Sort(values)
+	return slices.Compact(values)
+}
+
+func supersededGeneration(name string, current []string) bool {
+	return slices.ContainsFunc(current, func(generation string) bool {
+		version, ok := strings.CutPrefix(name, strings.TrimRight(generation, "0123456789"))
+		return ok && name != generation && version != "" && strings.Trim(version, "0123456789") == ""
+	})
+}
+
+func retire(cutoff time.Time, paths ...string) bool {
+	found := false
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(cutoff) {
+			return false
+		}
+		found = true
+	}
+	if !found {
+		return false
+	}
+	for _, path := range paths {
+		_ = os.RemoveAll(path)
+	}
+	return true
 }
 
 // PruneTombstones physically deletes tombstoned note, doc, log, runbook,

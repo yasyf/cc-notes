@@ -693,10 +693,13 @@ and objects stay in the ODB.
 
 MCP: — (CLI-only: destructive object-store maintenance)
 
-Local maintenance. By default it tidies local state; with `--prune-remote` it physically deletes
-tombstoned entity refs on the remote via `git push --delete`. Pruning is best-effort and
-non-convergent — a stale clone can re-advertise a pruned ref — so it is opt-in and never part of
-normal sync.
+Local maintenance. By default it tidies local state: it erases fold-cache entries whose tip is no
+longer any entity ref tip, trims the fold and relevance caches to their byte budgets, deletes cache
+generations and object indexes nothing has written for a day, and removes the per-user state of
+deleted clones. Every sync that moves a ref runs the same tidy. With `--prune-remote` it also
+physically deletes tombstoned entity refs on the remote via `git push --delete`. Pruning is
+best-effort and non-convergent — a stale clone can re-advertise a pruned ref — so it is opt-in and
+never part of normal sync.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
