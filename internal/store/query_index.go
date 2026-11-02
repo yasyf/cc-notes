@@ -16,8 +16,10 @@ const queryMetadataOpenTimeout = 5 * time.Second
 
 var queryMetadataGenerationKey = []byte("generation")
 
+const queryIndexSubdir = "cc-notes-query"
+
 func (q queryMetadataSource) indexPath() string {
-	return filepath.Join(q.store.recordsCommonDir, "cc-notes-query", q.binding+".db")
+	return filepath.Join(q.store.recordsCommonDir, queryIndexSubdir, q.binding+".db")
 }
 
 func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, read func(*bolt.Tx) (T, error)) (value T, hit bool, err error) {

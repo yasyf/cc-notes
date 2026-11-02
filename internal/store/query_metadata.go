@@ -8,7 +8,7 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-const queryMetadataVersion = 7
+const queryMetadataVersion = 8
 
 type queryMetadata struct {
 	Version             int                       `json:"version"`
@@ -37,6 +37,8 @@ type queryMetadata struct {
 	Parent              model.EntityID            `json:"parent,omitempty"`
 	RunTasks            []model.EntityID          `json:"run_tasks,omitempty"`
 	HasRunningRun       bool                      `json:"has_running_run,omitempty"`
+	RunbookStatus       model.RunbookStatus       `json:"runbook_status,omitempty"`
+	LedgerStatus        model.LedgerStatus        `json:"ledger_status,omitempty"`
 	LogEntryCount       int                       `json:"log_entry_count,omitempty"`
 	InvestigationStatus model.InvestigationStatus `json:"investigation_status,omitempty"`
 	OpenFindingCount    int                       `json:"open_finding_count,omitempty"`
@@ -84,6 +86,7 @@ func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot
 	case model.Sprint, model.Project:
 	case model.Runbook:
 		anchors = value.Anchors
+		row.RunbookStatus = value.Status
 		for _, run := range value.Runs {
 			row.RunTasks = append(row.RunTasks, run.Task)
 			if run.Status == model.RunRunning {
@@ -93,7 +96,7 @@ func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot
 		slices.Sort(row.RunTasks)
 		row.RunTasks = slices.Compact(row.RunTasks)
 	case model.Ledger:
-		anchors = value.Anchors
+		anchors, row.LedgerStatus = value.Anchors, value.Status
 	case model.Investigation:
 		anchors, supersededBy = value.Anchors, value.SupersededBy
 		row.InvestigationStatus = value.Status

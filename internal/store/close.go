@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io/fs"
 	"sync"
+
+	"github.com/yasyf/cc-notes/internal/gitobj"
 )
 
 type storeLease struct {
@@ -15,18 +17,21 @@ type storeLease struct {
 
 // Scope owns the stores opened or borrowed by one command invocation.
 type Scope struct {
-	mu     sync.Mutex
-	stores []*Store
-	closed bool
-	once   sync.Once
-	err    error
+	mu      sync.Mutex
+	stores  []*Store
+	readers *gitobj.Readers
+	closed  bool
+	once    sync.Once
+	err     error
 }
 
 type scopeKey struct{}
 
-// WithScope gives a command an explicit owner for all stores it acquires.
+// WithScope gives a command an explicit owner for all stores it acquires and
+// for the native object readers their reads keep alive.
 func WithScope(ctx context.Context) (context.Context, *Scope) {
-	scope := &Scope{}
+	ctx, readers := gitobj.WithReaders(ctx)
+	scope := &Scope{readers: readers}
 	return context.WithValue(ctx, scopeKey{}, scope), scope
 }
 
@@ -48,7 +53,7 @@ func Own(ctx context.Context, s *Store) error {
 }
 
 // Close releases this scope's stores after its command operations finish,
-// including leases borrowed from Retained.
+// including leases borrowed from Retained, then reaps their pooled readers.
 func (s *Scope) Close() error {
 	s.once.Do(func() {
 		s.mu.Lock()
@@ -59,6 +64,7 @@ func (s *Scope) Close() error {
 		for _, store := range stores {
 			s.err = errors.Join(s.err, store.Close())
 		}
+		s.err = errors.Join(s.err, s.readers.Close())
 	})
 	return s.err
 }

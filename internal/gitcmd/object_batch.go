@@ -28,6 +28,7 @@ type ObjectBatch struct {
 	cmd      *exec.Cmd
 	ctx      context.Context
 	cancel   context.CancelFunc
+	call     context.Context
 	input    io.WriteCloser
 	output   *bufio.Reader
 	stderr   *os.File
@@ -41,7 +42,7 @@ type ObjectBatch struct {
 // ObjectBatch opens a local-only reader under the backend's repository authority.
 func (g Git) ObjectBatch(ctx context.Context) (*ObjectBatch, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	batch := &ObjectBatch{ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	batch := &ObjectBatch{ctx: ctx, cancel: cancel, call: ctx, done: make(chan struct{})}
 	args := append([]string{"--no-replace-objects", "--no-optional-locks", "--no-lazy-fetch"}, g.argv("cat-file", "--batch-command")...)
 	//nolint:gosec // G204: git and cat-file mode are fixed; repository paths use the selected backend argv.
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -75,6 +76,30 @@ func (g Git) ObjectBatch(ctx context.Context) (*ObjectBatch, error) {
 	return batch, nil
 }
 
+// Bind scopes later requests, and the streams they open, to ctx: once ctx
+// ends the child is reaped and those reads fail with its error. The returned
+// unbind detaches ctx and reports whether it did so before ctx's reaping
+// started; only then may the idle reader serve another operation.
+func (b *ObjectBatch) Bind(ctx context.Context) (unbind func() bool) {
+	b.mu.Lock()
+	b.call = ctx
+	b.mu.Unlock()
+	stop := context.AfterFunc(ctx, func() { _ = b.abort() })
+	return func() bool {
+		stopped := stop()
+		b.mu.Lock()
+		b.call = b.ctx
+		b.mu.Unlock()
+		return stopped
+	}
+}
+
+func (b *ObjectBatch) callContext() context.Context {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.call
+}
+
 // Idle reports whether this live reader can accept another object request.
 func (b *ObjectBatch) Idle() bool {
 	b.mu.Lock()
@@ -83,15 +108,16 @@ func (b *ObjectBatch) Idle() bool {
 }
 
 func (b *ObjectBatch) request(command string, hash plumbing.Hash) (_ ObjectInfo, resultErr error) {
+	ctx := b.callContext()
 	defer func() {
 		if resultErr != nil && !errors.Is(resultErr, plumbing.ErrObjectNotFound) {
-			resultErr = errors.Join(resultErr, b.ctx.Err(), b.abort())
+			resultErr = errors.Join(resultErr, ctx.Err(), b.abort())
 		}
 	}()
 	if !b.Idle() {
 		return ObjectInfo{}, errors.New("object batch is not idle")
 	}
-	if err := b.ctx.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return ObjectInfo{}, err
 	}
 	if _, err := io.WriteString(b.input, command+" "+hash.String()+"\n"); err != nil {
@@ -140,7 +166,7 @@ func (b *ObjectBatch) Contents(info ObjectInfo) (io.ReadCloser, error) {
 	if actual != info {
 		return nil, errors.Join(errors.New("git object identity changed"), b.abort())
 	}
-	body := &objectBody{batch: b, remaining: info.Size, expected: info.Hash, hasher: plumbing.NewHasher(info.Type, info.Size)}
+	body := &objectBody{batch: b, ctx: b.callContext(), remaining: info.Size, expected: info.Hash, hasher: plumbing.NewHasher(info.Type, info.Size)}
 	b.mu.Lock()
 	b.body = body
 	b.mu.Unlock()
@@ -225,6 +251,7 @@ func (b *ObjectBatch) diagnostic() (string, error) {
 
 type objectBody struct {
 	batch     *ObjectBatch
+	ctx       context.Context
 	remaining int64
 	expected  plumbing.Hash
 	hasher    plumbing.Hasher
@@ -241,7 +268,7 @@ func (r *objectBody) Read(data []byte) (int, error) {
 	if len(data) == 0 {
 		return 0, nil
 	}
-	if err := r.batch.ctx.Err(); err != nil {
+	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
 	if r.remaining == 0 {
@@ -256,13 +283,13 @@ func (r *objectBody) Read(data []byte) (int, error) {
 	if errors.Is(err, io.EOF) {
 		err = io.ErrUnexpectedEOF
 	}
-	return n, errors.Join(err, r.batch.ctx.Err())
+	return n, errors.Join(err, r.ctx.Err())
 }
 
 func (r *objectBody) finish() error {
 	end, err := r.batch.output.ReadByte()
 	if err != nil {
-		return errors.Join(err, r.batch.ctx.Err(), r.batch.abort())
+		return errors.Join(err, r.ctx.Err(), r.batch.abort())
 	}
 	if end != '\n' {
 		return errors.Join(errors.New("invalid git object terminator"), r.batch.abort())

@@ -65,12 +65,9 @@ func newRelevantCmd() *cobra.Command {
 					return &UsageError{Err: err}
 				}
 			}
-			filter := notes.RelevantFilter{Branch: branchFlag, Base: baseFlag, Attached: attached, Worktree: worktree}
+			filter := notes.RelevantFilter{Branch: branchFlag, Base: baseFlag, Attached: attached, Worktree: worktree, Limit: limit}
 			variant := fmt.Sprintf("json=%t limit=%d", jsonOut, limit)
 			out, err := c.RelevantCached(ctx, args[0], filter, variant, func(entries []notes.RelevantEntry) ([]byte, error) {
-				if limit > 0 && len(entries) > limit {
-					entries = entries[:limit]
-				}
 				var buf bytes.Buffer
 				err := printRelevant(&buf, entries, jsonOut)
 				return buf.Bytes(), err

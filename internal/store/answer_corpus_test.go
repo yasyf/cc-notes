@@ -414,3 +414,16 @@ func TestAnswerCorpusCacheCorruptionRefusesAndHeldViewStaysExact(t *testing.T) {
 		t.Fatalf("inconsistent membership accepted = %v, %v", got, err)
 	}
 }
+
+func TestAnswerCorpusConnectionWaitsOutABusyDatabase(t *testing.T) {
+	s := initStore(t)
+	corpusAnswer(t, s, "busy", "body", []string{"scope:durable", "program:test"}, nil)
+	cut := openCorpus(t, s, t.TempDir())
+	var timeout int64
+	if err := cut.tx.QueryRowContext(t.Context(), "PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatal(err)
+	}
+	if want := answerCorpusBusyTimeout.Milliseconds(); timeout != want {
+		t.Fatalf("corpus busy_timeout = %d ms, want %d ms", timeout, want)
+	}
+}
