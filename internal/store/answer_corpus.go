@@ -29,6 +29,12 @@ import (
 
 const answerCorpusVersion = 1
 
+// answerCorpusBusyTimeout is how long a corpus connection waits out another
+// process's write or WAL recovery before failing SQLITE_BUSY. SQLite's
+// default is no wait at all, so a reader racing the first opener after a
+// killed writer failed at once with "database is locked (261)".
+const answerCorpusBusyTimeout = 10 * time.Second
+
 // CorpusRecord binds an answer document's path and digest to an exact source tip.
 type CorpusRecord struct {
 	ID         model.EntityID
@@ -111,7 +117,7 @@ func (s *Store) openAnswerCorpusSelection(ctx context.Context, selection answerC
 	if err != nil {
 		return nil, err
 	}
-	uri := url.URL{Scheme: "file", Path: path}
+	uri := url.URL{Scheme: "file", Path: path, RawQuery: url.Values{"_pragma": {fmt.Sprintf("busy_timeout(%d)", answerCorpusBusyTimeout.Milliseconds())}}.Encode()}
 	db, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		return nil, errors.Join(err, lock.Close())
