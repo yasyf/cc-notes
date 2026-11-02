@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/yasyf/cc-notes/internal/fold"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -89,7 +90,7 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 			}
 		}
 	}
-	if err == nil {
+	if err == nil && !slices.ContainsFunc(commit.Pack.Ops, isCheckpoint) {
 		if snapshot, publication, ok := s.foldLinear(ctx, commit); ok {
 			return snapshot, publication, nil
 		}
@@ -117,6 +118,8 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 // checkpoint, or a commit the fold refuses leaves the chain to the full fold,
 // and foldLinear reports false.
 func (s *Store) foldLinear(ctx context.Context, head model.PackCommit) (model.Snapshot, *cachePublication, bool) {
+	ctx, release := gitobj.ShareReaders(ctx)
+	defer func() { _ = release() }()
 	var base model.Snapshot
 	var top, floor model.Lamport
 	var cached []model.SHA
