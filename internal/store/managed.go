@@ -133,7 +133,7 @@ func (s *Store) managedTip(ctx context.Context, ref string) (model.SHA, error) {
 	return tip, err
 }
 
-func (s *Store) managedRows(ctx context.Context, updates []gitcmd.RefUpdate, snapshots map[model.SHA]model.Snapshot) ([]queryMetadata, error) {
+func (s *Store) managedRows(ctx context.Context, updates []gitcmd.RefUpdate, snapshots map[model.SHA]model.Snapshot, publications *foldPublicationBatch) ([]queryMetadata, error) {
 	var rows []queryMetadata
 	for _, update := range updates {
 		parsed, err := refs.Parse(update.Ref)
@@ -146,9 +146,10 @@ func (s *Store) managedRows(ctx context.Context, updates []gitcmd.RefUpdate, sna
 		if update.New == "" {
 			continue
 		}
+		var publication *cachePublication
 		snapshot := snapshots[update.New]
 		if snapshot == nil {
-			snapshot, _, err = s.loadAt(ctx, update.New)
+			snapshot, publication, err = s.loadAt(ctx, update.New)
 			if err != nil {
 				return nil, err
 			}
@@ -164,6 +165,9 @@ func (s *Store) managedRows(ctx context.Context, updates []gitcmd.RefUpdate, sna
 			work.Add(1)
 		}
 		rows = append(rows, projectQueryMetadata(source.binding, update.New, snapshot))
+		if publications != nil {
+			publications.add(publication)
+		}
 	}
 	return rows, nil
 }
@@ -181,7 +185,7 @@ func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 	if len(updates) == 0 {
 		return errors.New("update refs: no updates")
 	}
-	rows, err := s.managedRows(ctx, updates, snapshots)
+	rows, err := s.managedRows(ctx, updates, snapshots, nil)
 	if err != nil {
 		return err
 	}
@@ -211,7 +215,7 @@ func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 					return err
 				}
 				if model.SHA(root.Bucket([]byte("refs")).Get([]byte(update.Ref))) != tip {
-					return fmt.Errorf("Git ref changed outside managed publication: %s: %w", update.Ref, managed.ErrReindex)
+					return fmt.Errorf("git ref changed outside managed publication: %s: %w", update.Ref, managed.ErrReindex)
 				}
 				return nil
 			}); err != nil {
@@ -339,10 +343,13 @@ func (s *Store) Reindex(ctx context.Context) (err error) {
 	for ref, tip := range tips {
 		updates = append(updates, gitcmd.RefUpdate{Ref: ref, New: tip})
 	}
-	rows, err := s.managedRows(ctx, updates, nil)
+	publications := newFoldPublicationBatch(ctx, s.cache)
+	defer publications.discard()
+	rows, err := s.managedRows(ctx, updates, nil, publications)
 	if err != nil {
 		return err
 	}
+	publications.flush()
 	path := managed.Path(s.recordsCommonDir)
 	staging := path + ".reindex"
 	if err := os.Remove(staging); err != nil && !errors.Is(err, os.ErrNotExist) {

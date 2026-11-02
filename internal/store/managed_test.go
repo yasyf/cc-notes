@@ -153,7 +153,12 @@ func TestManagedAuthorityBootstrapPreservesEveryKind(t *testing.T) {
 	want := make(map[string]model.Snapshot)
 	for _, kind := range model.Kinds() {
 		ops := duplicateKindOperations()[kind]("bootstrap " + string(kind))
-		ops = append(ops, model.AddTag{Tag: "imported"})
+		switch kind {
+		case model.KindTask, model.KindSprint, model.KindProject, model.KindRunbook, model.KindLedger, model.KindPlan:
+			ops = append(ops, model.AddLabel{Label: "imported"})
+		default:
+			ops = append(ops, model.AddTag{Tag: "imported"})
+		}
 		snapshot := create(t, s, ops)
 		want[refs.For(kind, snapshot.EntityID())] = snapshot
 	}

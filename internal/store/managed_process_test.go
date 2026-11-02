@@ -88,7 +88,7 @@ func TestManagedAuthorityProcessHelper(t *testing.T) {
 		}
 		homeguard.ChildExit(77)
 	case "journal-before", "journal-after":
-		rows, err := s.managedRows(t.Context(), request.Updates, nil)
+		rows, err := s.managedRows(t.Context(), request.Updates, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -290,7 +290,7 @@ func TestManagedAuthorityGuardianRetainsLockThroughCallerExit(t *testing.T) {
 	}
 	poisonManagedUnrelatedRef(t, s, model.KindAnswer)
 	updates := []gitcmd.RefUpdate{prepared.RefUpdate()}
-	rows, err := s.managedRows(t.Context(), updates, nil)
+	rows, err := s.managedRows(t.Context(), updates, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

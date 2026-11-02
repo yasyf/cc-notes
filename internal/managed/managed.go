@@ -30,7 +30,7 @@ func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, erro
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, errors.Join(ErrReindex, err)
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G304: The lock path is a fixed child of the bound records common directory.
 	if err != nil {
 		return nil, errors.Join(ErrReindex, err)
 	}
