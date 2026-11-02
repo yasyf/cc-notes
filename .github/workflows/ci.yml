@@ -259,6 +259,8 @@ jobs:
         env:
           CCN_REQUIRE_NATIVE_REF_COUNTER: "1"
         run: ./scripts/test.sh -race -count=1 -v -run '^Test(Reference|Query|Settled)' ./internal/gitobj ./internal/store
+      - name: Native answer corpus snapshots and payload costs
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestAnswerCorpus' ./internal/store ./notes
       - name: Reject whole-list duplicate discovery on a current index
         env:
           CCN_REQUIRE_NATIVE_REF_COUNTER: "1"

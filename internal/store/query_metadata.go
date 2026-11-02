@@ -2,11 +2,13 @@ package store
 
 import (
 	"slices"
+	"time"
 
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 )
 
-const queryMetadataVersion = 6
+const queryMetadataVersion = 7
 
 type queryMetadata struct {
 	Version             int                       `json:"version"`
@@ -16,6 +18,8 @@ type queryMetadata struct {
 	Kind                model.Kind                `json:"kind"`
 	CreatedAt           int64                     `json:"created_at"`
 	UpdatedAt           int64                     `json:"updated_at"`
+	UpdatedTime         time.Time                 `json:"updated_time"`
+	TextDigest          string                    `json:"text_digest,omitempty"`
 	Deleted             bool                      `json:"deleted"`
 	Labels              []string                  `json:"labels"`
 	Anchors             []model.Anchor            `json:"anchors"`
@@ -49,6 +53,7 @@ func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot
 		Kind:             meta.Kind,
 		CreatedAt:        meta.CreatedAt.Unix(),
 		UpdatedAt:        meta.UpdatedAt.Unix(),
+		UpdatedTime:      meta.UpdatedAt,
 		Deleted:          meta.Deleted,
 		Labels:           slices.Clone(meta.Labels),
 		SkippedOps:       meta.SkippedOps,
@@ -67,6 +72,7 @@ func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot
 	case model.Answer:
 		anchors, supersededBy = value.Anchors, value.SupersededBy
 		witness, row.VerifiedAt, row.StaleAt = value.Witness, value.VerifiedAt, value.StaleAt
+		row.TextDigest = answerCorpusDigest([]byte(render.AnswerMarkdown(value.Title, value.Body)))
 	case model.Log:
 		anchors = value.Anchors
 		row.LogEntryCount = len(value.Entries)

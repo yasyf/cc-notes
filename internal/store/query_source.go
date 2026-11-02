@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -95,6 +96,9 @@ func (q queryMetadataSource) load(ctx context.Context, id model.EntityID, tip mo
 	}
 	if q.tips[id] != tip || tip == "" {
 		return queryMetadata{}, nil, fmt.Errorf("query metadata tip differs from captured %s %s", q.kind, id)
+	}
+	if work, ok := ctx.Value(answerCorpusMetadataWorkKey{}).(*atomic.Int64); ok {
+		work.Add(1)
 	}
 	snapshot, publication, err := q.store.loadAt(ctx, tip)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -45,9 +46,13 @@ func TestQueryMetadataProjection(t *testing.T) {
 				Version: queryMetadataVersion, Binding: "records-binding", Tip: "captured-tip",
 				ID: tc.snapshot.EntityID(), Kind: meta.Kind,
 				CreatedAt: meta.CreatedAt.Unix(), UpdatedAt: meta.UpdatedAt.Unix(),
-				Deleted: meta.Deleted, Labels: labels, Anchors: tc.anchors,
+				UpdatedTime: meta.UpdatedAt,
+				Deleted:     meta.Deleted, Labels: labels, Anchors: tc.anchors,
 				SupersededBy: tc.supersededBy, Branch: tc.branch, SkippedOps: meta.SkippedOps,
 				DuplicateContent: duplicateFingerprint(tc.snapshot),
+			}
+			if answer, ok := tc.snapshot.(model.Answer); ok {
+				want.TextDigest = answerCorpusDigest([]byte(render.AnswerMarkdown(answer.Title, answer.Body)))
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("projection = %#v, want %#v", got, want)
@@ -132,7 +137,7 @@ func TestQueryMetadataSizeDoesNotDependOnDocumentBody(t *testing.T) {
 	if err := json.Unmarshal(large, &fields); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"version", "binding", "tip", "id", "kind", "created_at", "updated_at", "deleted", "labels", "anchors", "superseded_by", "branch", "skipped_ops", "duplicate_content"}
+	want := []string{"version", "binding", "tip", "id", "kind", "created_at", "updated_at", "updated_time", "deleted", "labels", "anchors", "superseded_by", "branch", "skipped_ops", "duplicate_content"}
 	if len(fields) != len(want) {
 		t.Fatalf("metadata fields = %v, want %v", fields, want)
 	}
