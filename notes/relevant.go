@@ -13,6 +13,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -58,12 +60,15 @@ var reasonOrder = []string{
 // default branch (falling back to "main"). Both are taken verbatim and assumed
 // already validated by the caller. Attached keeps only entities anchored to the
 // path or a parent directory. Worktree drift-checks path anchors against
-// uncommitted working-tree edits when computing each entity's verdict.
+// uncommitted working-tree edits when computing each entity's verdict. A
+// positive Limit keeps only that many of the highest-ranked entries, so only
+// they are loaded and drift-checked.
 type RelevantFilter struct {
 	Branch   string
 	Base     string
 	Attached bool
 	Worktree bool
+	Limit    int
 }
 
 // RelevantEntry is one ranked entity surfaced by Relevant: a kind discriminator
@@ -219,69 +224,19 @@ func (c *Client) Relevant(ctx context.Context, target string, filter RelevantFil
 func (c *Client) relevantScored(ctx context.Context, in *relevantInputs, filter RelevantFilter) ([]RelevantEntry, error) {
 	p := in.path
 	pinned := &Client{s: c.s.Pinned(in.tips)}
+	metadata, indexed, err := c.s.StatusMetadata(ctx, relevantKinds...)
+	if err != nil {
+		return nil, err
+	}
+	indexed = indexed && capturedTips(metadata.Records, in.tips)
 	var candidates []RelevantEntry
-	keep := func(e RelevantEntry) {
-		if filter.Attached && !anchorsNear(e.anchors(), p) {
-			return
-		}
-		candidates = append(candidates, e)
-	}
-
-	notes, err := pinned.s.ListNotes(ctx, false, false)
-	if err != nil {
+	if indexed {
+		candidates = relevantStubs(metadata.Records)
+	} else if candidates, err = pinned.relevantSnapshots(ctx); err != nil {
 		return nil, err
 	}
-	for _, n := range notes {
-		keep(RelevantEntry{Kind: model.KindNote, Note: n})
-	}
-	docs, err := pinned.s.ListDocs(ctx, false, false)
-	if err != nil {
-		return nil, err
-	}
-	for _, d := range docs {
-		keep(RelevantEntry{Kind: model.KindDoc, Doc: d})
-	}
-	answers, err := pinned.s.ListAnswers(ctx, false, false)
-	if err != nil {
-		return nil, err
-	}
-	for _, a := range answers {
-		keep(RelevantEntry{Kind: model.KindAnswer, Answer: a})
-	}
-	ledgers, err := pinned.Ledgers(ctx, LedgerFilter{})
-	if err != nil {
-		return nil, err
-	}
-	for _, l := range ledgers {
-		keep(RelevantEntry{Kind: model.KindLedger, Ledger: l})
-	}
-	logs, err := pinned.s.ListLogs(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-	for _, l := range logs {
-		keep(RelevantEntry{Kind: model.KindLog, Log: l})
-	}
-	runbooks, err := pinned.Runbooks(ctx, RunbookFilter{})
-	if err != nil {
-		return nil, err
-	}
-	for _, rb := range runbooks {
-		keep(RelevantEntry{Kind: model.KindRunbook, Runbook: rb})
-	}
-	investigations, err := pinned.s.ListInvestigations(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, inv := range investigations {
-		keep(RelevantEntry{Kind: model.KindInvestigation, Investigation: inv})
-	}
-	plans, err := pinned.Plans(ctx, PlanFilter{})
-	if err != nil {
-		return nil, err
-	}
-	for _, plan := range plans {
-		keep(RelevantEntry{Kind: model.KindPlan, Plan: plan})
+	if filter.Attached {
+		candidates = slices.DeleteFunc(candidates, func(e RelevantEntry) bool { return !anchorsNear(e.anchors(), p) })
 	}
 
 	var branches, commits []string
@@ -328,6 +283,172 @@ func (c *Client) relevantScored(ctx context.Context, in *relevantInputs, filter 
 		scored = append(scored, e)
 	}
 	slices.SortFunc(scored, compareScored)
+	if filter.Limit > 0 && len(scored) > filter.Limit {
+		scored = scored[:filter.Limit]
+	}
+	if indexed {
+		return loadRelevant(ctx, metadata.Captured, metadata.Records, scored)
+	}
+	return scored, nil
+}
+
+var relevantKinds = []model.Kind{model.KindNote, model.KindDoc, model.KindAnswer, model.KindLedger, model.KindLog, model.KindRunbook, model.KindInvestigation, model.KindPlan}
+
+// relevantSnapshots lists every live candidate with its full snapshot, the
+// path taken when the metadata index cannot serve the captured refs.
+func (c *Client) relevantSnapshots(ctx context.Context) ([]RelevantEntry, error) {
+	var candidates []RelevantEntry
+	notes, err := c.s.ListNotes(ctx, false, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range notes {
+		candidates = append(candidates, RelevantEntry{Kind: model.KindNote, Note: n})
+	}
+	docs, err := c.s.ListDocs(ctx, false, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range docs {
+		candidates = append(candidates, RelevantEntry{Kind: model.KindDoc, Doc: d})
+	}
+	answers, err := c.s.ListAnswers(ctx, false, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range answers {
+		candidates = append(candidates, RelevantEntry{Kind: model.KindAnswer, Answer: a})
+	}
+	ledgers, err := c.Ledgers(ctx, LedgerFilter{})
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range ledgers {
+		candidates = append(candidates, RelevantEntry{Kind: model.KindLedger, Ledger: l})
+	}
+	logs, err := c.s.ListLogs(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range logs {
+		candidates = append(candidates, RelevantEntry{Kind: model.KindLog, Log: l})
+	}
+	runbooks, err := c.Runbooks(ctx, RunbookFilter{})
+	if err != nil {
+		return nil, err
+	}
+	for _, rb := range runbooks {
+		candidates = append(candidates, RelevantEntry{Kind: model.KindRunbook, Runbook: rb})
+	}
+	investigations, err := c.s.ListInvestigations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, inv := range investigations {
+		candidates = append(candidates, RelevantEntry{Kind: model.KindInvestigation, Investigation: inv})
+	}
+	plans, err := c.Plans(ctx, PlanFilter{})
+	if err != nil {
+		return nil, err
+	}
+	for _, plan := range plans {
+		candidates = append(candidates, RelevantEntry{Kind: model.KindPlan, Plan: plan})
+	}
+	return candidates, nil
+}
+
+// relevantStubs projects each live metadata row to an entry carrying only what
+// scoring reads: id, anchors, update time, and investigation or plan status.
+// The same lifecycle filters as relevantSnapshots apply.
+func relevantStubs(rows []store.StatusRecord) []RelevantEntry {
+	stubs := make([]RelevantEntry, 0, len(rows))
+	for _, row := range rows {
+		if row.Deleted || len(row.SupersededBy) > 0 {
+			continue
+		}
+		e := RelevantEntry{Kind: row.Kind}
+		switch row.Kind {
+		case model.KindNote:
+			e.Note = model.Note{ID: row.ID, Anchors: row.Anchors, UpdatedAt: row.UpdatedAt}
+		case model.KindDoc:
+			e.Doc = model.Doc{ID: row.ID, Anchors: row.Anchors, UpdatedAt: row.UpdatedAt}
+		case model.KindAnswer:
+			e.Answer = model.Answer{ID: row.ID, Anchors: row.Anchors, UpdatedAt: row.UpdatedAt}
+		case model.KindLedger:
+			if row.LedgerStatus != model.LedgerActive {
+				continue
+			}
+			e.Ledger = model.Ledger{ID: row.ID, Anchors: row.Anchors, UpdatedAt: row.UpdatedAt}
+		case model.KindLog:
+			e.Log = model.Log{ID: row.ID, Anchors: row.Anchors, UpdatedAt: row.UpdatedAt}
+		case model.KindRunbook:
+			if row.RunbookStatus != model.RunbookActive {
+				continue
+			}
+			e.Runbook = model.Runbook{ID: row.ID, Anchors: row.Anchors, UpdatedAt: row.UpdatedAt}
+		case model.KindInvestigation:
+			e.Investigation = model.Investigation{ID: row.ID, Anchors: row.Anchors, UpdatedAt: row.UpdatedAt, Status: row.InvestigationStatus}
+		case model.KindPlan:
+			e.Plan = model.Plan{ID: row.ID, Anchors: row.Anchors, UpdatedAt: row.UpdatedAt, Status: row.PlanStatus}
+		default:
+			panic("relevant metadata of unrequested kind " + string(row.Kind))
+		}
+		stubs = append(stubs, e)
+	}
+	return stubs
+}
+
+// capturedTips reports whether rows describe exactly the entities, at exactly
+// the tips, that the relevance inputs captured: the index refreshes only from
+// a capture of its own, so a ref that moved between the two leaves the
+// snapshot listing to answer for the inputs' universe.
+func capturedTips(rows []store.StatusRecord, tips map[string]model.SHA) bool {
+	if len(rows) != len(tips) {
+		return false
+	}
+	for _, row := range rows {
+		if tips[refs.For(row.Kind, row.ID)] != row.Tip {
+			return false
+		}
+	}
+	return true
+}
+
+// loadRelevant replaces each scored stub with its entity folded at the
+// captured tip, keeping the score and reasons.
+func loadRelevant(ctx context.Context, s *store.Store, rows []store.StatusRecord, scored []RelevantEntry) ([]RelevantEntry, error) {
+	tips := make(map[model.EntityID]model.SHA, len(rows))
+	for _, row := range rows {
+		tips[row.ID] = row.Tip
+	}
+	for i, stub := range scored {
+		snapshot, err := s.LoadAt(ctx, tips[stub.id()])
+		if err != nil {
+			return nil, err
+		}
+		e := RelevantEntry{Kind: stub.Kind, Score: stub.Score, Reasons: stub.Reasons}
+		switch value := snapshot.(type) {
+		case model.Note:
+			e.Note = value
+		case model.Doc:
+			e.Doc = value
+		case model.Answer:
+			e.Answer = value
+		case model.Ledger:
+			e.Ledger = value
+		case model.Log:
+			e.Log = value
+		case model.Runbook:
+			e.Runbook = value
+		case model.Investigation:
+			e.Investigation = value
+		case model.Plan:
+			e.Plan = value
+		default:
+			return nil, fmt.Errorf("relevant %s %s folded to %T", stub.Kind, stub.id(), snapshot)
+		}
+		scored[i] = e
+	}
 	return scored, nil
 }
 
