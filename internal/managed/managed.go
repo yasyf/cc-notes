@@ -14,7 +14,16 @@ import (
 )
 
 // Format identifies the managed authority schema and projection contract.
-const Format = "cc-notes-managed-v2"
+const Format = "cc-notes-managed-v3"
+
+// QueryGenerations identifies the required immutable metadata storage.
+const QueryGenerations = "query-generations-v1"
+
+// QueryObjects identifies immutable graph objects shared by metadata generations.
+const QueryObjects = "objects"
+
+// QueryObjectRefs counts immutable graph edges and retained generation roots.
+const QueryObjectRefs = "object-refs"
 
 // ErrReindex requires an explicit import before ordinary managed operations.
 var ErrReindex = errors.New("managed authority unavailable; run cc-notes reindex")
@@ -80,7 +89,17 @@ func Initialize(ctx context.Context, commonDir string) (err error) {
 		if err != nil {
 			return err
 		}
-		_, err = root.CreateBucket([]byte("refs"))
+		if _, err := root.CreateBucket([]byte("refs")); err != nil {
+			return err
+		}
+		generations, err := tx.CreateBucket([]byte(QueryGenerations))
+		if err != nil {
+			return err
+		}
+		if _, err = generations.CreateBucket([]byte(QueryObjects)); err != nil {
+			return err
+		}
+		_, err = generations.CreateBucket([]byte(QueryObjectRefs))
 		return err
 	})
 }

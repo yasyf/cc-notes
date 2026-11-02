@@ -742,6 +742,14 @@ func TestSharedStorageOrphanHeadProvesDrift(t *testing.T) {
 				sharedBind(t, thin, source)
 			} else {
 				gittest.Git(t, thin, "fetch", "-q", "origin", "+refs/cc-notes/*:refs/cc-notes/*")
+				s, err := store.Open(thin)
+				if err != nil {
+					t.Fatalf("store.Open: %v", err)
+				}
+				t.Cleanup(func() { _ = s.Close() })
+				if err := s.Reindex(t.Context()); err != nil {
+					t.Fatalf("Reindex after canonical fetch: %v", err)
+				}
 			}
 			if sharedHasObject(thin, string(anchor)) {
 				t.Fatalf("fixture invalid: the clone holds %s", anchor)

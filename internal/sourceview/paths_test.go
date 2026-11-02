@@ -18,18 +18,18 @@ func TestNoteFilename(t *testing.T) {
 		title string
 		want  string
 	}{
-		{"simple", "Fix the parser", "a1b2c3d-fix-the-parser.md"},
-		{"punctuation collapses", "Hello, World! (v2)", "a1b2c3d-hello-world-v2.md"},
-		{"digits kept", "v2 2024 roadmap", "a1b2c3d-v2-2024-roadmap.md"},
-		{"uppercase lowered", "READ Me", "a1b2c3d-read-me.md"},
-		{"unicode-only title", "日本語のメモ", "a1b2c3d.md"},
-		{"accents dropped", "Étude no. 5", "a1b2c3d-tude-no-5.md"},
-		{"empty title", "", "a1b2c3d.md"},
-		{"symbols only", "---???!!!", "a1b2c3d.md"},
+		{"simple", "Fix the parser", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-fix-the-parser.md"},
+		{"punctuation collapses", "Hello, World! (v2)", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-hello-world-v2.md"},
+		{"digits kept", "v2 2024 roadmap", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-v2-2024-roadmap.md"},
+		{"uppercase lowered", "READ Me", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-read-me.md"},
+		{"unicode-only title", "日本語のメモ", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0.md"},
+		{"accents dropped", "Étude no. 5", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-tude-no-5.md"},
+		{"empty title", "", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0.md"},
+		{"symbols only", "---???!!!", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0.md"},
 		{
 			"capped at forty without trailing dash",
 			strings.Repeat("abc ", 20),
-			"a1b2c3d-" + strings.TrimSuffix(strings.Repeat("abc-", 10), "-") + ".md",
+			"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-" + strings.TrimSuffix(strings.Repeat("abc-", 10), "-") + ".md",
 		},
 	}
 	for _, tc := range cases {
@@ -38,7 +38,7 @@ func TestNoteFilename(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("Filename(note %q) = %q, want %q", tc.title, got, tc.want)
 			}
-			if slug := strings.TrimSuffix(strings.TrimPrefix(got, "a1b2c3d-"), ".md"); len(slug) > 40 {
+			if slug := strings.TrimSuffix(strings.TrimPrefix(got, "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-"), ".md"); len(slug) > 40 {
 				t.Errorf("slug %q longer than 40", slug)
 			}
 		})
@@ -52,17 +52,17 @@ func TestDocFilename(t *testing.T) {
 		title string
 		want  string
 	}{
-		{"simple", "Fix the parser", "a1b2c3d-fix-the-parser.md"},
-		{"punctuation collapses", "Hello, World! (v2)", "a1b2c3d-hello-world-v2.md"},
-		{"digits kept", "v2 2024 roadmap", "a1b2c3d-v2-2024-roadmap.md"},
-		{"uppercase lowered", "READ Me", "a1b2c3d-read-me.md"},
-		{"unicode-only title", "日本語のメモ", "a1b2c3d.md"},
-		{"empty title", "", "a1b2c3d.md"},
-		{"symbols only", "---???!!!", "a1b2c3d.md"},
+		{"simple", "Fix the parser", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-fix-the-parser.md"},
+		{"punctuation collapses", "Hello, World! (v2)", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-hello-world-v2.md"},
+		{"digits kept", "v2 2024 roadmap", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-v2-2024-roadmap.md"},
+		{"uppercase lowered", "READ Me", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-read-me.md"},
+		{"unicode-only title", "日本語のメモ", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0.md"},
+		{"empty title", "", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0.md"},
+		{"symbols only", "---???!!!", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0.md"},
 		{
 			"capped at forty without trailing dash",
 			strings.Repeat("abc ", 20),
-			"a1b2c3d-" + strings.TrimSuffix(strings.Repeat("abc-", 10), "-") + ".md",
+			"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-" + strings.TrimSuffix(strings.Repeat("abc-", 10), "-") + ".md",
 		},
 	}
 	for _, tc := range cases {
@@ -71,7 +71,7 @@ func TestDocFilename(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("Filename(doc %q) = %q, want %q", tc.title, got, tc.want)
 			}
-			if slug := strings.TrimSuffix(strings.TrimPrefix(got, "a1b2c3d-"), ".md"); len(slug) > 40 {
+			if slug := strings.TrimSuffix(strings.TrimPrefix(got, "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-"), ".md"); len(slug) > 40 {
 				t.Errorf("slug %q longer than 40", slug)
 			}
 		})
@@ -85,10 +85,10 @@ func TestRunbookFilename(t *testing.T) {
 		title string
 		want  string
 	}{
-		{"simple", "Deploy the service", "a1b2c3d-deploy-the-service.md"},
-		{"punctuation collapses", "Roll back! (fast)", "a1b2c3d-roll-back-fast.md"},
-		{"empty title", "", "a1b2c3d.md"},
-		{"symbols only", "---???!!!", "a1b2c3d.md"},
+		{"simple", "Deploy the service", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-deploy-the-service.md"},
+		{"punctuation collapses", "Roll back! (fast)", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0-roll-back-fast.md"},
+		{"empty title", "", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0.md"},
+		{"symbols only", "---???!!!", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0.md"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,21 +102,21 @@ func TestRunbookFilename(t *testing.T) {
 
 func TestTaskFilename(t *testing.T) {
 	task := model.Task{ID: "0123abcd4567ef890123abcd4567ef890123abcd"}
-	if got, want := sourceview.Filename(task), "0123abc.json"; got != want {
+	if got, want := sourceview.Filename(task), string(task.ID)+".json"; got != want {
 		t.Errorf("Filename(task) = %q, want %q", got, want)
 	}
 }
 
 func TestSprintFilename(t *testing.T) {
 	s := model.Sprint{ID: "5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa"}
-	if got, want := sourceview.Filename(s), "5555aaa.json"; got != want {
+	if got, want := sourceview.Filename(s), string(s.ID)+".json"; got != want {
 		t.Errorf("Filename(sprint) = %q, want %q", got, want)
 	}
 }
 
 func TestProjectFilename(t *testing.T) {
 	p := model.Project{ID: "6666dddd6666dddd6666dddd6666dddd6666dddd"}
-	if got, want := sourceview.Filename(p), "6666ddd.json"; got != want {
+	if got, want := sourceview.Filename(p), string(p.ID)+".json"; got != want {
 		t.Errorf("Filename(project) = %q, want %q", got, want)
 	}
 }

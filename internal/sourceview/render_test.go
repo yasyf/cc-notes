@@ -2468,7 +2468,7 @@ const goldenInvestigation = "---\n" +
 	"\n" +
 	"The sender outlives the collector return.\n" +
 	"\n" +
-	"- [goroutine stacks.txt](../attachments/a1b2c3d/goroutine%20stacks.txt)\n" +
+	"- [goroutine stacks.txt](../attachments/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/goroutine%20stacks.txt)\n" +
 	"\n" +
 	"## Verdict\n" +
 	"\n" +

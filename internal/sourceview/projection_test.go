@@ -32,7 +32,7 @@ func TestTaskProjectionKeepsDirectAndSprintProjectUnion(t *testing.T) {
 	projectID := model.EntityID(strings.Repeat("1", 40))
 	sprintID := model.EntityID(strings.Repeat("2", 40))
 	taskID := model.EntityID(strings.Repeat("3", 40))
-	task := Entity{Ref: "task-ref", Tip: model.SHA(strings.Repeat("a", 40)), Root: model.SHA(taskID), Kind: model.KindTask, ID: taskID, Visible: true, Filename: taskID.Short() + ".json", Mode: 0o644, Sprint: sprintID, Project: projectID}
+	task := Entity{Ref: "task-ref", Tip: model.SHA(strings.Repeat("a", 40)), Root: model.SHA(taskID), Kind: model.KindTask, ID: taskID, Visible: true, Filename: string(taskID) + ".json", Mode: 0o644, Sprint: sprintID, Project: projectID}
 	fixture := projectionFixture{entities: map[string]Entity{"project:" + string(projectID): {Kind: model.KindProject, ID: projectID, Visible: true}, "sprint:" + string(sprintID): {Kind: model.KindSprint, ID: sprintID, Project: projectID, Visible: true}}}
 	objects, err := Emit(task, &fixture)
 	if err != nil {
@@ -75,31 +75,19 @@ func TestTaskProjectionKeepsDirectAndSprintProjectUnion(t *testing.T) {
 	}
 }
 
-func TestAttachmentShortGroupSuppressesAndRestoresExactOwner(t *testing.T) {
-	id := model.EntityID("abcdef0" + strings.Repeat("1", 33))
-	other := Entity{Ref: "other", Kind: model.KindDoc, ID: model.EntityID("abcdef0" + strings.Repeat("2", 33)), Visible: true}
+func TestAttachmentFullIDsKeepShortPrefixCollisionOwners(t *testing.T) {
+	ids := []model.EntityID{model.EntityID("abcdef0" + strings.Repeat("1", 33)), model.EntityID("abcdef0" + strings.Repeat("2", 33))}
 	oid := fmt.Sprintf("%x", sha256.Sum256([]byte("binary")))
-	entity := Entity{Ref: "note-ref", Tip: model.SHA(strings.Repeat("a", 40)), Root: model.SHA(id), Kind: model.KindNote, ID: id, Visible: true, Filename: "abcdef0-note.md", Mode: 0o644, Attachments: []model.Attachment{{Name: "proof.bin", OID: oid, Size: 6}}}
-	prefix := "attachment-short/abcdef0/"
-	fixture := projectionFixture{members: map[string][]Entity{prefix: {entity}}}
-	objects, err := Emit(entity, &fixture)
-	if err != nil {
-		t.Fatal(err)
+	fixture := projectionFixture{members: make(map[string][]Entity)}
+	for _, id := range ids {
+		entity := Entity{Ref: string(id), Tip: model.SHA(id), Root: model.SHA(id), Kind: model.KindNote, ID: id, Visible: true, Filename: string(id) + "-note.md", Mode: 0o644, Attachments: []model.Attachment{{Name: "proof.bin", OID: oid, Size: 6}}}
+		fixture.members["attachment-owner/"+string(id)+"/"] = []Entity{entity}
+		objects, err := Emit(entity, &fixture)
+		if err != nil || len(objects) != 3 || objects[1].Key != "attachments:"+string(id) || objects[1].Name != string(id) || objects[2].Attachment != oid || objects[2].Size != 6 || objects[2].Mode != 0o444 {
+			t.Fatalf("full ID attachment projection=%+v err=%v", objects, err)
+		}
 	}
-	if len(objects) != 3 || objects[1].Key != "attachments:"+string(id) || objects[1].Name != "abcdef0" || objects[2].Attachment != oid || objects[2].Size != 6 || objects[2].Mode != 0o444 {
-		t.Fatalf("unique attachment projection=%+v", objects)
-	}
-	fixture.members[prefix] = []Entity{entity, other}
-	suppressed, err := Emit(entity, &fixture)
-	if err != nil || len(suppressed) != 1 {
-		t.Fatalf("colliding projection=%+v err=%v", suppressed, err)
-	}
-	fixture.members[prefix] = []Entity{entity}
-	restored, err := Emit(entity, &fixture)
-	if err != nil || !slices.Equal(restored, objects) {
-		t.Fatalf("restored projection=%+v err=%v want %+v", restored, err, objects)
-	}
-	if !slices.Equal(fixture.reads, []string{prefix, prefix, prefix}) {
+	if !slices.Equal(fixture.reads, []string{"attachment-owner/" + string(ids[0]) + "/", "attachment-owner/" + string(ids[1]) + "/"}) {
 		t.Fatalf("attachment dependency reads=%v", fixture.reads)
 	}
 }
@@ -125,7 +113,7 @@ func TestDescribePinsExistingCodecBytesAndSkippedOps(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := RenderNote(snapshot)
-	if entity.Hash != sha256.Sum256(body) || entity.Size != int64(len(body)) || entity.Filename != "aaaaaaa-codec-bytes.md" || entity.SkippedOps != 3 {
+	if entity.Hash != sha256.Sum256(body) || entity.Size != int64(len(body)) || entity.Filename != string(id)+"-codec-bytes.md" || entity.SkippedOps != 3 {
 		t.Fatalf("descriptor=%+v bytes=%q", entity, body)
 	}
 	fixture := projectionFixture{}

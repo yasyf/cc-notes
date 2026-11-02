@@ -310,7 +310,6 @@ func TestOperationProofRetainsAppliedViewUntilAcknowledge(t *testing.T) {
 	}
 	gittest.Git(t, index.Git.Dir, "reflog", "expire", "--expire=now", "--all")
 	gittest.Git(t, index.Git.Dir, "gc", "--prune=now")
-	repo = openRepo(t, index.Git.Dir)
 	reopenFixture(t, index)
 	tombstone, found, err := index.InspectOperationState(t.Context(), operationID)
 	if err != nil || !found || tombstone.State != gitobj.SourceOperationForgotten || tombstone.RequestDigest != requestDigest || tombstone.ReceiptDigest != receiptDigest {

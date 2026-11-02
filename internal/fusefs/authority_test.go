@@ -319,12 +319,12 @@ func snapshotIndexForTest(snapshot AuthoritySnapshot) *authoritySnapshotIndex {
 	slices.SortFunc(objects, func(a, b authorityObject) int { return strings.Compare(a.key, b.key) })
 	return &authoritySnapshotIndex{
 		count: len(objects),
-		rangeObjects: func(start, limit int) ([]authorityObject, error) {
-			return objects[start : start+limit], nil
+		rangeObjects: func(start uint64, limit int) ([]authorityObject, error) {
+			return objects[start:][:limit], nil
 		},
-		rank: func(key string) (int, bool, error) {
+		rank: func(key string) (uint64, bool, error) {
 			rank, found := slices.BinarySearchFunc(objects, key, func(object authorityObject, key string) int { return strings.Compare(object.key, key) })
-			return rank, found, nil
+			return uint64(rank), found, nil
 		},
 	}
 }

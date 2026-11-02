@@ -96,7 +96,7 @@ func (s *Store) CommitSourceOperation(ctx context.Context, request sourceindex.C
 						return err
 					}
 				}
-				if old.Tip != update.Old && !(old.Tip == "" && sourceZero(update.Old)) {
+				if old.Tip != update.Old && (old.Tip != "" || !sourceZero(update.Old)) {
 					return &sourceindex.StaleRevisionError{Expected: request.Expected, Actual: current.Token}
 				}
 				if update.New == "" {

@@ -37,7 +37,7 @@ func TestGitDriverIndexedProjectionMatchesAuthorityOracle(t *testing.T) {
 		model.CreateProject{Nonce: model.NewNonce(), Title: "Project"},
 		model.CreateRunbook{Nonce: model.NewNonce(), Title: "Runbook"},
 		model.CreateInvestigation{Nonce: model.NewNonce(), Title: "Investigation", Premise: "premise"},
-		model.CreatePlan{Nonce: model.NewNonce(), Title: "Plan"},
+		model.CreatePlan{Nonce: model.NewNonce(), Title: "Plan", Status: model.PlanDraft},
 		model.CreateAnswer{Nonce: model.NewNonce(), Title: "Answer", Body: "answer"},
 		model.CreateLedger{Nonce: model.NewNonce(), Title: "Ledger", Columns: []string{"state"}},
 	}
@@ -218,7 +218,7 @@ func TestIndexedAuthorityShortCollisionPartialAndErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			fixture.entities[entity.Ref] = entity
-			prefix := "attachment-short/" + entity.ID.Short() + "/"
+			prefix := "attachment-owner/" + string(entity.ID) + "/"
 			fixture.members[prefix] = append(fixture.members[prefix], entity)
 			if entity.SkippedOps != snapshot.Meta().SkippedOps {
 				t.Fatal("partial diagnostic changed")
@@ -246,7 +246,7 @@ func TestIndexedAuthorityShortCollisionPartialAndErrors(t *testing.T) {
 		slices.SortFunc(actual, func(a, b authorityObject) int { return strings.Compare(a.key, b.key) })
 		slices.SortFunc(builder.objects, func(a, b authorityObject) int { return strings.Compare(a.key, b.key) })
 		if !reflect.DeepEqual(actual, builder.objects) {
-			t.Fatalf("Short7 group %d: got=%+v want=%+v", count, actual, builder.objects)
+			t.Fatalf("full ID owners %d: got=%+v want=%+v", count, actual, builder.objects)
 		}
 	}
 	if _, err := indexedAuthorityObject(sourceview.Object{Kind: 99}); !errors.Is(err, sourcedriver.ErrIntegrity) {
@@ -259,7 +259,7 @@ func TestIndexedAuthorityShortCollisionPartialAndErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fixture := authorityEmissionFixture{members: map[string][]sourceview.Entity{"attachment-short/" + firstID.Short() + "/": {entity}}}
+		fixture := authorityEmissionFixture{members: map[string][]sourceview.Entity{"attachment-owner/" + string(firstID) + "/": {entity}}}
 		_, emittedErr := sourceview.Emit(entity, &fixture)
 		if builder.buildAttachments() == nil || emittedErr == nil {
 			t.Fatalf("invalid attachment accepted: %+v emitter=%v", attachment, emittedErr)
@@ -285,14 +285,14 @@ func TestSnapshotValuesBoundsBaseRangesAcrossTenantBoundary(t *testing.T) {
 	tenant := testTenant(t)
 	second := tenant
 	second.ID = "cc-notes-second"
-	var ranges [][2]int
+	var ranges [][2]uint64
 	index := authoritySnapshotIndex{
 		count: 10000,
-		rangeObjects: func(start, limit int) ([]authorityObject, error) {
-			ranges = append(ranges, [2]int{start, limit})
+		rangeObjects: func(start uint64, limit int) ([]authorityObject, error) {
+			ranges = append(ranges, [2]uint64{start, uint64(limit)})
 			objects := make([]authorityObject, limit)
 			for offset := range objects {
-				name := fmt.Sprintf("entry:%05d", start+offset)
+				name := fmt.Sprintf("entry:%05d", start+uint64(offset))
 				objects[offset] = authorityObject{key: name, name: name, kind: catalog.KindDirectory, mode: 0o755}
 			}
 			return objects, nil
@@ -302,7 +302,7 @@ func TestSnapshotValuesBoundsBaseRangesAcrossTenantBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(ranges, [][2]int{{9998, 2}, {0, 5}}) {
+	if !reflect.DeepEqual(ranges, [][2]uint64{{9998, 2}, {0, 5}}) {
 		t.Fatalf("page ranges=%v, want bounded tail and head", ranges)
 	}
 	for position, value := range values {

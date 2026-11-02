@@ -13,7 +13,7 @@ import (
 )
 
 // RenderPolicy identifies the byte policy used by immutable entity descriptors.
-const RenderPolicy = "cc-notes-sourceview-v1"
+const RenderPolicy = "cc-notes-sourceview-v2"
 
 // ObjectKind distinguishes catalog entries without a platform dependency.
 type ObjectKind uint8
@@ -121,7 +121,7 @@ func Dependencies(entity Entity) []string {
 		}
 	}
 	if attachmentKind(entity.Kind) && len(entity.Attachments) > 0 {
-		result = append(result, "attachment-short/"+entity.ID.Short()+"/"+entity.Ref)
+		result = append(result, "attachment-owner/"+string(entity.ID)+"/"+entity.Ref)
 	}
 	return result
 }
@@ -134,7 +134,7 @@ func Emit(entity Entity, reader ProjectionReader) ([]Object, error) {
 	parent := "kind:" + string(entity.Kind)
 	result := []Object{{Key: "entity:" + string(entity.Kind) + ":" + string(entity.Root), Parent: parent, Name: entity.Filename, Kind: File, Mode: entity.Mode, Size: entity.Size, Hash: entity.Hash, EntityRef: entity.Ref, EntityTip: entity.Tip, RenderPolicy: RenderPolicy}}
 	if CodecOf(entity.Kind).Browsable() {
-		result = append(result, directory(browseKey(entity.Kind, entity.ID), parent, entity.ID.Short()))
+		result = append(result, directory(browseKey(entity.Kind, entity.ID), parent, string(entity.ID)))
 	}
 	switch entity.Kind {
 	case model.KindTask:
@@ -153,20 +153,20 @@ func Emit(entity Entity, reader ProjectionReader) ([]Object, error) {
 		if found && project.Visible {
 			projectBase := browseKey(model.KindProject, project.ID)
 			key := projectBase + ":sprint:" + string(entity.ID)
-			result = append(result, directory(key, projectBase+":sprints", entity.ID.Short()), directory(key+":tasks", key, "tasks"))
+			result = append(result, directory(key, projectBase+":sprints", string(entity.ID)), directory(key+":tasks", key, "tasks"))
 		}
 	case model.KindProject:
 		base := browseKey(entity.Kind, entity.ID)
 		result = append(result, directory(base+":sprints", base, "sprints"), directory(base+":tasks", base, "tasks"))
 	}
 	if attachmentKind(entity.Kind) && len(entity.Attachments) > 0 {
-		members, err := reader.Members("attachment-short/" + entity.ID.Short() + "/")
+		members, err := reader.Members("attachment-owner/" + string(entity.ID) + "/")
 		if err != nil {
 			return nil, err
 		}
 		if len(members) == 1 {
 			parent := "attachments:" + string(entity.ID)
-			result = append(result, directory(parent, "attachments", entity.ID.Short()))
+			result = append(result, directory(parent, "attachments", string(entity.ID)))
 			for _, attachment := range entity.Attachments {
 				raw, err := hex.DecodeString(attachment.OID)
 				if err != nil || len(raw) != sha256.Size {
@@ -193,7 +193,7 @@ func taskLinks(task Entity, reader ProjectionReader) ([]Object, error) {
 		return nil, err
 	}
 	if found && sprint.Visible {
-		linkPath := path.Join("/sprints", sprint.ID.Short(), "tasks", task.Filename)
+		linkPath := path.Join("/sprints", string(sprint.ID), "tasks", task.Filename)
 		result = append(result, link("sprint-task:"+string(sprint.ID)+":"+string(task.ID), browseKey(model.KindSprint, sprint.ID)+":tasks", task.Filename, SymlinkTarget(linkPath, "tasks/"+task.Filename)))
 		projects[sprint.Project] = struct{}{}
 		project, live, err := reader.Entity(model.KindProject, sprint.Project)
@@ -201,7 +201,7 @@ func taskLinks(task Entity, reader ProjectionReader) ([]Object, error) {
 			return nil, err
 		}
 		if live && project.Visible {
-			linkPath := path.Join("/projects", project.ID.Short(), "sprints", sprint.ID.Short(), "tasks", task.Filename)
+			linkPath := path.Join("/projects", string(project.ID), "sprints", string(sprint.ID), "tasks", task.Filename)
 			key := "project-sprint-task:" + string(project.ID) + ":" + string(sprint.ID) + ":" + string(task.ID)
 			result = append(result, link(key, browseKey(model.KindProject, project.ID)+":sprint:"+string(sprint.ID)+":tasks", task.Filename, SymlinkTarget(linkPath, "tasks/"+task.Filename)))
 		}
@@ -222,7 +222,7 @@ func taskLinks(task Entity, reader ProjectionReader) ([]Object, error) {
 		if !found || !project.Visible {
 			continue
 		}
-		linkPath := path.Join("/projects", id.Short(), "tasks", task.Filename)
+		linkPath := path.Join("/projects", string(id), "tasks", task.Filename)
 		result = append(result, link("project-task:"+string(id)+":"+string(task.ID), browseKey(model.KindProject, id)+":tasks", task.Filename, SymlinkTarget(linkPath, "tasks/"+task.Filename)))
 	}
 	return result, nil

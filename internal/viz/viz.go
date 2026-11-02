@@ -23,6 +23,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceindex"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/internal/trail"
 	"github.com/yasyf/cc-notes/model"
@@ -290,10 +291,8 @@ func (b *Builder) InvalidateRefs(refNames []string) {
 	}
 }
 
-// isBranchRef reports whether ref is a local head or a remote-tracking branch,
-// the ref classes whose movement can change the mined deleted-branch set.
 func isBranchRef(ref string) bool {
-	return strings.HasPrefix(ref, "refs/heads/") || strings.HasPrefix(ref, "refs/remotes/")
+	return ref != sourceindex.LiveRef && (strings.HasPrefix(ref, "refs/heads/") || strings.HasPrefix(ref, "refs/remotes/"))
 }
 
 // digest hashes the sorted (ref, tip) pairs of every branch and entity ref, the

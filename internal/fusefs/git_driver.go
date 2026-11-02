@@ -49,8 +49,8 @@ type GitDriver struct {
 
 type authoritySnapshotIndex struct {
 	count        int
-	rangeObjects func(int, int) ([]authorityObject, error)
-	rank         func(string) (int, bool, error)
+	rangeObjects func(uint64, int) ([]authorityObject, error)
+	rank         func(string) (uint64, bool, error)
 }
 
 type authorityDeltaValue struct {
@@ -429,8 +429,8 @@ func (d *GitDriver) loadSnapshot(
 	}
 	return &authoritySnapshotIndex{
 		count: int(total),
-		rangeObjects: func(start, limit int) ([]authorityObject, error) {
-			values, count, err := source.SourceObjectRange(ctx, token, uint64(start), limit)
+		rangeObjects: func(start uint64, limit int) ([]authorityObject, error) {
+			values, count, err := source.SourceObjectRange(ctx, token, start, limit)
 			if err != nil {
 				return nil, err
 			}
@@ -447,7 +447,7 @@ func (d *GitDriver) loadSnapshot(
 			d.snapshotRanges.Add(1)
 			return objects, nil
 		},
-		rank: func(key string) (int, bool, error) {
+		rank: func(key string) (uint64, bool, error) {
 			rank, found, err := source.SourceObjectRank(ctx, token, key)
 			if err != nil {
 				return 0, false, err
@@ -455,7 +455,7 @@ func (d *GitDriver) loadSnapshot(
 			if rank > total {
 				return 0, false, fmt.Errorf("%w: indexed source rank exceeds count", sourcedriver.ErrIntegrity)
 			}
-			return int(rank), found, nil
+			return rank, found, nil
 		},
 	}, nil
 }
@@ -679,7 +679,7 @@ func snapshotValues(
 	if repeated {
 		rangeStart, rangeLimit = 0, snapshot.count
 	}
-	objects, err := snapshot.rangeObjects(rangeStart, rangeLimit)
+	objects, err := snapshot.rangeObjects(uint64(rangeStart), rangeLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -772,7 +772,7 @@ func (d *GitDriver) projectionStart(
 	if err != nil {
 		return 0, err
 	}
-	if !found || tenant.ID != request.Cursor.AfterTenant || causal.Generation(tenant.Generation) != request.Cursor.AfterGeneration || rank != (boundary.end-1)%snapshot.count {
+	if !found || tenant.ID != request.Cursor.AfterTenant || causal.Generation(tenant.Generation) != request.Cursor.AfterGeneration || rank != uint64((boundary.end-1)%snapshot.count) {
 		return 0, errors.New("cc-notes source: snapshot cursor does not match indexed position")
 	}
 	objects, end, digest, err := fitSnapshotPage(

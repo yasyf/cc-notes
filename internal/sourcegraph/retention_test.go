@@ -292,9 +292,9 @@ func TestSourceGraphRetentionRejectsExtraPayloadParents(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		copy := *n
-		copy.Aggregate = broken
-		data, err := json.Marshal(copy.header)
+		brokenNode := *n
+		brokenNode.Aggregate = broken
+		data, err := json.Marshal(brokenNode.header)
 		if err != nil {
 			return err
 		}

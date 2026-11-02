@@ -367,7 +367,7 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 	var provenance sourceindex.ImportProvenance
 	if len(imported.applied[token]) != 0 {
 		if policy == nil {
-			return revision, fmt.Errorf("Applied receipts %v token %s: authenticated historical renderer evidence is required", imported.applied[token], token)
+			return revision, fmt.Errorf("applied receipts %v token %s: authenticated historical renderer evidence is required", imported.applied[token], token)
 		}
 		var err error
 		provenance, err = policy.SourceProvenance(ctx, token, manifest)
@@ -375,81 +375,31 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 			return revision, err
 		}
 		if provenance.Evidence == "" || provenance.RenderPolicy != sourceview.RenderPolicy || provenance.ObjectDigest == ([sha256.Size]byte{}) {
-			return revision, fmt.Errorf("Applied receipts %v token %s: historical renderer evidence is incomplete", imported.applied[token], token)
+			return revision, fmt.Errorf("applied receipts %v token %s: historical renderer evidence is incomplete", imported.applied[token], token)
 		}
 	}
 	revision.ProjectionAvailable = true
 	revision.RenderPolicy = sourceview.RenderPolicy
 	err := s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
-		graph := projectionGraph{index: sourcegraph.New(objects), revision: revision}
-		for _, entry := range sourceview.BaseObjects() {
-			if err := graph.putObject(entry); err != nil {
-				return err
-			}
+		var err error
+		revision, err = s.buildSourceSnapshot(objects, revision, entities)
+		if err != nil {
+			return err
 		}
-		for _, entry := range manifest {
-			entity := entities[entry.Ref]
-			if err := graph.putEntity(entity); err != nil {
-				return err
-			}
-			for _, key := range sourceview.Dependencies(entity) {
-				var err error
-				graph.revision.DependencyRoot, err = graph.index.Put(graph.revision.DependencyRoot, key, []byte(entity.Ref))
-				if err != nil {
-					return err
-				}
-			}
-		}
-		retention := sourcegraph.NewRetention(objects)
-		retentionRoot := sourcegraph.RetentionRoot{}
-		for _, entry := range manifest {
-			entity := entities[entry.Ref]
-			emitted, emitErr := sourceview.Emit(entity, &graph)
-			if emitErr != nil {
-				entity.ProjectionError = emitErr.Error()
-				graph.revision.ProjectionErrors++
-				emitted = nil
-			}
-			entity.Objects = emitted
-			for _, object := range emitted {
-				if err := graph.putObject(object); err != nil {
-					return err
-				}
-			}
-			if err := graph.putEntity(entity); err != nil {
-				return err
-			}
-			if err := graph.updateLFS(s, sourceview.Entity{}, entity); err != nil {
-				return err
-			}
-			retained := sourcegraph.RetainedEntity{Tip: entity.Tip}
-			if !entity.Deleted {
-				for _, attachment := range entity.Attachments {
-					retained.LFS = append(retained.LFS, gitobj.SourceOperationLFS{OID: attachment.OID, Size: attachment.Size})
-				}
-			}
-			var err error
-			retentionRoot, err = retention.Put(retentionRoot, entity.Ref, retained)
-			if err != nil {
-				return err
-			}
-		}
-		digest, err := projectionDigest(graph.index, graph.revision.ObjectRoot)
+		digest, err := projectionDigest(sourcegraph.New(objects), revision.ObjectRoot)
 		if err != nil {
 			return err
 		}
 		if len(imported.applied[token]) != 0 && digest != provenance.ObjectDigest {
 			return fmt.Errorf("source token %s: renderer descriptor digest differs from %s", token, provenance.Evidence)
 		}
-		graph.revision.RetentionIndex, graph.revision.RetentionRoot = retentionRoot.Index, retentionRoot.Commit
 		if len(imported.applied[token]) != 0 {
-			graph.revision.ImportEvidence = provenance.Evidence
-			graph.revision.ProjectionDigest = provenance.ObjectDigest
+			revision.ImportEvidence = provenance.Evidence
+			revision.ProjectionDigest = provenance.ObjectDigest
 		}
-		if len(imported.applied[token]) != 0 && graph.revision.RetentionConflicts != 0 {
+		if len(imported.applied[token]) != 0 && revision.RetentionConflicts != 0 {
 			return fmt.Errorf("Applied receipts %v token %s: required LFS content is missing or inconsistent", imported.applied[token], token)
 		}
-		revision = graph.revision
 		return nil
 	})
 	return revision, err
@@ -601,7 +551,7 @@ func (s *Store) normalizeSourceImport(ctx context.Context, db *bolt.DB, imported
 			if operation.State == gitobj.SourceOperationApplied {
 				revision := imported.revisions[operation.Token]
 				if !revision.ProjectionAvailable {
-					return fmt.Errorf("Applied receipt %s token %s has no complete projection", id, operation.Token)
+					return fmt.Errorf("applied receipt %s token %s has no complete projection", id, operation.Token)
 				}
 				operation.RetentionRoot = revision.RetentionRoot
 				if _, legacy := imported.legacyProofs[id]; legacy {

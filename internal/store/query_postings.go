@@ -67,6 +67,9 @@ func replaceQueryMetadata(tx *bolt.Tx, row queryMetadata) error {
 	if err != nil {
 		return err
 	}
+	if err := replaceQueryGeneration(tx, row.Binding, row.ID, rows.Get([]byte(row.ID)), data); err != nil {
+		return err
+	}
 	if err := rows.Put([]byte(row.ID), data); err != nil {
 		return err
 	}
@@ -110,6 +113,9 @@ func deleteQueryMetadata(tx *bolt.Tx, binding string, id model.EntityID) error {
 	bucket := queryMetadataBinding(tx, binding)
 	if bucket == nil {
 		return nil
+	}
+	if err := replaceQueryGeneration(tx, binding, id, bucket.Bucket(queryMetadataRowsBucket).Get([]byte(id)), nil); err != nil {
+		return err
 	}
 	if err := removeQueryMetadataPostings(bucket, id); err != nil {
 		return err

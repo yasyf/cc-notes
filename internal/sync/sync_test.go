@@ -16,7 +16,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
@@ -1033,6 +1036,7 @@ func bloblessClone(t *testing.T, refspec string) (*store.Store, model.Note) {
 	gittest.Git(t, filepath.Dir(thin), "clone", "-q", "--filter=blob:none", "file://"+bare, thin)
 	gittest.Git(t, thin, "config", "user.name", "Bob")
 	gittest.Git(t, thin, "config", "user.email", "bob@example.com")
+	gittest.InitializeEmpty(t, thin)
 	gittest.Git(t, thin, "fetch", "-q", "origin", refspec)
 	tip := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, note.ID))
 	if missing := gittest.Git(t, thin, "rev-list", "--objects", "--missing=print", tip); !strings.Contains(missing, "?") {
@@ -1085,6 +1089,7 @@ func TestSyncDefersARefWhoseObjectsTheRemoteWithholds(t *testing.T) {
 	gittest.Git(t, filepath.Dir(thin), "clone", "-q", "--filter=blob:none", "file://"+bare, thin)
 	gittest.Git(t, thin, "config", "user.name", "Bob")
 	gittest.Git(t, thin, "config", "user.email", "bob@example.com")
+	gittest.InitializeEmpty(t, thin)
 	b, err := store.Open(thin)
 	if err != nil {
 		t.Fatalf("Open(%s): %v", thin, err)
@@ -1118,15 +1123,28 @@ func TestSyncDefersARefWhoseObjectsTheRemoteWithholds(t *testing.T) {
 	}
 }
 
-func TestListHydratesABloblessCanonicalRef(t *testing.T) {
+func TestImportHydratesABloblessCanonicalRefBeforeList(t *testing.T) {
 	b, note := bloblessClone(t, oldCCFetchRefspec)
+	ref := refs.For(model.KindNote, note.ID)
+	if notes, err := b.ListSnapshots(t.Context(), model.KindNote, store.ListOpts{}); err != nil || len(notes) != 0 {
+		t.Fatalf("ListSnapshots before import = %#v, %v; want empty", notes, err)
+	}
+	if missing := gittest.Git(t, b.Git.Dir, "rev-list", "--objects", "--missing=print", string(note.Head)); !strings.Contains(missing, "?") {
+		t.Fatal("ListSnapshots hydrated the canonical ref before explicit import")
+	}
+	if err := b.ImportFetchedRef(t.Context(), ref, note.Head); err != nil {
+		t.Fatalf("ImportFetchedRef: %v", err)
+	}
+	if missing := gittest.Git(t, b.Git.Dir, "rev-list", "--objects", "--missing=print", string(note.Head)); strings.Contains(missing, "?") {
+		t.Fatal("ImportFetchedRef left missing objects")
+	}
 
 	notes, err := b.ListSnapshots(t.Context(), model.KindNote, store.ListOpts{})
 	if err != nil {
 		t.Fatalf("ListSnapshots: %v", err)
 	}
-	if len(notes) != 1 || notes[0].EntityID() != note.ID {
-		t.Fatalf("ListSnapshots = %v, want the one note %s", notes, note.ID.Short())
+	if len(notes) != 1 || !reflect.DeepEqual(notes[0], note) {
+		t.Fatalf("ListSnapshots = %#v, want the exact note %#v", notes, note)
 	}
 }
 
@@ -1235,21 +1253,99 @@ func TestSyncHydratesABloblessRefItAlreadyFolded(t *testing.T) {
 	b, note := bloblessClone(t, oldCCFetchRefspec)
 	advanceTracking(t, b)
 
-	sync(t, b)
+	if got, want := sync(t, b), (ccsync.Report{Reconciled: 1, Rounds: 1}); got != want {
+		t.Fatalf("same-tip import report = %+v, want %+v", got, want)
+	}
 
-	if _, err := b.Load(t.Context(), refs.For(model.KindNote, note.ID)); err != nil {
-		t.Fatalf("Load after sync: %v", err)
+	if got, err := b.Load(t.Context(), refs.For(model.KindNote, note.ID)); err != nil || !reflect.DeepEqual(got, note) {
+		t.Fatalf("Load after sync = %#v, %v; want %#v", got, err, note)
+	}
+	if got, want := sync(t, b), (ccsync.Report{Rounds: 1}); got != want {
+		t.Fatalf("imported unchanged report = %+v, want %+v", got, want)
 	}
 }
 
-func TestHistoryHydratesABloblessCanonicalRef(t *testing.T) {
-	b, note := bloblessClone(t, oldCCFetchRefspec)
+func TestScopedSyncPreservesExternalDriftRejection(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	note := createNote(t, a, "shared root")
+	ref := refs.For(model.KindNote, note.ID)
+	sync(t, a)
+	sync(t, b)
+	appendOps(t, a, ref, model.SetBody{Body: "managed replacement"})
+	sync(t, a)
+	sync(t, b)
+	before, err := b.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alternate, err := b.PrepareAppendAt(t.Context(), ref, note.Head, []model.Op{model.SetBody{Body: "external divergence"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: before.Meta().Head, New: alternate.New}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ccsync.Sync(t.Context(), b, "origin", false); !errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("scoped sync over external divergence=%v; want ErrReindex", err)
+	}
+	if got, err := b.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(got, before) {
+		t.Fatalf("rejected scoped sync changed authority=%#v, %v; want %#v", got, err, before)
+	}
+	if got := gittest.Git(t, bare, "rev-parse", ref); got != string(before.Meta().Head) {
+		t.Fatalf("rejected scoped sync changed remote=%s; want %s", got, before.Meta().Head)
+	}
+}
 
-	steps, err := b.History(t.Context(), refs.For(model.KindNote, note.ID))
+func TestScopedSyncPreservesManagedAppendAfterRawRefReset(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	note := createNote(t, a, "shared root")
+	ref := refs.For(model.KindNote, note.ID)
+	sync(t, a)
+	sync(t, b)
+	appendOps(t, b, ref, model.SetBody{Body: "unpushed managed append"})
+	before, err := b.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: before.Meta().Head, New: note.Head}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ccsync.Sync(t.Context(), b, "origin", false); !errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("scoped sync over raw reset=%v; want ErrReindex", err)
+	}
+	if got, err := b.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(got, before) {
+		t.Fatalf("raw reset discarded managed append=%#v, %v; want %#v", got, err, before)
+	}
+	if got := gittest.Git(t, bare, "rev-parse", ref); got != string(note.Head) {
+		t.Fatalf("rejected scoped sync changed remote=%s; want %s", got, note.Head)
+	}
+}
+
+func TestImportHydratesABloblessCanonicalRefBeforeHistory(t *testing.T) {
+	b, note := bloblessClone(t, oldCCFetchRefspec)
+	ref := refs.For(model.KindNote, note.ID)
+	if _, err := b.History(t.Context(), ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("History before import = %v; want ErrRefNotFound", err)
+	}
+	if missing := gittest.Git(t, b.Git.Dir, "rev-list", "--objects", "--missing=print", string(note.Head)); !strings.Contains(missing, "?") {
+		t.Fatal("History hydrated the canonical ref before explicit import")
+	}
+	if err := b.ImportFetchedRef(t.Context(), ref, note.Head); err != nil {
+		t.Fatalf("ImportFetchedRef: %v", err)
+	}
+	if missing := gittest.Git(t, b.Git.Dir, "rev-list", "--objects", "--missing=print", string(note.Head)); strings.Contains(missing, "?") {
+		t.Fatal("ImportFetchedRef left missing objects")
+	}
+
+	steps, err := b.History(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
-	if len(steps) != 1 || steps[0].Snapshot.EntityID() != note.ID {
-		t.Fatalf("History = %v, want the one step of note %s", steps, note.ID.Short())
+	if len(steps) != 1 || !reflect.DeepEqual(steps[0].Snapshot, note) {
+		t.Fatalf("History = %#v, want the exact note %#v", steps, note)
 	}
 }

@@ -24,7 +24,7 @@ Workers hang after the pool rewrite.
 
 Captured the first blocked worker stack.
 
-- [goroutines.txt](../attachments/1111111/goroutines.txt)
+- [goroutines.txt](../attachments/1111111111111111111111111111111111111111/goroutines.txt)
 
 ## Verdict
 

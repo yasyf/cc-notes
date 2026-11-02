@@ -22,15 +22,17 @@ import (
 var managedPendingKey = []byte("pending")
 
 type managedIntent struct {
-	Updates []gitcmd.RefUpdate `json:"updates"`
-	Before  []model.SHA        `json:"before"`
-	Rows    []queryMetadata    `json:"rows"`
-	Source  *sourcePublication `json:"source,omitempty"`
+	Updates  []gitcmd.RefUpdate `json:"updates"`
+	Before   []model.SHA        `json:"before"`
+	Rows     []queryMetadata    `json:"rows"`
+	Source   *sourcePublication `json:"source,omitempty"`
+	Imported string             `json:"imported,omitempty"`
 }
 
 func managedRoot(tx *bolt.Tx) (*bolt.Bucket, error) {
 	root := tx.Bucket([]byte(managed.Format))
-	if root == nil || root.Bucket([]byte("refs")) == nil {
+	generations := tx.Bucket([]byte(managed.QueryGenerations))
+	if root == nil || root.Bucket([]byte("refs")) == nil || generations == nil || generations.Bucket([]byte(managed.QueryObjects)) == nil || generations.Bucket([]byte(managed.QueryObjectRefs)) == nil {
 		return nil, managed.ErrReindex
 	}
 	return root, nil
@@ -193,6 +195,30 @@ func (s *Store) managedRows(ctx context.Context, updates []gitcmd.RefUpdate, sna
 	return rows, nil
 }
 
+// ImportFetchedRef adopts the supplied canonical entity tip into managed authority
+// without moving it, publishing its query metadata and retained source projection.
+func (s *Store) ImportFetchedRef(ctx context.Context, ref string, expectedTip model.SHA) error {
+	if _, err := refs.Parse(ref); err != nil {
+		return err
+	}
+	if expectedTip == "" {
+		return errors.New("import fetched ref: empty expected tip")
+	}
+	updates := []gitcmd.RefUpdate{{Ref: ref, Old: expectedTip, New: expectedTip}}
+	preparation, err := s.prepareManaged(ctx, updates, nil)
+	if err != nil {
+		return err
+	}
+	return s.managedWrite(ctx, func(db *bolt.DB) (*managedIntent, error) {
+		intent, err := s.buildManagedIntent(ctx, db, updates, preparation)
+		if err != nil {
+			return nil, err
+		}
+		intent.Imported = ref
+		return intent, nil
+	})
+}
+
 func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, snapshots map[model.SHA]model.Snapshot) error {
 	if len(updates) == 0 {
 		return errors.New("update refs: no updates")
@@ -208,6 +234,9 @@ func (s *Store) buildManagedIntent(ctx context.Context, db *bolt.DB, updates []g
 	var publication *sourcePublication
 	var derived []gitcmd.RefUpdate
 	err := db.View(func(tx *bolt.Tx) error {
+		if err := s.validateManagedQueryGenerations(tx, updates); err != nil {
+			return err
+		}
 		var err error
 		publication, derived, err = s.buildSource(ctx, tx, updates, preparation.Entities)
 		return err
@@ -272,6 +301,13 @@ func (s *Store) managedWrite(ctx context.Context, build func(*bolt.DB) (*managed
 			return err
 		}
 		if _, parseErr := refs.Parse(update.Ref); parseErr == nil {
+			if intent.Imported == update.Ref {
+				if update.Old != update.New || update.New != tip {
+					return fmt.Errorf("import fetched ref %s: %w", update.Ref, gitcmd.ErrCASMismatch)
+				}
+				intent.Before[i] = tip
+				continue
+			}
 			if err := db.View(func(tx *bolt.Tx) error {
 				root, err := managedRoot(tx)
 				if err != nil {

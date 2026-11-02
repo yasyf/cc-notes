@@ -29,6 +29,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/lfs"
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -403,13 +404,17 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 // remote tip the local chain does not contain is always in scope, however
 // quiet the tracking delta: correctness over speed.
 func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA) (map[string]model.SHA, error) {
-	local, err := recordRefs(ctx, e.store, namespace)
+	local, err := e.store.ManagedTips(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := recordRefs(ctx, e.store, namespace)
 	if err != nil {
 		return nil, err
 	}
 	scope := make(map[string]model.SHA, len(after))
 	for ref, tip := range after {
-		if before[ref] != tip {
+		if before[ref] != tip || raw[ref] != local[ref] {
 			scope[ref] = tip
 			continue
 		}
@@ -569,7 +574,17 @@ func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (ou
 		return refKept, err
 	}
 	if current == tip {
-		return refKept, nil
+		managedTips, err := s.ManagedTips(ctx, ref)
+		if err != nil {
+			return refKept, err
+		}
+		if authoritative, found := managedTips[ref]; found {
+			if authoritative != tip {
+				return refKept, fmt.Errorf("canonical ref differs from managed authority: %s: %w", ref, managed.ErrReindex)
+			}
+			return refKept, nil
+		}
+		return refKept, s.ImportFetchedRef(ctx, ref, tip)
 	}
 	contains, err := s.Repo.IsAncestor(ctx, tip, current)
 	if err != nil {

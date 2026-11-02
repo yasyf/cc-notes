@@ -327,36 +327,65 @@ func TestCommitOperationRejectsInvalidProofFieldsWithoutPublication(t *testing.T
 	}
 }
 
-func TestZeroSizeAttachmentProjectionAndContentRemainServable(t *testing.T) {
-	index, repo := fixture(t)
-	root := managedCreate(t, repo, "zero size attachment")
-	ref := refs.For(model.KindNote, model.EntityID(root))
-	oid := fmtOID(nil)
-	content := index.Git.source.LFS()
-	if err := content.PutVerified(bytes.NewReader(nil), oid, 0); err != nil {
-		t.Fatal(err)
-	}
-	attached := commit(t, repo, root, model.Pack{Lamport: 2, Ops: []model.Op{model.AddAttachment{Name: "empty.bin", OID: oid, Size: 0}}})
-	if err := index.Git.UpdateRef(t.Context(), ref, attached, ""); err != nil {
-		t.Fatal(err)
-	}
-	head, err := index.Backend.SourceHead(t.Context())
-	if err != nil || head.ProjectionErrors != 0 || head.RetentionConflicts != 1 {
-		t.Fatalf("zero-size head=%+v err=%v", head, err)
-	}
-	objects, total, err := index.Backend.SourceObjectRange(t.Context(), head.Token, 0, 100)
-	if err != nil || uint64(len(objects)) != total {
-		t.Fatalf("zero-size page objects=%v total=%d err=%v", objects, total, err)
-	}
-	digest := sha256.Sum256([]byte("empty.bin"))
-	key := "attachment:" + string(root) + ":" + fmt.Sprintf("%x", digest)
-	descriptor, stream, err := index.Backend.OpenSourceContent(t.Context(), head.Token, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = stream.Close() }()
-	body, err := io.ReadAll(stream)
-	if err != nil || len(body) != 0 || descriptor.Size != 0 || descriptor.Hash != sha256.Sum256(nil) {
-		t.Fatalf("empty content=%q descriptor=%+v err=%v", body, descriptor, err)
+func TestAttachmentProjectionRequiresPositiveSize(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		body    []byte
+		wantErr error
+	}{
+		{name: "zero size rejected", wantErr: model.ErrInvalidValue},
+		{name: "one byte served", body: []byte("x")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			index, repo := fixture(t)
+			root := managedCreate(t, repo, "attachment size")
+			ref := refs.For(model.KindNote, model.EntityID(root))
+			before, err := index.Refresh(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			oid := fmtOID(test.body)
+			content := index.Git.source.LFS()
+			if err := content.PutVerified(bytes.NewReader(test.body), oid, int64(len(test.body))); err != nil {
+				t.Fatal(err)
+			}
+			attached := commit(t, repo, root, model.Pack{Lamport: 2, Ops: []model.Op{model.AddAttachment{Name: "size.bin", OID: oid, Size: int64(len(test.body))}}})
+			err = index.Git.UpdateRef(t.Context(), ref, attached, "")
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("attachment size %d: %v, want %v", len(test.body), err, test.wantErr)
+				}
+				after, err := index.Refresh(t.Context())
+				if err != nil || after != before {
+					t.Fatalf("rejected attachment changed head=%s err=%v want %s", after, err, before)
+				}
+				if _, err := repo.Tip(t.Context(), ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+					t.Fatalf("rejected attachment published entity: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			head, err := index.Backend.SourceHead(t.Context())
+			if err != nil || head.ProjectionErrors != 0 || head.RetentionConflicts != 0 {
+				t.Fatalf("attachment head=%+v err=%v", head, err)
+			}
+			objects, total, err := index.Backend.SourceObjectRange(t.Context(), head.Token, 0, 100)
+			if err != nil || uint64(len(objects)) != total {
+				t.Fatalf("attachment page objects=%v total=%d err=%v", objects, total, err)
+			}
+			digest := sha256.Sum256([]byte("size.bin"))
+			key := "attachment:" + string(root) + ":" + fmt.Sprintf("%x", digest)
+			descriptor, stream, err := index.Backend.OpenSourceContent(t.Context(), head.Token, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = stream.Close() }()
+			body, err := io.ReadAll(stream)
+			if err != nil || !bytes.Equal(body, test.body) || descriptor.Size != int64(len(test.body)) || descriptor.Hash != sha256.Sum256(test.body) {
+				t.Fatalf("attachment content=%q descriptor=%+v err=%v", body, descriptor, err)
+			}
+		})
 	}
 }

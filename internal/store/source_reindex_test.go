@@ -17,6 +17,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/sourceindex"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -244,5 +245,109 @@ func TestSourceReindexSharesPartialFoldWithManagedRows(t *testing.T) {
 	snapshot, err := s.Load(t.Context(), ref)
 	if err != nil || snapshot.Meta().SkippedOps != 1 || snapshot.EntityID() != model.EntityID(root) {
 		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+}
+
+func TestSourceFullIDsPreserveCollidingTaskFiles(t *testing.T) {
+	s := initStore(t)
+	fixtures := []struct {
+		nonce string
+		id    model.EntityID
+	}{
+		{"00000000000000000000000000000500", "356262a5603d18999df10cdc7ed796d60e005c1a"},
+		{"00000000000000000000000000004aaf", "356262aeec36efa65789d2c180275ec604ea6af4"},
+	}
+	if fixtures[0].id.Short() != fixtures[1].id.Short() {
+		t.Fatal("fixture must collide under seven-character filenames")
+	}
+	for _, fixture := range fixtures {
+		tip, err := s.Repo.WriteOpsCommit(t.Context(), nil, gitobj.Signature{Name: "Fixture", Email: "fixture@example.com", When: time.Unix(1_700_000_000, 0).UTC()}, "full ID collision fixture", model.Pack{Lamport: 1, Ops: []model.Op{model.CreateTask{Nonce: fixture.nonce, Title: "full ID collision fixture", Type: model.TypeTask, Priority: 2}}})
+		if err != nil || model.EntityID(tip) != fixture.id {
+			t.Fatalf("collision fixture tip=%s err=%v want=%s", tip, err, fixture.id)
+		}
+		if err := s.RecordsGit.UpdateRef(t.Context(), refs.For(model.KindTask, fixture.id), tip, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	head, err := s.SourceHead(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, total, err := s.SourceObjectRange(t.Context(), head.Token, 0, 100)
+	if err != nil || total != uint64(len(sourceview.BaseObjects())+2) || len(objects) != int(total) {
+		t.Fatalf("collision page total=%d objects=%+v err=%v", total, objects, err)
+	}
+	for _, fixture := range fixtures {
+		object, found, err := s.SourceObject(t.Context(), head.Token, "entity:task:"+string(fixture.id))
+		if err != nil || !found || object.Name != string(fixture.id)+".json" {
+			t.Fatalf("collision object=%+v found=%t err=%v", object, found, err)
+		}
+		ref := refs.For(model.KindTask, fixture.id)
+		if _, err := s.Append(t.Context(), ref, []model.Op{model.SetTitle{Title: "changed"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	head, err = s.SourceHead(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.SourceObjectRange(t.Context(), head.Token, 0, 100); err != nil {
+		t.Fatalf("managed collision publication: %v", err)
+	}
+}
+
+func TestSourceRenderPolicyChangeRequiresExplicitReindex(t *testing.T) {
+	s := initStore(t)
+	created := create(t, s, noteOps("policy migration")).(model.Note)
+	previous, err := s.SourceHead(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := previous
+	old.Token = ""
+	old.Predecessor = previous.Token
+	old.Height++
+	old.RenderPolicy = "cc-notes-sourceview-v1"
+	if err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
+		var err error
+		old.AncestorJumps, err = sourceJumps(tx, previous)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+		var err error
+		old.Token, err = writeSourceRevision(objects, old)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.managedWrite(t.Context(), func(*bolt.DB) (*managedIntent, error) {
+		return &managedIntent{Updates: []gitcmd.RefUpdate{{Ref: sourceindex.Ref, Old: previous.Token, New: old.Token}}, Source: &sourcePublication{Revision: &old}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SourceHead(t.Context()); !errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("old current policy error=%v, want explicit Reindex", err)
+	}
+	if _, _, err := s.SourceObjectRange(t.Context(), old.Token, 0, 1); !errors.Is(err, sourceindex.ErrProjectionUnavailable) {
+		t.Fatalf("old namespace read error=%v", err)
+	}
+	if _, err := s.Append(t.Context(), refs.For(model.KindNote, created.ID), []model.Op{model.SetTitle{Title: "unpublished"}}); !errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("old policy append error=%v, want explicit Reindex", err)
+	}
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	head, err := s.SourceHead(t.Context())
+	if err != nil || head.RenderPolicy != sourceview.RenderPolicy || head.Token == old.Token || head.EntityGeneration != old.EntityGeneration {
+		t.Fatalf("reindexed policy head=%+v err=%v", head, err)
+	}
+	object, found, err := s.SourceObject(t.Context(), head.Token, "entity:note:"+string(created.ID))
+	if err != nil || !found || object.Name != string(created.ID)+"-policy-migration.md" {
+		t.Fatalf("reindexed object=%+v found=%t err=%v", object, found, err)
 	}
 }

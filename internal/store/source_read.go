@@ -34,6 +34,7 @@ type sourcePublication struct {
 }
 
 func sourceRevision(tx *bolt.Tx, token model.SHA) (sourceindex.Revision, error) {
+	current := token == ""
 	root, err := managedRoot(tx)
 	if err != nil {
 		return sourceindex.Revision{}, err
@@ -53,7 +54,7 @@ func sourceRevision(tx *bolt.Tx, token model.SHA) (sourceindex.Revision, error) 
 	if err := json.Unmarshal(data, &revision); err != nil {
 		return revision, errors.Join(managed.ErrReindex, err)
 	}
-	if revision.Token != token {
+	if revision.Token != token || current && revision.ProjectionAvailable && revision.RenderPolicy != sourceview.RenderPolicy {
 		return revision, managed.ErrReindex
 	}
 	return revision, nil
@@ -292,7 +293,7 @@ func (s *Store) ReadOperation(ctx context.Context, id string) (operation sourcei
 }
 
 func sourceProjection(revision sourceindex.Revision) error {
-	if !revision.ProjectionAvailable {
+	if !revision.ProjectionAvailable || revision.RenderPolicy != sourceview.RenderPolicy {
 		return sourceindex.ErrProjectionUnavailable
 	}
 	if revision.ProjectionConflicts != 0 || revision.ProjectionErrors != 0 {
@@ -393,9 +394,9 @@ func (s *Store) SourceObjectChanges(ctx context.Context, from, to model.SHA) (va
 				return err
 			}
 			before.EntityRef, before.EntityTip, before.RenderPolicy = "", "", ""
-			comparable := value
-			comparable.EntityRef, comparable.EntityTip, comparable.RenderPolicy = "", "", ""
-			if before == comparable {
+			after := value
+			after.EntityRef, after.EntityTip, after.RenderPolicy = "", "", ""
+			if before == after {
 				return nil
 			}
 		}

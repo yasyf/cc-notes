@@ -45,6 +45,8 @@ func TestManagedCostTraceAccountsOperationAndDescendantWork(t *testing.T) {
 
 func TestManagedCostTraceRejectsUnaccountedEvidence(t *testing.T) {
 	for _, raw := range []string{
+		"1793615657.374343 ???( <detached ...>\n",
+		"1700000000.000001 read(3, \"unfinished\", 10 <detached ...>\n",
 		"1700000000.000001 unreadable syscall\n",
 		"1700000000.000001 <... read resumed>0) = 0\n",
 		"1700000000.000001 read(3, <unfinished ...>\n",

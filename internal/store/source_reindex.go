@@ -17,6 +17,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/sourceindex"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -82,6 +83,16 @@ func (s *Store) ReindexWithSourcePolicy(ctx context.Context, policy sourceindex.
 		if _, err := root.CreateBucket([]byte("refs")); err != nil {
 			return err
 		}
+		generations, err := tx.CreateBucket([]byte(managed.QueryGenerations))
+		if err != nil {
+			return err
+		}
+		if _, err := generations.CreateBucket([]byte(managed.QueryObjects)); err != nil {
+			return err
+		}
+		if _, err := generations.CreateBucket([]byte(managed.QueryObjectRefs)); err != nil {
+			return err
+		}
 		return applySource(tx, &sourcePublication{})
 	}); err != nil {
 		return err
@@ -97,7 +108,7 @@ func (s *Store) ReindexWithSourcePolicy(ctx context.Context, policy sourceindex.
 			return err
 		}
 	}
-	if !same || !current.ProjectionAvailable {
+	if !same || !current.ProjectionAvailable || current.RenderPolicy != sourceview.RenderPolicy {
 		manifest, err := gitobj.NewSourceManifest(tips)
 		if err != nil {
 			return err
@@ -168,6 +179,9 @@ func (s *Store) ReindexWithSourcePolicy(ctx context.Context, policy sourceindex.
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		if err := s.applyManaged(tx, managedIntent{Updates: updates, Rows: rows, Source: &sourcePublication{Revision: &current}}); err != nil {
+			return err
+		}
+		if err := s.preserveActiveQueryGenerations(ctx, tx); err != nil {
 			return err
 		}
 		root, err := managedRoot(tx)

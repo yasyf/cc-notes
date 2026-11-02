@@ -215,7 +215,7 @@ func sourceHistoryCostRun(t *testing.T, input managedCostInput, depth int) manag
 		t.Fatal(err)
 	}
 	trace := filepath.Join(dir, "syscalls")
-	child := exec.CommandContext(t.Context(), "strace", "-ff", "-qq", "-ttt", "-s", "256", "-e", "trace=read,pread64,readv,preadv,preadv2,write,pwrite64,writev,pwritev,pwritev2,open,openat,openat2,fstat,newfstatat,statx,getdents64,fsync,fdatasync,close,mmap,mremap,munmap,execve,execveat", "-o", trace, os.Args[0], "-test.run=^TestSourceHistoryCostHelper$", "-test.count=1")
+	child := exec.CommandContext(t.Context(), "strace", "-ff", "-q", "-ttt", "-s", "256", "-e", "trace=read,pread64,readv,preadv,preadv2,write,pwrite64,writev,pwritev,pwritev2,open,openat,openat2,fstat,newfstatat,statx,getdents64,fsync,fdatasync,close,mmap,mremap,munmap,%process", "-o", trace, os.Args[0], "-test.run=^TestSourceHistoryCostHelper$", "-test.count=1")
 	child.Env = append(os.Environ(), "CCN_SOURCE_HISTORY_COST_INPUT="+path)
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr

@@ -176,12 +176,12 @@ func (AttachmentsDir) node()        {}
 func (AttachmentEntityDir) node()   {}
 func (AttachmentFile) node()        {}
 
-// Filename names snap's flat file. Slugged kinds get "<short7>-<slug><ext>",
-// dropping the slug when the title yields none; the rest get "<short7><ext>".
+// Filename names snap's flat file. Slugged kinds get "<id>-<slug><ext>",
+// dropping the slug when the title yields none; the rest get "<id><ext>".
 func Filename(snap model.Snapshot) string {
 	m := snap.Meta()
 	layout := layouts[m.Kind]
-	base := snap.EntityID().Short()
+	base := string(snap.EntityID())
 	if layout.Slugged {
 		if s := slug(m.Title); s != "" {
 			base += "-" + s

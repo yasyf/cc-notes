@@ -58,6 +58,12 @@ func TestLoadCachedParentMatchesFullFold(t *testing.T) {
 				if err := s.PublishRef(t.Context(), ref, prepared.New, parent); err != nil {
 					t.Fatal(err)
 				}
+				if _, hit := s.cache.get(prepared.New); hit {
+					t.Fatal("preparation or publication cached the unread child")
+				}
+				if _, hit := s.cache.get(parent); !hit {
+					t.Fatal("preparation or publication evicted the cached parent")
+				}
 				want, chain, err := loadParentFold(t, s, prepared.New)
 				if err != nil {
 					t.Fatal(err)

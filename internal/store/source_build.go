@@ -100,16 +100,23 @@ func (s *Store) prepareManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 		}
 		snapshot := prepared[update.New]
 		root := model.PackCommit{SHA: captured[update.Ref].Root}
-		if snapshot == nil || root.SHA == "" {
+		if root.SHA == "" {
 			if snapshot != nil && update.Old == "" && update.New == model.SHA(snapshot.EntityID()) {
 				root.SHA = update.New
 			} else {
-				rooted, err := s.LoadRootedAt(ctx, update.New)
+				rooted, _, err := s.loadRootedAt(ctx, update.New)
 				if err != nil {
 					return nil, err
 				}
 				root = rooted.Root
 				snapshot = rooted.Snapshot
+			}
+		}
+		if snapshot == nil {
+			var err error
+			snapshot, _, err = s.loadAt(ctx, update.New)
+			if err != nil {
+				return nil, err
 			}
 		}
 		if snapshot.EntityID() != parsed.ID || snapshot.Meta().Kind != parsed.Kind {
@@ -230,14 +237,16 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 		return nil, nil, err
 	}
 	err = s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
-		graph := projectionGraph{index: sourcegraph.New(objects), revision: revision}
-		if previous.Token == "" {
-			for _, entry := range sourceview.BaseObjects() {
-				if err := graph.putObject(entry); err != nil {
-					return err
-				}
+		if previous.EntityRoot == "" {
+			var err error
+			revision, err = s.buildSourceSnapshot(objects, revision, values)
+			if err != nil {
+				return err
 			}
+			revision.Token, err = writeSourceRevision(objects, revision)
+			return err
 		}
+		graph := projectionGraph{index: sourcegraph.New(objects), revision: revision}
 		before := make(map[string]sourceview.Entity, len(changed))
 		affected := make(map[string]struct{}, len(changed))
 		dependencyPrefixes := make(map[string]struct{})
@@ -406,7 +415,7 @@ func collectSourceDependents(old, next sourceview.Entity, prefixes map[string]st
 	if old.Visible != next.Visible || !slices.Equal(old.Attachments, next.Attachments) {
 		for _, entity := range []sourceview.Entity{old, next} {
 			for _, key := range sourceview.Dependencies(entity) {
-				if strings.HasPrefix(key, "attachment-short/") {
+				if strings.HasPrefix(key, "attachment-owner/") {
 					last := strings.LastIndexByte(key, '/')
 					prefixes[key[:last+1]] = struct{}{}
 				}

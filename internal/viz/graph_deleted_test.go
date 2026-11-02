@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceindex"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -242,6 +243,11 @@ func TestMinedLanesMemoSurvivesEntityChurn(t *testing.T) {
 	}
 	if n := minedCacheLen(b); n != 1 {
 		t.Errorf("minedCache entries after entity churn = %d, want 1 (entity churn must not re-mine)", n)
+	}
+
+	b.InvalidateRefs([]string{sourceindex.LiveRef})
+	if n := minedCacheLen(b); n != 1 {
+		t.Errorf("minedCache entries after retention-pin invalidation = %d, want 1", n)
 	}
 
 	b.InvalidateRefs([]string{"refs/heads/some-branch"})

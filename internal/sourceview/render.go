@@ -1833,7 +1833,7 @@ func RenderInvestigation(inv model.Investigation) []byte {
 	}
 	for _, attachment := range inv.Attachments {
 		label := strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`).Replace(attachment.Name)
-		fmt.Fprintf(buf, "- [%s](../attachments/%s/%s)\n", label, inv.ID.Short(), url.PathEscape(attachment.Name))
+		fmt.Fprintf(buf, "- [%s](../attachments/%s/%s)\n", label, inv.ID, url.PathEscape(attachment.Name))
 	}
 
 	if !bytes.HasSuffix(buf.Bytes(), []byte("\n\n")) {

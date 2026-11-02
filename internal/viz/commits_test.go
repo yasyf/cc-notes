@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/lifecycle"
 
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -202,6 +203,7 @@ func TestCommitsShallowCloneTrailers(t *testing.T) {
 
 	r := &gitRepo{t: t, dir: t.TempDir(), clock: origin.clock}
 	r.git("clone", "-q", "--depth", "2", "file://"+origin.dir, ".")
+	gittest.InitializeEmpty(t, r.dir)
 
 	ts, _, _ := newVizServer(t, r)
 	resp := getCommits(t, ts.URL, "")
@@ -245,6 +247,7 @@ func TestCommitsSkewedMergeShallowTrailers(t *testing.T) {
 
 	r := &gitRepo{t: t, dir: t.TempDir(), clock: origin.clock}
 	r.git("clone", "-q", "--depth", "3", "file://"+origin.dir, ".")
+	gittest.InitializeEmpty(t, r.dir)
 
 	ts, _, _ := newVizServer(t, r)
 	resp := getCommits(t, ts.URL, "")

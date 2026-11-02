@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceindex"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -140,8 +141,16 @@ func TestWatchEntityAppend(t *testing.T) {
 		t.Fatalf("baseline scan: %v", err)
 	}
 
+	before, err := s.Repo.Tip(ctx, sourceindex.LiveRef)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Append(ctx, refs.For(model.KindTask, task.ID), []model.Op{model.SetStatus{Status: model.StatusDone}}); err != nil {
 		t.Fatalf("append: %v", err)
+	}
+	after, err := s.Repo.Tip(ctx, sourceindex.LiveRef)
+	if err != nil || after == before {
+		t.Fatalf("retention pin before=%s after=%s: %v", before, after, err)
 	}
 	if err := w.scan(ctx); err != nil {
 		t.Fatalf("scan: %v", err)

@@ -54,13 +54,17 @@ type retentionLeaf struct {
 }
 
 // Retention updates shared aggregate pins without parenting previous versions.
-type Retention struct{ index *Map }
+type Retention struct {
+	index   *Map
+	objects *gitobj.SourceObjects
+}
 
 // NewRetention shares the caller's operation scope with immutable metadata maps.
 func NewRetention(objects *gitobj.SourceObjects) *Retention {
 	index := New(objects)
 	index.retention = true
-	return &Retention{index: index}
+	index.retentionObjects = objects
+	return &Retention{index: index, objects: objects}
 }
 
 // Stats returns the operation's retention-index object work.
@@ -78,7 +82,7 @@ func (r *Retention) Put(root RetentionRoot, key string, entity RetainedEntity) (
 	if err != nil {
 		return RetentionRoot{}, err
 	}
-	value, err := r.index.objects.WriteBlob([]byte(leaf))
+	value, err := r.objects.WriteBlob([]byte(leaf))
 	if err != nil {
 		return RetentionRoot{}, err
 	}
@@ -135,7 +139,7 @@ func (r *Retention) Validate(root RetentionRoot) error {
 }
 
 func (r *Retention) check(root RetentionRoot) error {
-	if err := r.index.objects.Err(); err != nil {
+	if err := r.objects.Err(); err != nil {
 		return err
 	}
 	if root.Index == "" {
@@ -181,11 +185,11 @@ func (m *Map) writeAggregate(n *node) (model.SHA, error) {
 	if err != nil {
 		return "", err
 	}
-	return writeRetentionCommit(m.objects, data, parents, nil)
+	return writeRetentionCommit(m.retentionObjects, data, parents, nil)
 }
 
 func (r *Retention) writeLeaf(key string, entity RetainedEntity) (model.SHA, error) {
-	if err := requireRetentionType(r.index.objects, entity.Tip, plumbing.CommitObject); err != nil {
+	if err := requireRetentionType(r.objects, entity.Tip, plumbing.CommitObject); err != nil {
 		return "", err
 	}
 	entity.LFS = slices.Clone(entity.LFS)
@@ -215,7 +219,7 @@ func (r *Retention) writeLeaf(key string, entity RetainedEntity) (model.SHA, err
 			continue
 		}
 		data := retentionPointer(retained)
-		hash, err := r.index.objects.WriteBlob(data)
+		hash, err := r.objects.WriteBlob(data)
 		if err != nil {
 			return "", err
 		}
@@ -224,14 +228,14 @@ func (r *Retention) writeLeaf(key string, entity RetainedEntity) (model.SHA, err
 		pointers++
 	}
 	if pointers != 0 {
-		hash, err := r.index.objects.WriteBlob([]byte(retentionAttrs))
+		hash, err := r.objects.WriteBlob([]byte(retentionAttrs))
 		if err != nil {
 			return "", err
 		}
 		entries = append(entries, object.TreeEntry{Name: ".gitattributes", Mode: filemode.Regular, Hash: plumbing.NewHash(string(hash))})
 	}
 	for _, blob := range entity.Blobs {
-		if err := requireRetentionType(r.index.objects, blob, plumbing.BlobObject); err != nil {
+		if err := requireRetentionType(r.objects, blob, plumbing.BlobObject); err != nil {
 			return "", err
 		}
 		entries = append(entries, object.TreeEntry{Name: "sealed-" + string(blob), Mode: filemode.Regular, Hash: plumbing.NewHash(string(blob))})
@@ -240,7 +244,7 @@ func (r *Retention) writeLeaf(key string, entity RetainedEntity) (model.SHA, err
 	if err != nil {
 		return "", err
 	}
-	return writeRetentionCommit(r.index.objects, data, []model.SHA{entity.Tip}, entries)
+	return writeRetentionCommit(r.objects, data, []model.SHA{entity.Tip}, entries)
 }
 
 func writeRetentionCommit(objects *gitobj.SourceObjects, data []byte, parents []model.SHA, entries []object.TreeEntry) (model.SHA, error) {
@@ -258,7 +262,7 @@ func writeRetentionCommit(objects *gitobj.SourceObjects, data []byte, parents []
 }
 
 func (r *Retention) readLeaf(hash model.SHA, key string) (retentionLeaf, error) {
-	commit, data, err := readRetention(r.index.objects, hash)
+	commit, data, err := readRetention(r.objects, hash)
 	if err != nil {
 		return retentionLeaf{}, err
 	}
@@ -270,7 +274,7 @@ func (r *Retention) readLeaf(hash model.SHA, key string) (retentionLeaf, error) 
 	if err != nil || !bytes.Equal(canonical, data) || leaf.Format != retentionLeafFormat || leaf.KeyHex != hexKey(key) || len(commit.Parents) != 1 || commit.Parents[0] != leaf.Entity.Tip {
 		return retentionLeaf{}, fmt.Errorf("%w: retention leaf identity", ErrCorrupt)
 	}
-	if err := requireRetentionType(r.index.objects, leaf.Entity.Tip, plumbing.CommitObject); err != nil {
+	if err := requireRetentionType(r.objects, leaf.Entity.Tip, plumbing.CommitObject); err != nil {
 		return retentionLeaf{}, err
 	}
 	expected := map[string]plumbing.Hash{"retention": plumbing.ComputeHash(plumbing.BlobObject, data)}
@@ -292,12 +296,12 @@ func (r *Retention) readLeaf(hash model.SHA, key string) (retentionLeaf, error) 
 		if !plumbing.IsHash(string(blob)) || (i > 0 && leaf.Entity.Blobs[i-1] >= blob) {
 			return retentionLeaf{}, fmt.Errorf("%w: sealed blob order or identity", ErrCorrupt)
 		}
-		if err := requireRetentionType(r.index.objects, blob, plumbing.BlobObject); err != nil {
+		if err := requireRetentionType(r.objects, blob, plumbing.BlobObject); err != nil {
 			return retentionLeaf{}, err
 		}
 		expected["sealed-"+string(blob)] = plumbing.NewHash(string(blob))
 	}
-	entries, err := r.index.objects.ReadTree(commit.Tree)
+	entries, err := r.objects.ReadTree(commit.Tree)
 	if err != nil {
 		return retentionLeaf{}, err
 	}
@@ -321,7 +325,7 @@ func (r *Retention) validateNode(hash model.SHA) error {
 	if err != nil {
 		return err
 	}
-	commit, data, err := readRetention(r.index.objects, n.Aggregate)
+	commit, data, err := readRetention(r.objects, n.Aggregate)
 	if err != nil {
 		return err
 	}
@@ -357,7 +361,7 @@ func (r *Retention) validateNode(hash model.SHA) error {
 	if err != nil || !bytes.Equal(data, canonical) || !slices.Equal(commit.Parents, parents) {
 		return fmt.Errorf("%w: retention parent graph differs", ErrCorrupt)
 	}
-	entries, err := r.index.objects.ReadTree(commit.Tree)
+	entries, err := r.objects.ReadTree(commit.Tree)
 	if err != nil {
 		return err
 	}

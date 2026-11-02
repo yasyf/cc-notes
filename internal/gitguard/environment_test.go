@@ -46,7 +46,7 @@ func TestGuardianProtocolAndDelayedDrains(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\nprintf '%s\\n' \"$GORACE\"\nprintf 'first\\n' >&2\nsleep 0.05\nprintf 'last\\n' >&2\nexit 7\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	var files []*os.File
+	files := make([]*os.File, 0, 4)
 	for range 4 {
 		f, err := os.CreateTemp(t.TempDir(), "capture")
 		if err != nil {
@@ -96,8 +96,8 @@ func TestJoinDrainsWaitsForEveryResult(t *testing.T) {
 	}
 	for _, d := range drains {
 		select {
-		case <-d.done:
-			t.Fatal("drain result was not consumed")
+		case err := <-d.done:
+			t.Fatalf("drain result was not consumed: %v", err)
 		default:
 		}
 	}

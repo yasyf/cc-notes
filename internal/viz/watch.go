@@ -145,7 +145,11 @@ func (w *Watcher) snapshot(ctx context.Context) (map[string]model.SHA, string, e
 		return nil, "", fmt.Errorf("list watched refs: %w", err)
 	}
 	tips := make(map[string]model.SHA, len(branches)+len(entities)+1)
-	maps.Copy(tips, branches)
+	for ref, tip := range branches {
+		if isBranchRef(ref) {
+			tips[ref] = tip
+		}
+	}
 	maps.Copy(tips, entities)
 	tip, err := w.store.ContextRepo.Tip(ctx, headKey)
 	switch {

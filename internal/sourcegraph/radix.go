@@ -3,6 +3,7 @@ package sourcegraph
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -82,18 +83,29 @@ type node struct {
 	value model.SHA
 }
 
-// Map operates only inside its owning SourceObjects callback.
+// Objects binds immutable graph operations to one cancellable storage scope.
+type Objects interface {
+	Context() context.Context
+	Err() error
+	ReadBlob(model.SHA) ([]byte, error)
+	WriteBlob([]byte) (model.SHA, error)
+	ReadTree(model.SHA) ([]object.TreeEntry, error)
+	WriteTree([]object.TreeEntry) (model.SHA, error)
+}
+
+// Map shares untouched immutable subtrees between indexed generations.
 type Map struct {
-	objects   *gitobj.SourceObjects
-	retention bool
-	nodes     map[model.SHA]*node
-	values    map[model.SHA][]byte
-	work      Work
-	shared    *WorkCounter
+	objects          Objects
+	retentionObjects *gitobj.SourceObjects
+	retention        bool
+	nodes            map[model.SHA]*node
+	values           map[model.SHA][]byte
+	work             Work
+	shared           *WorkCounter
 }
 
 // New shares an operation's native object scope without retaining idle handles.
-func New(objects *gitobj.SourceObjects) *Map {
+func New(objects Objects) *Map {
 	shared, _ := objects.Context().Value(workKey{}).(*WorkCounter)
 	return &Map{objects: objects, nodes: make(map[model.SHA]*node), values: make(map[model.SHA][]byte), shared: shared}
 }
@@ -563,8 +575,8 @@ func (m *Map) write(n *node) (model.SHA, error) {
 	if m.shared != nil {
 		m.shared.nodeWrites.Add(1)
 	}
-	copy := *n
-	m.nodes[hash] = &copy
+	stored := *n
+	m.nodes[hash] = &stored
 	return hash, nil
 }
 

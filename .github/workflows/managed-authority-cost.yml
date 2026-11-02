@@ -47,6 +47,17 @@ jobs:
                   raise SystemExit('baseline instrumentation anchor differs')
               source = source.replace(before, after)
           path.write_text(source)
+          path = Path(os.environ['BASELINE']) / 'internal/gitobj/read_work.go'
+          source = path.read_text()
+          source += '\nfunc RecordBaselineRefListing(ctx context.Context, count int) {\n\trecordRefListing(ctx, count)\n}\n'
+          path.write_text(source)
+          path = Path(os.environ['BASELINE']) / 'internal/sourceindex/index.go'
+          source = path.read_text()
+          before = '\tmanifest, err := gitobj.NewSourceManifest(tips)\n'
+          if source.count(before) != 1:
+              raise SystemExit('baseline source enumeration anchor differs')
+          source = source.replace(before, '\tgitobj.RecordBaselineRefListing(ctx, len(tips))\n' + before)
+          path.write_text(source)
           PY
       - name: Reject corpus work on immutable baseline
         if: matrix.lane == 'baseline'
