@@ -22,6 +22,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/sourceindex"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -72,6 +73,7 @@ func (d *GitDriver) ApplyMutation(
 	if err != nil {
 		return sourcedriver.MutationReceipt{}, err
 	}
+	defer func() { _ = source.Close() }()
 	if err := validateDriverMutationContext(tenant, request.Context); err != nil {
 		return sourcedriver.MutationReceipt{}, err
 	}
@@ -99,30 +101,18 @@ func (d *GitDriver) ApplyMutation(
 		}
 		contentConsumed = true
 	}
-	head, err := index.Refresh(ctx)
-	if err != nil {
-		return sourcedriver.MutationReceipt{}, err
-	}
-	if head != expected {
-		return sourcedriver.MutationReceipt{}, &sourcedriver.StaleRevisionError{
-			Expected: request.Expected,
-			Actual:   sourcedriver.RevisionToken(head),
-		}
-	}
-	manifest, err := index.Snapshot(ctx, head)
-	if err != nil {
-		return sourcedriver.MutationReceipt{}, err
-	}
-	prepared, result, err := prepareSourceMutation(ctx, source, manifest, request, body)
+	prepared, result, err := prepareSourceMutation(ctx, source, expected, request, body)
 	if err != nil {
 		return sourcedriver.MutationReceipt{}, err
 	}
 	updates := make([]gitcmd.RefUpdate, len(prepared))
+	snapshots := make(map[model.SHA]model.Snapshot, len(prepared))
 	for index, value := range prepared {
 		updates[index] = value.RefUpdate()
+		snapshots[value.New] = value.Snapshot
 	}
 	if _, err := index.CommitOperation(
-		ctx, head, request.OperationID.String(), string(result), requestDigest, updates,
+		ctx, expected, request.OperationID.String(), string(result), requestDigest, updates, snapshots,
 	); err != nil {
 		if errors.Is(err, sourceindex.ErrOperationExists) {
 			operation, found, inspectErr := index.InspectOperationState(ctx, request.OperationID.String())
@@ -137,14 +127,11 @@ func (d *GitDriver) ApplyMutation(
 			}
 			return replayMutation(request.OperationID, requestDigest, operation)
 		}
-		if errors.Is(err, gitcmd.ErrCASMismatch) {
-			actual, refreshErr := index.Refresh(ctx)
-			if refreshErr != nil {
-				return sourcedriver.MutationReceipt{}, errors.Join(err, refreshErr)
-			}
+		var stale *sourceindex.StaleRevisionError
+		if errors.As(err, &stale) {
 			return sourcedriver.MutationReceipt{}, &sourcedriver.StaleRevisionError{
-				Expected: request.Expected,
-				Actual:   sourcedriver.RevisionToken(actual),
+				Expected: sourcedriver.RevisionToken(stale.Expected),
+				Actual:   sourcedriver.RevisionToken(stale.Actual),
 			}
 		}
 		return sourcedriver.MutationReceipt{}, err
@@ -189,10 +176,11 @@ func (d *GitDriver) InspectMutation(
 	if operationID == (catalog.MutationID{}) || requestDigest == ([sha256.Size]byte{}) {
 		return sourcedriver.MutationReceipt{}, fmt.Errorf("%w: mutation operation id or request digest is empty", sourcedriver.ErrInvalidValue)
 	}
-	_, index, err := d.open(ctx, authority)
+	source, index, err := d.open(ctx, authority)
 	if err != nil {
 		return sourcedriver.MutationReceipt{}, err
 	}
+	defer func() { _ = source.Close() }()
 	operation, found, err := index.InspectOperation(ctx, operationID.String())
 	if err != nil {
 		return sourcedriver.MutationReceipt{}, err
@@ -220,10 +208,11 @@ func (d *GitDriver) SettleMutation(
 	if _, err := d.requestTargets(authority, settlement.TargetSet); err != nil {
 		return err
 	}
-	_, index, err := d.open(ctx, authority)
+	source, index, err := d.open(ctx, authority)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = source.Close() }()
 	operation, found, err := index.InspectOperationState(ctx, settlement.OperationID.String())
 	if err != nil {
 		return err
@@ -269,7 +258,7 @@ func (d *GitDriver) SettleMutation(
 func prepareSourceMutation(
 	ctx context.Context,
 	source *store.Store,
-	manifest gitobj.SourceManifest,
+	expected model.SHA,
 	request sourcedriver.MutationRequest,
 	body []byte,
 ) ([]store.PreparedRef, sourcedriver.LogicalID, error) {
@@ -280,11 +269,11 @@ func prepareSourceMutation(
 		if err != nil {
 			return nil, "", err
 		}
-		ops, err := codecOf(kind).New(body)
+		ops, err := sourceview.CodecOf(kind).New(body)
 		if err != nil {
 			return nil, "", fmt.Errorf("cc-notes source: parse new %s: %w", kind, err)
 		}
-		ops[0], err = setCreateNonce(ops[0], request.OperationID.String())
+		ops[0], err = sourceview.SetCreateNonce(ops[0], request.OperationID.String())
 		if err != nil {
 			return nil, "", err
 		}
@@ -295,25 +284,25 @@ func prepareSourceMutation(
 		key, err := preparedSourceKey(kind, prepared)
 		return []store.PreparedRef{prepared}, sourcedriver.LogicalID(key), err
 	case catalog.MutationRevise:
-		entity, err := sourceEntityAt(ctx, source, manifest, sourceContext.Object)
+		entity, err := sourceEntityAt(ctx, source, expected, sourceContext.Object)
 		if err != nil {
 			return nil, "", err
 		}
 		prepared, err := prepareRevision(ctx, source, entity, body)
 		return []store.PreparedRef{prepared}, sourcedriver.LogicalID(entity.key), err
 	case catalog.MutationDelete:
-		entity, err := sourceEntityAt(ctx, source, manifest, sourceContext.Object)
+		entity, err := sourceEntityAt(ctx, source, expected, sourceContext.Object)
 		if err != nil {
 			return nil, "", err
 		}
 		prepared, err := prepareTombstone(ctx, source, entity)
 		return []store.PreparedRef{prepared}, "", err
 	case catalog.MutationReplace:
-		object, err := sourceEntityAt(ctx, source, manifest, sourceContext.Object)
+		object, err := sourceEntityAt(ctx, source, expected, sourceContext.Object)
 		if err != nil {
 			return nil, "", err
 		}
-		target, err := sourceEntityAt(ctx, source, manifest, sourceContext.Target)
+		target, err := sourceEntityAt(ctx, source, expected, sourceContext.Target)
 		if err != nil {
 			return nil, "", err
 		}
@@ -350,7 +339,7 @@ type sourceEntity struct {
 func sourceEntityAt(
 	ctx context.Context,
 	source *store.Store,
-	manifest gitobj.SourceManifest,
+	expected model.SHA,
 	locator *catalog.SourceLocator,
 ) (sourceEntity, error) {
 	kind, root, key, err := sourceEntityLocator(locator)
@@ -358,21 +347,28 @@ func sourceEntityAt(
 		return sourceEntity{}, err
 	}
 	ref := refs.For(kind, model.EntityID(root))
-	tip, found := manifest.Tips()[ref]
-	if !found {
-		return sourceEntity{}, sourcedriver.ErrNotFound
-	}
-	rooted, err := source.LoadRootedAt(ctx, tip)
+	entry, found, err := source.SourceEntityAt(ctx, expected, ref)
 	if err != nil {
 		return sourceEntity{}, err
 	}
-	if rooted.Root.SHA != root || rooted.Snapshot.EntityID() != model.EntityID(root) {
-		return sourceEntity{}, fmt.Errorf("%w: locator identity differs from immutable entity", sourcedriver.ErrIntegrity)
-	}
-	if rooted.Snapshot.Meta().Deleted {
+	tip := entry.Tip
+	if !found {
 		return sourceEntity{}, sourcedriver.ErrNotFound
 	}
-	return sourceEntity{kind: kind, key: key, ref: ref, tip: tip, snapshot: rooted.Snapshot}, nil
+	if entry.Root == "" {
+		return sourceEntity{}, sourceindex.ErrProjectionUnavailable
+	}
+	snapshot, err := source.LoadAt(ctx, tip)
+	if err != nil {
+		return sourceEntity{}, err
+	}
+	if entry.Root != root || snapshot.EntityID() != model.EntityID(root) || snapshot.Meta().Kind != kind {
+		return sourceEntity{}, fmt.Errorf("%w: locator identity differs from immutable entity", sourcedriver.ErrIntegrity)
+	}
+	if snapshot.Meta().Deleted {
+		return sourceEntity{}, sourcedriver.ErrNotFound
+	}
+	return sourceEntity{kind: kind, key: key, ref: ref, tip: tip, snapshot: snapshot}, nil
 }
 
 func sourceEntityLocator(locator *catalog.SourceLocator) (model.Kind, model.SHA, string, error) {
@@ -384,7 +380,7 @@ func sourceEntityLocator(locator *catalog.SourceLocator) (model.Kind, model.SHA,
 		return "", "", "", fmt.Errorf("%w: entity locator is malformed", sourcedriver.ErrInvalidValue)
 	}
 	kind := model.Kind(parts[1])
-	codec, ok := codecs[kind]
+	codec, ok := sourceview.LookupCodec(kind)
 	if !ok || codec.ReadOnly() {
 		return "", "", "", fmt.Errorf("%w: entity locator is not writable", sourcedriver.ErrInvalidValue)
 	}
@@ -430,9 +426,9 @@ func driverMutationKind(source catalog.SourceMutationContext) (model.Kind, error
 		}
 		value, ok := strings.CutPrefix(string(source.Parent.SourceKey), "kind:")
 		kind := model.Kind(value)
-		layout, registered := layouts[kind]
-		codec, hasCodec := codecs[kind]
-		if !ok || !registered || !hasCodec || codec.ReadOnly() || !strings.HasSuffix(source.Operation.Name, layout.ext) {
+		layout, registered := sourceview.LayoutOf(kind)
+		codec, hasCodec := sourceview.LookupCodec(kind)
+		if !ok || !registered || !hasCodec || codec.ReadOnly() || !strings.HasSuffix(source.Operation.Name, layout.Ext) {
 			return "", fmt.Errorf("%w: create parent or filename is not writable", sourcedriver.ErrInvalidValue)
 		}
 		return kind, nil
@@ -447,7 +443,7 @@ func prepareRevision(
 	entity sourceEntity,
 	body []byte,
 ) (store.PreparedRef, error) {
-	ops, err := codecOf(entity.kind).Diff(entity.snapshot, body)
+	ops, err := sourceview.CodecOf(entity.kind).Diff(entity.snapshot, body)
 	if err != nil {
 		return store.PreparedRef{}, fmt.Errorf("cc-notes source: revise %s: %w", entity.kind, err)
 	}
@@ -465,7 +461,7 @@ func preparedSourceKey(kind model.Kind, prepared store.PreparedRef) (string, err
 	if prepared.Snapshot == nil || prepared.Snapshot.EntityID() != model.EntityID(prepared.New) {
 		return "", fmt.Errorf("%w: prepared create identity differs from root", sourcedriver.ErrIntegrity)
 	}
-	return entitySourceKey(kind, model.PackCommit{SHA: prepared.New})
+	return sourceview.EntitySourceKey(kind, model.PackCommit{SHA: prepared.New})
 }
 
 func readMutationSource(

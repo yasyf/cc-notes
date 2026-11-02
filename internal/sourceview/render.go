@@ -1,8 +1,8 @@
-// Package fusefs owns the product projection between entities and their
+// Package sourceview owns the product projection between entities and their
 // catalog representations: notes render as markdown with YAML frontmatter,
 // tasks as the CLI's --json document pretty-printed. Render, parse, diff, and
 // the namespace model are plain Go with no native filesystem dependency.
-package fusefs
+package sourceview
 
 import (
 	"bytes"

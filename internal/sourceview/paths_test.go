@@ -1,4 +1,4 @@
-package fusefs_test
+package sourceview_test
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yasyf/cc-notes/internal/fusefs"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -34,7 +34,7 @@ func TestNoteFilename(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := fusefs.Filename(model.Note{ID: id, Title: tc.title})
+			got := sourceview.Filename(model.Note{ID: id, Title: tc.title})
 			if got != tc.want {
 				t.Errorf("Filename(note %q) = %q, want %q", tc.title, got, tc.want)
 			}
@@ -67,7 +67,7 @@ func TestDocFilename(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := fusefs.Filename(model.Doc{ID: id, Title: tc.title})
+			got := sourceview.Filename(model.Doc{ID: id, Title: tc.title})
 			if got != tc.want {
 				t.Errorf("Filename(doc %q) = %q, want %q", tc.title, got, tc.want)
 			}
@@ -92,7 +92,7 @@ func TestRunbookFilename(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := fusefs.Filename(model.Runbook{ID: id, Title: tc.title})
+			got := sourceview.Filename(model.Runbook{ID: id, Title: tc.title})
 			if got != tc.want {
 				t.Errorf("Filename(runbook %q) = %q, want %q", tc.title, got, tc.want)
 			}
@@ -102,21 +102,21 @@ func TestRunbookFilename(t *testing.T) {
 
 func TestTaskFilename(t *testing.T) {
 	task := model.Task{ID: "0123abcd4567ef890123abcd4567ef890123abcd"}
-	if got, want := fusefs.Filename(task), "0123abc.json"; got != want {
+	if got, want := sourceview.Filename(task), "0123abc.json"; got != want {
 		t.Errorf("Filename(task) = %q, want %q", got, want)
 	}
 }
 
 func TestSprintFilename(t *testing.T) {
 	s := model.Sprint{ID: "5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa"}
-	if got, want := fusefs.Filename(s), "5555aaa.json"; got != want {
+	if got, want := sourceview.Filename(s), "5555aaa.json"; got != want {
 		t.Errorf("Filename(sprint) = %q, want %q", got, want)
 	}
 }
 
 func TestProjectFilename(t *testing.T) {
 	p := model.Project{ID: "6666dddd6666dddd6666dddd6666dddd6666dddd"}
-	if got, want := fusefs.Filename(p), "6666ddd.json"; got != want {
+	if got, want := sourceview.Filename(p), "6666ddd.json"; got != want {
 		t.Errorf("Filename(project) = %q, want %q", got, want)
 	}
 }
@@ -141,7 +141,7 @@ func TestShortIDOf(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.filename, func(t *testing.T) {
-			got, ok := fusefs.ShortIDOf(tc.filename)
+			got, ok := sourceview.ShortIDOf(tc.filename)
 			if got != tc.want || ok != tc.ok {
 				t.Errorf("ShortIDOf(%q) = (%q, %v), want (%q, %v)", tc.filename, got, ok, tc.want, tc.ok)
 			}
@@ -155,13 +155,13 @@ func TestJunkName(t *testing.T) {
 		".Trashes", ".hidden", ".metadata_never_index", ".localized",
 	}
 	for _, name := range junk {
-		if !fusefs.JunkName(name) {
+		if !sourceview.JunkName(name) {
 			t.Errorf("JunkName(%q) = false, want true", name)
 		}
 	}
 	clean := []string{"a1b2c3d-note.md", ".gitignore", "notes", ".trashes", "DS_Store"}
 	for _, name := range clean {
-		if fusefs.JunkName(name) {
+		if sourceview.JunkName(name) {
 			t.Errorf("JunkName(%q) = true, want false", name)
 		}
 	}
@@ -170,50 +170,50 @@ func TestJunkName(t *testing.T) {
 func TestParsePath(t *testing.T) {
 	cases := []struct {
 		path string
-		want fusefs.Node
+		want sourceview.Node
 	}{
-		{"/", fusefs.Root{}},
-		{"/notes", fusefs.KindDir{Kind: model.KindNote}},
-		{"/docs", fusefs.KindDir{Kind: model.KindDoc}},
-		{"/logs", fusefs.KindDir{Kind: model.KindLog}},
-		{"/tasks", fusefs.KindDir{Kind: model.KindTask}},
-		{"/notes/a1b2c3d-fix-the-parser.md", fusefs.EntityFile{Kind: model.KindNote, ShortID: "a1b2c3d"}},
-		{"/notes/a1b2c3d.md", fusefs.EntityFile{Kind: model.KindNote, ShortID: "a1b2c3d"}},
-		{"/docs/a1b2c3d-fix-the-parser.md", fusefs.EntityFile{Kind: model.KindDoc, ShortID: "a1b2c3d"}},
-		{"/docs/a1b2c3d.md", fusefs.EntityFile{Kind: model.KindDoc, ShortID: "a1b2c3d"}},
-		{"/logs/a1b2c3d-auth-rollout.md", fusefs.EntityFile{Kind: model.KindLog, ShortID: "a1b2c3d"}},
-		{"/logs/a1b2c3d.md", fusefs.EntityFile{Kind: model.KindLog, ShortID: "a1b2c3d"}},
-		{"/runbooks", fusefs.KindDir{Kind: model.KindRunbook}},
-		{"/runbooks/a1b2c3d-deploy-service.md", fusefs.EntityFile{Kind: model.KindRunbook, ShortID: "a1b2c3d"}},
-		{"/runbooks/a1b2c3d.md", fusefs.EntityFile{Kind: model.KindRunbook, ShortID: "a1b2c3d"}},
-		{"/tasks/0123abc.json", fusefs.EntityFile{Kind: model.KindTask, ShortID: "0123abc"}},
-		{"/tasks/0123abc-slug.json", fusefs.EntityFile{Kind: model.KindTask, ShortID: "0123abc"}},
+		{"/", sourceview.Root{}},
+		{"/notes", sourceview.KindDir{Kind: model.KindNote}},
+		{"/docs", sourceview.KindDir{Kind: model.KindDoc}},
+		{"/logs", sourceview.KindDir{Kind: model.KindLog}},
+		{"/tasks", sourceview.KindDir{Kind: model.KindTask}},
+		{"/notes/a1b2c3d-fix-the-parser.md", sourceview.EntityFile{Kind: model.KindNote, ShortID: "a1b2c3d"}},
+		{"/notes/a1b2c3d.md", sourceview.EntityFile{Kind: model.KindNote, ShortID: "a1b2c3d"}},
+		{"/docs/a1b2c3d-fix-the-parser.md", sourceview.EntityFile{Kind: model.KindDoc, ShortID: "a1b2c3d"}},
+		{"/docs/a1b2c3d.md", sourceview.EntityFile{Kind: model.KindDoc, ShortID: "a1b2c3d"}},
+		{"/logs/a1b2c3d-auth-rollout.md", sourceview.EntityFile{Kind: model.KindLog, ShortID: "a1b2c3d"}},
+		{"/logs/a1b2c3d.md", sourceview.EntityFile{Kind: model.KindLog, ShortID: "a1b2c3d"}},
+		{"/runbooks", sourceview.KindDir{Kind: model.KindRunbook}},
+		{"/runbooks/a1b2c3d-deploy-service.md", sourceview.EntityFile{Kind: model.KindRunbook, ShortID: "a1b2c3d"}},
+		{"/runbooks/a1b2c3d.md", sourceview.EntityFile{Kind: model.KindRunbook, ShortID: "a1b2c3d"}},
+		{"/tasks/0123abc.json", sourceview.EntityFile{Kind: model.KindTask, ShortID: "0123abc"}},
+		{"/tasks/0123abc-slug.json", sourceview.EntityFile{Kind: model.KindTask, ShortID: "0123abc"}},
 		// Flat sprint and project dirs and files.
-		{"/sprints", fusefs.KindDir{Kind: model.KindSprint}},
-		{"/projects", fusefs.KindDir{Kind: model.KindProject}},
-		{"/sprints/5555aaa.json", fusefs.EntityFile{Kind: model.KindSprint, ShortID: "5555aaa"}},
-		{"/projects/6666ddd.json", fusefs.EntityFile{Kind: model.KindProject, ShortID: "6666ddd"}},
+		{"/sprints", sourceview.KindDir{Kind: model.KindSprint}},
+		{"/projects", sourceview.KindDir{Kind: model.KindProject}},
+		{"/sprints/5555aaa.json", sourceview.EntityFile{Kind: model.KindSprint, ShortID: "5555aaa"}},
+		{"/projects/6666ddd.json", sourceview.EntityFile{Kind: model.KindProject, ShortID: "6666ddd"}},
 		// Project browse tree: dirs without .json, task leaves as links.
-		{"/projects/6666ddd", fusefs.ProjectBrowseDir{ProjShort: "6666ddd"}},
-		{"/projects/6666ddd/tasks", fusefs.ProjectTasksDir{ProjShort: "6666ddd"}},
-		{"/projects/6666ddd/tasks/0123abc.json", fusefs.ProjectTaskLink{ProjShort: "6666ddd", TaskShort: "0123abc"}},
-		{"/projects/6666ddd/sprints", fusefs.ProjectSprintsDir{ProjShort: "6666ddd"}},
-		{"/projects/6666ddd/sprints/5555aaa", fusefs.ProjectSprintDir{ProjShort: "6666ddd", SprintShort: "5555aaa"}},
-		{"/projects/6666ddd/sprints/5555aaa/tasks", fusefs.ProjectSprintTasksDir{ProjShort: "6666ddd", SprintShort: "5555aaa"}},
-		{"/projects/6666ddd/sprints/5555aaa/tasks/0123abc.json", fusefs.ProjectSprintTaskLink{ProjShort: "6666ddd", SprintShort: "5555aaa", TaskShort: "0123abc"}},
+		{"/projects/6666ddd", sourceview.ProjectBrowseDir{ProjShort: "6666ddd"}},
+		{"/projects/6666ddd/tasks", sourceview.ProjectTasksDir{ProjShort: "6666ddd"}},
+		{"/projects/6666ddd/tasks/0123abc.json", sourceview.ProjectTaskLink{ProjShort: "6666ddd", TaskShort: "0123abc"}},
+		{"/projects/6666ddd/sprints", sourceview.ProjectSprintsDir{ProjShort: "6666ddd"}},
+		{"/projects/6666ddd/sprints/5555aaa", sourceview.ProjectSprintDir{ProjShort: "6666ddd", SprintShort: "5555aaa"}},
+		{"/projects/6666ddd/sprints/5555aaa/tasks", sourceview.ProjectSprintTasksDir{ProjShort: "6666ddd", SprintShort: "5555aaa"}},
+		{"/projects/6666ddd/sprints/5555aaa/tasks/0123abc.json", sourceview.ProjectSprintTaskLink{ProjShort: "6666ddd", SprintShort: "5555aaa", TaskShort: "0123abc"}},
 		// Sprint browse tree.
-		{"/sprints/5555aaa", fusefs.SprintBrowseDir{SprintShort: "5555aaa"}},
-		{"/sprints/5555aaa/tasks", fusefs.SprintTasksDir{SprintShort: "5555aaa"}},
-		{"/sprints/5555aaa/tasks/0123abc.json", fusefs.SprintTaskLink{SprintShort: "5555aaa", TaskShort: "0123abc"}},
+		{"/sprints/5555aaa", sourceview.SprintBrowseDir{SprintShort: "5555aaa"}},
+		{"/sprints/5555aaa/tasks", sourceview.SprintTasksDir{SprintShort: "5555aaa"}},
+		{"/sprints/5555aaa/tasks/0123abc.json", sourceview.SprintTaskLink{SprintShort: "5555aaa", TaskShort: "0123abc"}},
 		// Attachments tree: entity dirs by short id, files by verbatim name.
-		{"/attachments", fusefs.AttachmentsDir{}},
-		{"/attachments/a1b2c3d", fusefs.AttachmentEntityDir{EntityShort: "a1b2c3d"}},
-		{"/attachments/a1b2c3d/report.pdf", fusefs.AttachmentFile{EntityShort: "a1b2c3d", Name: "report.pdf"}},
-		{"/attachments/a1b2c3d/trace.log", fusefs.AttachmentFile{EntityShort: "a1b2c3d", Name: "trace.log"}},
+		{"/attachments", sourceview.AttachmentsDir{}},
+		{"/attachments/a1b2c3d", sourceview.AttachmentEntityDir{EntityShort: "a1b2c3d"}},
+		{"/attachments/a1b2c3d/report.pdf", sourceview.AttachmentFile{EntityShort: "a1b2c3d", Name: "report.pdf"}},
+		{"/attachments/a1b2c3d/trace.log", sourceview.AttachmentFile{EntityShort: "a1b2c3d", Name: "trace.log"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			got, err := fusefs.ParsePath(tc.path)
+			got, err := sourceview.ParsePath(tc.path)
 			if err != nil {
 				t.Fatalf("ParsePath(%q): %v", tc.path, err)
 			}
@@ -260,7 +260,7 @@ func TestParsePathErrors(t *testing.T) {
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
-			if _, err := fusefs.ParsePath(path); !errors.Is(err, fusefs.ErrPath) {
+			if _, err := sourceview.ParsePath(path); !errors.Is(err, sourceview.ErrPath) {
 				t.Fatalf("ParsePath(%q) err %v, want ErrPath", path, err)
 			}
 		})
@@ -279,7 +279,7 @@ func TestSymlinkTarget(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.link, func(t *testing.T) {
-			got := fusefs.SymlinkTarget(tc.link, tc.flatRel)
+			got := sourceview.SymlinkTarget(tc.link, tc.flatRel)
 			if got != tc.want {
 				t.Errorf("SymlinkTarget(%q, %q) = %q, want %q", tc.link, tc.flatRel, got, tc.want)
 			}

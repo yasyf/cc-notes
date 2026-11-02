@@ -22,8 +22,10 @@ import (
 	"github.com/yasyf/fusekit/contentstream"
 	"github.com/yasyf/fusekit/sourcedriver"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -51,7 +53,7 @@ var (
 func TestGitDriverCreateReplaysExactDurableReceipt(t *testing.T) {
 	driver, tenant, _ := newGitDriverTest(t)
 	head := refreshDriver(t, driver, tenant.Authority)
-	body := NewNoteTemplate("Created through source driver", nil, nil)
+	body := sourceview.NewNoteTemplate("Created through source driver", nil, nil)
 	request := mutationRequest(t, tenant, "11", head.Revision, testDriverCreateContext(tenant, 1), body)
 
 	first, err := driver.ApplyMutation(t.Context(), tenant.Authority, request, newMemorySource(body))
@@ -113,7 +115,7 @@ func TestGitDriverCreateReplaysExactDurableReceipt(t *testing.T) {
 func TestGitDriverReceiptSettlementIsDurableExactAndTombstoned(t *testing.T) {
 	driver, tenant, _ := newGitDriverTest(t)
 	head := refreshDriver(t, driver, tenant.Authority)
-	body := NewNoteTemplate("Settled source receipt", nil, nil)
+	body := sourceview.NewNoteTemplate("Settled source receipt", nil, nil)
 	request := mutationRequest(t, tenant, "24", head.Revision, testDriverCreateContext(tenant, 1), body)
 	receipt, err := driver.ApplyMutation(t.Context(), tenant.Authority, request, newMemorySource(body))
 	if err != nil {
@@ -185,12 +187,12 @@ func TestGitDriverAppliedReceiptSurvivesRestartChurnGCAndLFSPrune(t *testing.T) 
 	before := refreshDriver(t, driver, tenant.Authority)
 	object := sourceLocator(tenant, noteKey, 3)
 	request := mutationRequest(t, tenant, "99", before.Revision, catalog.SourceMutationContext{
-		Operation: writableFileOperation(catalog.MutationRevise, Filename(note), true),
+		Operation: writableFileOperation(catalog.MutationRevise, sourceview.Filename(note), true),
 		Object:    &object,
 		Parent:    ptrSourceLocator(sourceLocator(tenant, "kind:note", 3)),
-	}, NewNoteTemplate("Receipt applied", nil, nil))
+	}, sourceview.NewNoteTemplate("Receipt applied", nil, nil))
 	receipt, err := driver.ApplyMutation(
-		t.Context(), tenant.Authority, request, newMemorySource(NewNoteTemplate("Receipt applied", nil, nil)),
+		t.Context(), tenant.Authority, request, newMemorySource(sourceview.NewNoteTemplate("Receipt applied", nil, nil)),
 	)
 	if err != nil {
 		t.Fatalf("ApplyMutation: %v", err)
@@ -223,20 +225,12 @@ func TestGitDriverAppliedReceiptSurvivesRestartChurnGCAndLFSPrune(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := source.Git.DeleteRef(t.Context(), entityRef, currentTip); err != nil {
+	if err := source.PublishRefs(t.Context(), []gitcmd.RefUpdate{{Ref: entityRef, Old: currentTip}}); err != nil {
 		t.Fatal(err)
 	}
 	if head := refreshDriver(t, restarted, tenant.Authority); head.Revision == receipt.Committed {
 		t.Fatal("head did not advance beyond receipt")
 	}
-	restarted.cacheMu.Lock()
-	restarted.snapshots = make(map[sourcedriver.RevisionToken]*cachedAuthoritySnapshot)
-	restarted.snapshotOrder = nil
-	restarted.deltas = make(map[authorityDeltaKey]*cachedAuthorityDelta)
-	restarted.deltaOrder = nil
-	restarted.snapshotBytes = 0
-	restarted.deltaBytes = 0
-	restarted.cacheMu.Unlock()
 	gittest.Git(t, tenant.RepoRoot, "reflog", "expire", "--expire=now", "--all")
 	gittest.Git(t, tenant.RepoRoot, "gc", "--prune=now")
 	gittest.Git(t, tenant.RepoRoot, "lfs", "prune")
@@ -269,7 +263,7 @@ func TestGitDriverAppliedReceiptSurvivesRestartChurnGCAndLFSPrune(t *testing.T) 
 	if err := restarted.SettleMutation(t.Context(), tenant.Authority, settlement); err != nil {
 		t.Fatalf("forget: %v", err)
 	}
-	replay := newMemorySource(NewNoteTemplate("Receipt applied", nil, nil))
+	replay := newMemorySource(sourceview.NewNoteTemplate("Receipt applied", nil, nil))
 	if _, err := restarted.ApplyMutation(t.Context(), tenant.Authority, request, replay); !errors.Is(err, sourcedriver.ErrConflict) {
 		t.Fatalf("forgotten operation replay = %v, want conflict", err)
 	}
@@ -281,7 +275,7 @@ func TestGitDriverAppliedReceiptSurvivesRestartChurnGCAndLFSPrune(t *testing.T) 
 func TestGitDriverCommittedMutationSurvivesLostResponse(t *testing.T) {
 	driver, tenant, _ := newGitDriverTest(t)
 	head := refreshDriver(t, driver, tenant.Authority)
-	body := NewNoteTemplate("Lost response", nil, nil)
+	body := sourceview.NewNoteTemplate("Lost response", nil, nil)
 	request := mutationRequest(t, tenant, "77", head.Revision, testDriverCreateContext(tenant, 1), body)
 	lost := errors.New("response stream settlement failed")
 	source := newMemorySource(body)
@@ -308,9 +302,9 @@ func TestGitDriverReviseDeleteAndAtomicReplace(t *testing.T) {
 	parent := sourceLocator(tenant, "kind:note", 3)
 	object := sourceLocator(tenant, noteKey, 3)
 
-	revisedBody := NewNoteTemplate("After", nil, nil)
+	revisedBody := sourceview.NewNoteTemplate("After", nil, nil)
 	reviseContext := catalog.SourceMutationContext{
-		Operation: writableFileOperation(catalog.MutationRevise, Filename(note), true),
+		Operation: writableFileOperation(catalog.MutationRevise, sourceview.Filename(note), true),
 		Object:    &object,
 		Parent:    &parent,
 	}
@@ -325,7 +319,7 @@ func TestGitDriverReviseDeleteAndAtomicReplace(t *testing.T) {
 	assertContentContains(t, driver, tenant.Authority, revised.Committed, revised.Result, []byte("title: After"))
 
 	deleteContext := catalog.SourceMutationContext{
-		Operation: writableFileOperation(catalog.MutationDelete, Filename(note), false),
+		Operation: writableFileOperation(catalog.MutationDelete, sourceview.Filename(note), false),
 		Object:    &object,
 		Parent:    &parent,
 	}
@@ -347,7 +341,7 @@ func TestGitDriverReviseDeleteAndAtomicReplace(t *testing.T) {
 	replacementLocator := sourceLocator(tenant, replacementKey, 7)
 	targetLocator := sourceLocator(tenant, targetKey, 7)
 	replaceContext := catalog.SourceMutationContext{
-		Operation: writableFileOperation(catalog.MutationReplace, Filename(replacement), false),
+		Operation: writableFileOperation(catalog.MutationReplace, sourceview.Filename(replacement), false),
 		Object:    &replacementLocator,
 		Parent:    ptrSourceLocator(sourceLocator(tenant, "kind:note", 7)),
 		Target:    &targetLocator,
@@ -380,7 +374,7 @@ func TestGitDriverRejectsStaleSourceRevision(t *testing.T) {
 	stale := refreshDriver(t, driver, tenant.Authority)
 	createRootedNote(t, source, "External", "change")
 	current := refreshDriver(t, driver, tenant.Authority)
-	body := NewNoteTemplate("Stale create", nil, nil)
+	body := sourceview.NewNoteTemplate("Stale create", nil, nil)
 	request := mutationRequest(t, tenant, "66", stale.Revision, testDriverCreateContext(tenant, 1), body)
 	_, err := driver.ApplyMutation(t.Context(), tenant.Authority, request, newMemorySource(body))
 	var staleErr *sourcedriver.StaleRevisionError
@@ -392,7 +386,7 @@ func TestGitDriverRejectsStaleSourceRevision(t *testing.T) {
 func TestGitDriverRejectsInvalidMutationTargetBeforeReadingContent(t *testing.T) {
 	driver, tenant, _ := newGitDriverTest(t)
 	head := refreshDriver(t, driver, tenant.Authority)
-	body := NewNoteTemplate("Foreign target", nil, nil)
+	body := sourceview.NewNoteTemplate("Foreign target", nil, nil)
 	base := mutationRequest(t, tenant, "88", head.Revision, testDriverCreateContext(tenant, 1), body)
 	tests := []struct {
 		name   string
@@ -646,7 +640,7 @@ func TestGitDriverTargetSetDeclarationIsPagedExactAndCompleteBeforeUse(t *testin
 	}
 }
 
-func TestGitDriverHundredTargetPagingBuildsOneImmutableSnapshotWithBoundedContinuations(t *testing.T) {
+func TestGitDriverHundredTargetPagingUsesBoundedIndexedRanges(t *testing.T) {
 	repo := gittest.InitRepo(t)
 	authority := causal.SourceAuthorityID("cc-notes:scale-authority")
 	tenants := make([]Tenant, 100)
@@ -718,15 +712,16 @@ func TestGitDriverHundredTargetPagingBuildsOneImmutableSnapshotWithBoundedContin
 		next := *page.Next
 		request.Cursor = &next
 	}
-	if count == 0 || pages < 2 || driver.snapshotBuilds.Load() != 1 || driver.continuations.Load() != uint64(pages-1) {
+	if count == 0 || pages < 2 || driver.snapshotRanges.Load() == 0 || driver.snapshotRanges.Load() > uint64(2*(pages-1)+2*len(tenants)) || driver.continuations.Load() != uint64(pages-1) {
 		t.Fatalf(
-			"scale instrumentation objects=%d pages=%d snapshot_builds=%d continuation_checks=%d",
-			count, pages, driver.snapshotBuilds.Load(), driver.continuations.Load(),
+			"scale instrumentation objects=%d pages=%d indexed_ranges=%d continuation_checks=%d",
+			count, pages, driver.snapshotRanges.Load(), driver.continuations.Load(),
 		)
 	}
 	if content == nil {
 		t.Fatal("scale snapshot contained no content reference")
 	}
+	ranges := driver.snapshotRanges.Load()
 	stream, err := driver.OpenContent(t.Context(), authority, *content)
 	if err != nil {
 		t.Fatal(err)
@@ -737,8 +732,8 @@ func TestGitDriverHundredTargetPagingBuildsOneImmutableSnapshotWithBoundedContin
 	if err := errors.Join(readErr, settleErr, waitErr); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(body, []byte("one immutable body")) || driver.snapshotBuilds.Load() != 1 {
-		t.Fatalf("indexed content open rebuilt snapshot or returned wrong body: builds=%d body=%q", driver.snapshotBuilds.Load(), body)
+	if !bytes.Contains(body, []byte("one immutable body")) || driver.snapshotRanges.Load() != ranges || driver.contentOpens.Load() != 1 {
+		t.Fatalf("indexed content open read snapshot range or returned wrong body: ranges=%d body=%q", driver.snapshotRanges.Load(), body)
 	}
 }
 
@@ -940,6 +935,9 @@ func newGitDriverTest(t *testing.T) (*GitDriver, Tenant, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = source.Close() })
+	if err := source.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	return driver, tenant, source
 }
 
@@ -990,7 +988,7 @@ func createRootedNote(t *testing.T, source *store.Store, title, body string) (mo
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := entitySourceKey(model.KindNote, rooted.Root)
+	key, err := sourceview.EntitySourceKey(model.KindNote, rooted.Root)
 	if err != nil {
 		t.Fatal(err)
 	}

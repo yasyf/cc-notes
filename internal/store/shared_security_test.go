@@ -420,7 +420,10 @@ func TestSourceIndexPublishRechecksBinding(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	index := sourceindex.Index{Repo: s.Repo, Git: s.RecordsGit, Publish: s.PublishRefs}
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	index := sourceindex.Index{Backend: s}
 	head, err := index.Refresh(t.Context())
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
@@ -433,7 +436,7 @@ func TestSourceIndexPublishRechecksBinding(t *testing.T) {
 	shimGit(t, `*"update-ref --stdin"*`, "config", "--file", f.config(), bindingKey, other.String())
 
 	operationID := strings.Repeat("1", 64)
-	_, err = index.CommitOperation(t.Context(), head, operationID, "created", sha256.Sum256([]byte("request")), []gitcmd.RefUpdate{prepared.RefUpdate()})
+	_, err = index.CommitOperation(t.Context(), head, operationID, "created", sha256.Sum256([]byte("request")), []gitcmd.RefUpdate{prepared.RefUpdate()}, nil)
 	_ = assertBindingError(t, err, ErrBindingChanged, f.config(), f.sourceCommon)
 	for _, ref := range []string{prepared.Ref, sourceindex.Ref, "refs/cc-notes-source-v1/operations/" + operationID} {
 		if !strings.Contains(err.Error(), ref) {

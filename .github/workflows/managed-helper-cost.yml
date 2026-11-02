@@ -1,0 +1,118 @@
+name: Managed helper cost
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  helper-cost:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Install required tracers and LFS
+        run: sudo apt-get update && sudo apt-get install -y strace git-lfs
+      - name: Validate graph work aggregation
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestSourceGraphWorkAcrossIndependentScopes$' ./internal/sourcegraph
+      - name: Prepare immutable helper baseline
+        if: matrix.lane == 'baseline'
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/helper-baseline"
+          git fetch --no-tags --depth=1 origin dca1bbac0bcc43fe8d4873b3542989fb172b1db9
+          git worktree add --detach "$baseline" dca1bbac0bcc43fe8d4873b3542989fb172b1db9
+          cp internal/gitobj/read_work.go "$baseline/internal/gitobj/"
+          cp internal/store/managed_cost_linux_test.go "$baseline/internal/store/"
+          cp internal/store/testdata/helper_baseline_cost_linux_test.go.txt "$baseline/internal/store/helper_baseline_cost_linux_test.go"
+          BASELINE="$baseline" python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          path = Path(os.environ['BASELINE']) / 'internal/gitobj/read.go'
+          source = path.read_text()
+          for before, after in [
+              ('\treturn tips, nil\n', '\trecordRefListing(ctx, len(tips))\n\treturn tips, nil\n'),
+              ('\tpack, err := model.DecodePack(data)\n', '\trecordPackDecode(r.storage.scope.ctx)\n\tpack, err := model.DecodePack(data)\n'),
+          ]:
+              if source.count(before) != 1:
+                  raise SystemExit('baseline instrumentation anchor differs')
+              source = source.replace(before, after)
+          path.write_text(source)
+          PYTHON
+      - name: Reject baseline ordinary refresh corpus work
+        if: matrix.lane == 'baseline'
+        env:
+          CCN_REQUIRE_HELPER_BASELINE: '1'
+          CCN_MANAGED_COST_ARTIFACT_DIR: ${{ runner.temp }}/helper-baseline-artifacts
+        run: |
+          set -euo pipefail
+          set +e
+          (cd "$RUNNER_TEMP/helper-baseline" && ./scripts/test.sh -count=1 -v -run '^TestHelperBaselineFreshProcessCost$' ./internal/store) > "$RUNNER_TEMP/helper-baseline.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/helper-baseline.log"
+          test "$result" -ne 0
+          test "$(grep -c 'HELPER_BASELINE_RESULT:' "$RUNNER_TEMP/helper-baseline.log")" -eq 2
+          test "$(grep -c 'HELPER_BASELINE_CORPUS_REGRESSION:' "$RUNNER_TEMP/helper-baseline.log")" -eq 2
+      - name: Grade managed helper operations
+        if: matrix.lane == 'candidate'
+        env:
+          CCN_REQUIRE_HELPER_COST: '1'
+          CCN_HELPER_COST_ARTIFACT_DIR: ${{ runner.temp }}/helper-candidate-artifacts
+        run: |
+          set -euo pipefail
+          ./scripts/test.sh -count=1 -v -run '^TestHelperFreshProcessCost$' ./internal/store | tee "$RUNNER_TEMP/helper-candidate.log"
+          test "$(grep -c 'HELPER_COST_RESULT:' "$RUNNER_TEMP/helper-candidate.log")" -eq 18
+      - name: Reject duplicate full-history projection work
+        if: matrix.lane == 'candidate'
+        env:
+          CCN_REQUIRE_MANAGED_COST: '1'
+          CCN_MANAGED_COST_ARTIFACT_DIR: ${{ runner.temp }}/helper-history-artifacts
+        run: |
+          set -euo pipefail
+          ./scripts/test.sh -count=1 -v -run '^TestSourceCachedAppendCostDoesNotGrowWithHistory$' ./internal/store | tee "$RUNNER_TEMP/helper-history.log"
+          test "$(grep -c 'SOURCE_HISTORY_COST_RESULT:' "$RUNNER_TEMP/helper-history.log")" -eq 4
+      - name: Required graph cost and real GC LFS integrity
+        if: matrix.lane == 'candidate'
+        env:
+          CCN_REQUIRE_SOURCEGRAPH_COST: '1'
+          CCN_REQUIRE_SOURCEGRAPH_LFS: '1'
+        run: |
+          command -v git-lfs
+          ./scripts/test.sh -race -count=1 -v ./internal/sourcegraph ./internal/store
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: managed-helper-${{ matrix.lane }}
+          path: |
+            ${{ runner.temp }}/helper-*-artifacts
+            ${{ runner.temp }}/helper-*.log
+          if-no-files-found: error
+
+  helper-driver-oracle:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Require LFS before receipt retention proofs
+        run: |
+          brew install git-lfs
+          command -v git-lfs
+          git lfs version
+      - name: Exact driver pages content deltas and receipt GC
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(GitDriver|IndexedAuthority|SnapshotValues)' ./internal/fusefs
+      - name: Actual driver cached history cost
+        env:
+          CCN_REQUIRE_HELPER_DRIVER_HISTORY_COST: '1'
+        run: |
+          set -euo pipefail
+          ./scripts/test.sh -race -count=1 -v -run '^TestGitDriverCachedMutationHistoryCost$' ./internal/fusefs | tee "$RUNNER_TEMP/helper-driver-history.log"
+          test "$(grep -c 'GIT_DRIVER_HISTORY_COST_RESULT:' "$RUNNER_TEMP/helper-driver-history.log")" -eq 2

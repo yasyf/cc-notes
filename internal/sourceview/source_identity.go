@@ -1,4 +1,4 @@
-package fusefs
+package sourceview
 
 import (
 	"fmt"
@@ -8,14 +8,16 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-func entitySourceKey(kind model.Kind, root model.PackCommit) (string, error) {
+// EntitySourceKey binds a logical entity identity to its original Git root.
+func EntitySourceKey(kind model.Kind, root model.PackCommit) (string, error) {
 	if !plumbing.IsHash(string(root.SHA)) {
 		return "", fmt.Errorf("root commit %q has invalid source identity", root.SHA)
 	}
 	return "entity:" + string(kind) + ":" + string(root.SHA), nil
 }
 
-func setCreateNonce(operation model.Op, nonce string) (model.Op, error) {
+// SetCreateNonce gives a prepared create the durable mutation identity.
+func SetCreateNonce(operation model.Op, nonce string) (model.Op, error) {
 	switch value := operation.(type) {
 	case model.CreateNote:
 		value.Nonce = nonce

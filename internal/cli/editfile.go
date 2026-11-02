@@ -13,9 +13,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
@@ -63,16 +63,16 @@ func docAdapter() editAdapter {
 			}
 			return d, d.Head, nil
 		},
-		render: func(snap model.Snapshot) []byte { return fusefs.RenderDoc(snap.(model.Doc)) },
+		render: func(snap model.Snapshot) []byte { return sourceview.RenderDoc(snap.(model.Doc)) },
 		template: func(p prefill) []byte {
-			return fusefs.NewDocTemplate(p.title, p.when, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
+			return sourceview.NewDocTemplate(p.title, p.when, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
 		},
 		diffOps: func(base model.Snapshot, data []byte) ([]model.Op, error) {
-			p, err := fusefs.ParseDoc(data)
+			p, err := sourceview.ParseDoc(data)
 			if err != nil {
 				return nil, err
 			}
-			ops, err := fusefs.DiffDoc(base.(model.Doc), p)
+			ops, err := sourceview.DiffDoc(base.(model.Doc), p)
 			if err != nil {
 				return nil, err
 			}
@@ -87,11 +87,11 @@ func docAdapter() editAdapter {
 			return ops, nil
 		},
 		createOps: func(data []byte) ([]model.Op, error) {
-			p, err := fusefs.ParseDoc(data)
+			p, err := sourceview.ParseDoc(data)
 			if err != nil {
 				return nil, err
 			}
-			ops, err := fusefs.NewDoc(p)
+			ops, err := sourceview.NewDoc(p)
 			if err != nil {
 				return nil, err
 			}
@@ -122,16 +122,16 @@ func answerAdapter() editAdapter {
 			}
 			return a, a.Head, nil
 		},
-		render: func(snap model.Snapshot) []byte { return fusefs.RenderAnswer(snap.(model.Answer)) },
+		render: func(snap model.Snapshot) []byte { return sourceview.RenderAnswer(snap.(model.Answer)) },
 		template: func(p prefill) []byte {
-			return fusefs.NewAnswerTemplate(p.title, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
+			return sourceview.NewAnswerTemplate(p.title, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
 		},
 		diffOps: func(base model.Snapshot, data []byte) ([]model.Op, error) {
-			p, err := fusefs.ParseAnswer(data)
+			p, err := sourceview.ParseAnswer(data)
 			if err != nil {
 				return nil, err
 			}
-			ops, err := fusefs.DiffAnswer(base.(model.Answer), p)
+			ops, err := sourceview.DiffAnswer(base.(model.Answer), p)
 			if err != nil {
 				return nil, err
 			}
@@ -141,11 +141,11 @@ func answerAdapter() editAdapter {
 			return ops, nil
 		},
 		createOps: func(data []byte) ([]model.Op, error) {
-			p, err := fusefs.ParseAnswer(data)
+			p, err := sourceview.ParseAnswer(data)
 			if err != nil {
 				return nil, err
 			}
-			ops, err := fusefs.NewAnswer(p)
+			ops, err := sourceview.NewAnswer(p)
 			if err != nil {
 				return nil, err
 			}
@@ -173,16 +173,16 @@ func noteAdapter() editAdapter {
 			}
 			return n, n.Head, nil
 		},
-		render: func(snap model.Snapshot) []byte { return fusefs.RenderNote(snap.(model.Note)) },
+		render: func(snap model.Snapshot) []byte { return sourceview.RenderNote(snap.(model.Note)) },
 		template: func(p prefill) []byte {
-			return fusefs.NewNoteTemplate(p.title, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
+			return sourceview.NewNoteTemplate(p.title, p.tags, buildAnchors(p.commits, p.paths, p.dirs, p.branches))
 		},
 		diffOps: func(base model.Snapshot, data []byte) ([]model.Op, error) {
-			p, err := fusefs.ParseNote(data)
+			p, err := sourceview.ParseNote(data)
 			if err != nil {
 				return nil, err
 			}
-			ops, err := fusefs.DiffNote(base.(model.Note), p)
+			ops, err := sourceview.DiffNote(base.(model.Note), p)
 			if err != nil {
 				return nil, err
 			}
@@ -192,11 +192,11 @@ func noteAdapter() editAdapter {
 			return ops, nil
 		},
 		createOps: func(data []byte) ([]model.Op, error) {
-			p, err := fusefs.ParseNote(data)
+			p, err := sourceview.ParseNote(data)
 			if err != nil {
 				return nil, err
 			}
-			ops, err := fusefs.NewNote(p)
+			ops, err := sourceview.NewNote(p)
 			if err != nil {
 				return nil, err
 			}

@@ -9,22 +9,9 @@ import (
 	"github.com/yasyf/fusekit/catalog"
 	"github.com/yasyf/fusekit/sourcedriver"
 
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/model"
 )
-
-// TestCodecsExhaustive asserts every model.Kind has a codec keyed by itself and
-// that codecs holds no extra entries: a new kind without a codec fails here.
-func TestCodecsExhaustive(t *testing.T) {
-	kinds := model.Kinds()
-	if len(codecs) != len(kinds) {
-		t.Fatalf("codecs has %d entries, want %d kinds", len(codecs), len(kinds))
-	}
-	for _, kind := range kinds {
-		if got := codecOf(kind).Kind(); got != kind {
-			t.Errorf("codecOf(%s).Kind() = %s, want %s", kind, got, kind)
-		}
-	}
-}
 
 // readOnlyKinds names the kinds projected immutable, stated here rather than
 // read back off the codec table so a flipped readOnly flag fails the contract
@@ -58,7 +45,7 @@ func TestCodecReadOnlyGovernsProjectedModeAndWriteRejection(t *testing.T) {
 	for _, kind := range model.Kinds() {
 		t.Run(string(kind), func(t *testing.T) {
 			readOnly := readOnlyKinds[kind]
-			if got := codecOf(kind).ReadOnly(); got != readOnly {
+			if got := sourceview.CodecOf(kind).ReadOnly(); got != readOnly {
 				t.Errorf("codecOf(%s).ReadOnly() = %v, want %v", kind, got, readOnly)
 			}
 			key := sourceKeyForEntity(t, source, kind, ids[kind])
@@ -80,9 +67,10 @@ func TestCodecReadOnlyGovernsProjectedModeAndWriteRejection(t *testing.T) {
 				t.Errorf("revise/delete locator for %s = (%s, %v), want (%s, nil)", kind, gotKind, err, kind)
 			}
 
+			layout, _ := sourceview.LayoutOf(kind)
 			parent := sourceLocator(tenant, "kind:"+string(kind), 1)
 			create := catalog.SourceMutationContext{
-				Operation: writableFileOperation(catalog.MutationCreate, "new"+layouts[kind].ext, true),
+				Operation: writableFileOperation(catalog.MutationCreate, "new"+layout.Ext, true),
 				Parent:    &parent,
 			}
 			gotKind, err = driverMutationKind(create)

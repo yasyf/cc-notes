@@ -14,6 +14,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -47,7 +48,7 @@ func TestAuthoritySnapshotRendersStableRootCommitIdentities(t *testing.T) {
 	objects := indexAuthorityObjects(snapshot.objects)
 	noteKey := sourceKeyForEntity(t, source, model.KindNote, note.ID)
 	noteObject := objects[noteKey]
-	if noteObject.name != Filename(note) || !strings.Contains(string(noteObject.content), "Durable note") ||
+	if noteObject.name != sourceview.Filename(note) || !strings.Contains(string(noteObject.content), "Durable note") ||
 		noteObject.kind != catalog.KindFile || noteObject.size != int64(len(noteObject.content)) ||
 		noteObject.hash == (catalog.ContentHash{}) {
 		t.Fatalf("note object = %+v content=%q", noteObject, noteObject.content)
@@ -62,9 +63,9 @@ func TestAuthoritySnapshotRendersStableRootCommitIdentities(t *testing.T) {
 			t.Fatalf("symlink %q = %+v, found=%v", key, object, found)
 		}
 	}
-	cached := cacheSnapshotForTest(snapshot)
+	cached := snapshotIndexForTest(snapshot)
 	projections, err := snapshotValues(
-		cached, []Tenant{testTenant(t)}, sourcedriver.RevisionToken(strings.Repeat("a", 40)), 0, cachedSnapshotCount(cached, 1),
+		cached, []Tenant{testTenant(t)}, sourcedriver.RevisionToken(strings.Repeat("a", 40)), 0, snapshotIndexCount(cached, 1),
 	)
 	if err != nil {
 		t.Fatalf("projections: %v", err)
@@ -142,7 +143,7 @@ func TestAuthorityDeltaPreservesRootIdentityAcrossRevision(t *testing.T) {
 	}
 	delta := DiffAuthoritySnapshots(before, after)
 	if delta.Len() != 1 || len(delta.objects) != 1 || len(delta.deletes) != 0 ||
-		delta.objects[0].key != key || delta.objects[0].name != Filename(updated) {
+		delta.objects[0].key != key || delta.objects[0].name != sourceview.Filename(updated) {
 		t.Fatalf("revision delta = objects=%+v deletes=%+v", delta.objects, delta.deletes)
 	}
 
@@ -183,9 +184,9 @@ func TestAuthorityProjectionPagesFenceAndOrderEveryDeclaredTenant(t *testing.T) 
 	revision := sourcedriver.RevisionToken(strings.Repeat("a", 40))
 	tenants := []Tenant{first, second}
 	slices.SortFunc(tenants, func(a, b Tenant) int { return strings.Compare(string(a.ID), string(b.ID)) })
-	cachedAfter := cacheSnapshotForTest(after)
+	cachedAfter := snapshotIndexForTest(after)
 	projections, err := snapshotValues(
-		cachedAfter, tenants, revision, 0, cachedSnapshotCount(cachedAfter, len(tenants)),
+		cachedAfter, tenants, revision, 0, snapshotIndexCount(cachedAfter, len(tenants)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -204,9 +205,9 @@ func TestAuthorityProjectionPagesFenceAndOrderEveryDeclaredTenant(t *testing.T) 
 		}
 	}
 
-	cachedDelta := cacheDeltaForTest(DiffAuthoritySnapshots(before, after))
+	cachedDelta := changesForTest(DiffAuthoritySnapshots(before, after))
 	changes, err := changeValues(
-		cachedDelta, tenants, revision, 0, cachedDeltaCount(cachedDelta, len(tenants)),
+		cachedDelta, tenants, revision, 0, changesCount(cachedDelta, len(tenants)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +299,7 @@ func sourceKeyForEntity(t *testing.T, source *store.Store, kind model.Kind, id m
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := entitySourceKey(kind, rooted.Root)
+	key, err := sourceview.EntitySourceKey(kind, rooted.Root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,13 +314,22 @@ func indexAuthorityObjects(objects []authorityObject) map[string]authorityObject
 	return result
 }
 
-func cacheSnapshotForTest(snapshot AuthoritySnapshot) *cachedAuthoritySnapshot {
+func snapshotIndexForTest(snapshot AuthoritySnapshot) *authoritySnapshotIndex {
 	objects := slices.Clone(snapshot.objects)
 	slices.SortFunc(objects, func(a, b authorityObject) int { return strings.Compare(a.key, b.key) })
-	return &cachedAuthoritySnapshot{objects: objects, byID: indexAuthorityObjects(objects)}
+	return &authoritySnapshotIndex{
+		count: len(objects),
+		rangeObjects: func(start, limit int) ([]authorityObject, error) {
+			return objects[start : start+limit], nil
+		},
+		rank: func(key string) (int, bool, error) {
+			rank, found := slices.BinarySearchFunc(objects, key, func(object authorityObject, key string) int { return strings.Compare(object.key, key) })
+			return rank, found, nil
+		},
+	}
 }
 
-func cacheDeltaForTest(delta AuthorityDelta) *cachedAuthorityDelta {
+func changesForTest(delta AuthorityDelta) *authorityChanges {
 	values := make([]authorityDeltaValue, 0, delta.Len())
 	for _, object := range delta.objects {
 		value := object
@@ -329,14 +339,14 @@ func cacheDeltaForTest(delta AuthorityDelta) *cachedAuthorityDelta {
 		values = append(values, authorityDeltaValue{id: id})
 	}
 	slices.SortFunc(values, func(a, b authorityDeltaValue) int { return stringCompare(a.id, b.id) })
-	return &cachedAuthorityDelta{values: values}
+	return &authorityChanges{values: values}
 }
 
-func cachedSnapshotCount(snapshot *cachedAuthoritySnapshot, tenants int) int {
-	return len(snapshot.objects) * tenants
+func snapshotIndexCount(snapshot *authoritySnapshotIndex, tenants int) int {
+	return snapshot.count * tenants
 }
 
-func cachedDeltaCount(delta *cachedAuthorityDelta, tenants int) int {
+func changesCount(delta *authorityChanges, tenants int) int {
 	return len(delta.values) * tenants
 }
 

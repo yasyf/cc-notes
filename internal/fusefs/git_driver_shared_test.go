@@ -12,6 +12,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/sourceindex"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -42,18 +43,24 @@ func TestGitDriverSharedSourceIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if index.Git != gitcmd.Backend(sourceCommon, filepath.Dir(sourceCommon)) {
-		t.Fatalf("index.Git = %+v, want a Backend handle on %q", index.Git, sourceCommon)
+	if index.Backend != opened || opened.RecordsGit != gitcmd.Backend(sourceCommon, filepath.Dir(sourceCommon)) {
+		t.Fatalf("index backend and records handle differ from %q", sourceCommon)
 	}
-	if index.Repo != opened.Repo || opened.RecordsCommonDir() != sourceCommon {
-		t.Fatalf("index.Repo and the store's records repository differ (records common dir %q)", opened.RecordsCommonDir())
+	if opened.RecordsCommonDir() != sourceCommon {
+		t.Fatalf("store's records repository differs (records common dir %q)", opened.RecordsCommonDir())
 	}
 	if opened.Git != (gitcmd.Git{Dir: thin}) {
 		t.Fatalf("context handle = %+v, want the thin checkout %q", opened.Git, thin)
 	}
 
+	if err := opened.Reindex(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatal(err)
+	}
 	head := refreshDriver(t, driver, tenant.Authority)
-	body := NewNoteTemplate("Created through a bound driver", nil, nil)
+	body := sourceview.NewNoteTemplate("Created through a bound driver", nil, nil)
 	request := mutationRequest(t, tenant, "33", head.Revision, testDriverCreateContext(tenant, 1), body)
 	receipt, err := driver.ApplyMutation(ctx, tenant.Authority, request, newMemorySource(body))
 	if err != nil {

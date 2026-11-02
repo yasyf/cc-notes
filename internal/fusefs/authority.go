@@ -22,6 +22,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -185,7 +186,7 @@ func (b *projectionBuilder) build() error {
 		keys := make(map[model.EntityID]string, len(rooted))
 		for index, value := range rooted {
 			snapshots[index] = value.Snapshot
-			key, err := entitySourceKey(kind, value.Root)
+			key, err := sourceview.EntitySourceKey(kind, value.Root)
 			if err != nil {
 				return fmt.Errorf("cc-notes authority: source key for %s %s: %w", kind, value.Snapshot.EntityID(), err)
 			}
@@ -193,17 +194,17 @@ func (b *projectionBuilder) build() error {
 		}
 		slices.SortFunc(snapshots, func(a, z model.Snapshot) int { return strings.Compare(string(a.EntityID()), string(z.EntityID())) })
 		b.snaps[kind] = snapshots
-		layout := layouts[kind]
+		layout, _ := sourceview.LayoutOf(kind)
 		parent := "kind:" + string(kind)
-		b.dir(parent, "", strings.TrimPrefix(layout.dir, "/"))
+		b.dir(parent, "", strings.TrimPrefix(layout.Dir, "/"))
 		for _, snapshot := range snapshots {
-			body := codecOf(kind).Render(snapshot)
+			body := sourceview.CodecOf(kind).Render(snapshot)
 			mode := uint32(0o644)
-			if codecOf(kind).ReadOnly() {
+			if sourceview.CodecOf(kind).ReadOnly() {
 				mode = 0o444
 			}
-			b.file(keys[snapshot.EntityID()], parent, Filename(snapshot), mode, body)
-			if codecOf(kind).Browsable() {
+			b.file(keys[snapshot.EntityID()], parent, sourceview.Filename(snapshot), mode, body)
+			if sourceview.CodecOf(kind).Browsable() {
 				b.dir(browseKey(kind, snapshot.EntityID()), parent, snapshot.EntityID().Short())
 			}
 		}
@@ -251,8 +252,8 @@ func (b *projectionBuilder) buildBrowseTrees() {
 		b.dir(tasksKey, base, "tasks")
 		for _, task := range tasks {
 			if task.Sprint == sprint.ID {
-				linkPath := path.Join("/sprints", sprint.ID.Short(), "tasks", Filename(task))
-				b.symlink("sprint-task:"+string(sprint.ID)+":"+string(task.ID), tasksKey, Filename(task), SymlinkTarget(linkPath, "tasks/"+Filename(task)))
+				linkPath := path.Join("/sprints", sprint.ID.Short(), "tasks", sourceview.Filename(task))
+				b.symlink("sprint-task:"+string(sprint.ID)+":"+string(task.ID), tasksKey, sourceview.Filename(task), sourceview.SymlinkTarget(linkPath, "tasks/"+sourceview.Filename(task)))
 			}
 		}
 	}
@@ -273,8 +274,8 @@ func (b *projectionBuilder) buildBrowseTrees() {
 			b.dir(sprintTasksKey, sprintKey, "tasks")
 			for _, task := range tasks {
 				if task.Sprint == sprint.ID {
-					linkPath := path.Join("/projects", project.ID.Short(), "sprints", sprint.ID.Short(), "tasks", Filename(task))
-					b.symlink("project-sprint-task:"+string(project.ID)+":"+string(sprint.ID)+":"+string(task.ID), sprintTasksKey, Filename(task), SymlinkTarget(linkPath, "tasks/"+Filename(task)))
+					linkPath := path.Join("/projects", project.ID.Short(), "sprints", sprint.ID.Short(), "tasks", sourceview.Filename(task))
+					b.symlink("project-sprint-task:"+string(project.ID)+":"+string(sprint.ID)+":"+string(task.ID), sprintTasksKey, sourceview.Filename(task), sourceview.SymlinkTarget(linkPath, "tasks/"+sourceview.Filename(task)))
 				}
 			}
 		}
@@ -282,8 +283,8 @@ func (b *projectionBuilder) buildBrowseTrees() {
 			if task.Project != project.ID && !projectSprints[task.Sprint] {
 				continue
 			}
-			linkPath := path.Join("/projects", project.ID.Short(), "tasks", Filename(task))
-			b.symlink("project-task:"+string(project.ID)+":"+string(task.ID), tasksKey, Filename(task), SymlinkTarget(linkPath, "tasks/"+Filename(task)))
+			linkPath := path.Join("/projects", project.ID.Short(), "tasks", sourceview.Filename(task))
+			b.symlink("project-task:"+string(project.ID)+":"+string(task.ID), tasksKey, sourceview.Filename(task), sourceview.SymlinkTarget(linkPath, "tasks/"+sourceview.Filename(task)))
 		}
 	}
 }

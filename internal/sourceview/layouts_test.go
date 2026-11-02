@@ -1,4 +1,4 @@
-package fusefs
+package sourceview
 
 import (
 	"testing"
@@ -20,16 +20,16 @@ func TestLayoutsExhaustive(t *testing.T) {
 			t.Errorf("layouts missing kind %s", kind)
 			continue
 		}
-		if layout.dir == "" || layout.ext == "" {
+		if layout.Dir == "" || layout.Ext == "" {
 			t.Errorf("layouts[%s] = %+v, want non-empty dir and ext", kind, layout)
 			continue
 		}
-		if node, err := ParsePath(layout.dir); err != nil {
-			t.Errorf("ParsePath(%q): %v", layout.dir, err)
+		if node, err := ParsePath(layout.Dir); err != nil {
+			t.Errorf("ParsePath(%q): %v", layout.Dir, err)
 		} else if kd, ok := node.(KindDir); !ok || kd.Kind != kind {
-			t.Errorf("ParsePath(%q) = %#v, want KindDir{Kind:%s}", layout.dir, node, kind)
+			t.Errorf("ParsePath(%q) = %#v, want KindDir{Kind:%s}", layout.Dir, node, kind)
 		}
-		file := layout.dir + "/abcdef0" + layout.ext
+		file := layout.Dir + "/abcdef0" + layout.Ext
 		if node, err := ParsePath(file); err != nil {
 			t.Errorf("ParsePath(%q): %v", file, err)
 		} else if ef, ok := node.(EntityFile); !ok || ef.Kind != kind || ef.ShortID != "abcdef0" {

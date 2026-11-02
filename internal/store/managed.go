@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"slices"
 	"sync/atomic"
 
 	bolt "go.etcd.io/bbolt"
@@ -25,6 +25,7 @@ type managedIntent struct {
 	Updates []gitcmd.RefUpdate `json:"updates"`
 	Before  []model.SHA        `json:"before"`
 	Rows    []queryMetadata    `json:"rows"`
+	Source  *sourcePublication `json:"source,omitempty"`
 }
 
 func managedRoot(tx *bolt.Tx) (*bolt.Bucket, error) {
@@ -53,6 +54,26 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 	lock, err := managed.Lock(ctx, s.recordsCommonDir, false)
 	if err != nil {
 		return err
+	}
+	ready, err := s.reindexReady()
+	if err != nil {
+		return errors.Join(err, lock.Close())
+	}
+	if ready {
+		if err := lock.Close(); err != nil {
+			return err
+		}
+		lock, err = managed.Lock(ctx, s.recordsCommonDir, true)
+		if err != nil {
+			return err
+		}
+		if ready, err := s.reindexReady(); err != nil {
+			return errors.Join(err, lock.Close())
+		} else if ready {
+			if err := s.finishReindex(ctx, lock); err != nil {
+				return errors.Join(err, lock.Close())
+			}
+		}
 	}
 	db, err := s.openManaged(true)
 	if err != nil {
@@ -172,21 +193,41 @@ func (s *Store) managedRows(ctx context.Context, updates []gitcmd.RefUpdate, sna
 	return rows, nil
 }
 
-func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, snapshots map[model.SHA]model.Snapshot) (err error) {
-	published := false
-	defer func() {
-		if published && err != nil {
-			err = publicationFailure(updates, err)
-		}
-	}()
-	if err := s.CheckRecords(); err != nil {
-		return err
-	}
+func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, snapshots map[model.SHA]model.Snapshot) error {
 	if len(updates) == 0 {
 		return errors.New("update refs: no updates")
 	}
-	rows, err := s.managedRows(ctx, updates, snapshots, nil)
+	preparation, err := s.prepareManaged(ctx, updates, snapshots)
 	if err != nil {
+		return err
+	}
+	return s.managedWrite(ctx, func(db *bolt.DB) (*managedIntent, error) { return s.buildManagedIntent(ctx, db, updates, preparation) })
+}
+
+func (s *Store) buildManagedIntent(ctx context.Context, db *bolt.DB, updates []gitcmd.RefUpdate, preparation *managedPreparation) (*managedIntent, error) {
+	var publication *sourcePublication
+	var derived []gitcmd.RefUpdate
+	err := db.View(func(tx *bolt.Tx) error {
+		var err error
+		publication, derived, err = s.buildSource(ctx, tx, updates, preparation.Entities)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &managedIntent{Updates: slices.Concat(updates, derived), Rows: preparation.Rows, Source: publication}, nil
+}
+
+func (s *Store) managedWrite(ctx context.Context, build func(*bolt.DB) (*managedIntent, error)) (err error) {
+	var published bool
+	var publishedUpdates []gitcmd.RefUpdate
+	defer func() {
+		if published && err != nil {
+			err = publicationFailure(publishedUpdates, err)
+		}
+	}()
+
+	if err := s.CheckRecords(); err != nil {
 		return err
 	}
 	lock, err := managed.Lock(ctx, s.recordsCommonDir, true)
@@ -194,6 +235,13 @@ func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
+	if ready, err := s.reindexReady(); err != nil {
+		return err
+	} else if ready {
+		if err := s.finishReindex(ctx, lock); err != nil {
+			return err
+		}
+	}
 	db, err := s.openManaged(false)
 	if err != nil {
 		return err
@@ -202,8 +250,23 @@ func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 	if err := s.recoverManaged(ctx, db); err != nil {
 		return err
 	}
-	intent := managedIntent{Updates: updates, Rows: rows, Before: make([]model.SHA, len(updates))}
-	for i, update := range updates {
+	if err := s.CheckRecords(); err != nil {
+		return err
+	}
+	intent, err := build(db)
+	if err != nil || intent == nil {
+		return err
+	}
+	if len(intent.Updates) == 0 {
+		return errors.New("managed publication has no exact ref updates")
+	}
+	intent.Before = make([]model.SHA, len(intent.Updates))
+	seen := make(map[string]struct{}, len(intent.Updates))
+	for i, update := range intent.Updates {
+		if _, found := seen[update.Ref]; found {
+			return fmt.Errorf("duplicate managed ref %s", update.Ref)
+		}
+		seen[update.Ref] = struct{}{}
 		tip, err := s.Repo.Tip(ctx, update.Ref)
 		if err != nil && !errors.Is(err, gitobj.ErrRefNotFound) {
 			return err
@@ -237,10 +300,12 @@ func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 	}); err != nil {
 		return err
 	}
-	publishErr := s.RecordsGit.Holding(lock).UpdateRefs(ctx, updates)
+	publishedUpdates = intent.Updates
+	publishErr := s.RecordsGit.Holding(lock).UpdateRefs(ctx, intent.Updates)
 	published = publishErr == nil
 	recoverErr := s.recoverManaged(context.WithoutCancel(ctx), db)
-	return errors.Join(publishErr, recoverErr)
+	result := errors.Join(publishErr, recoverErr)
+	return result
 }
 
 func (s *Store) recoverManaged(ctx context.Context, db *bolt.DB) error {
@@ -322,71 +387,10 @@ func (s *Store) applyManaged(tx *bolt.Tx, intent managedIntent) error {
 			return err
 		}
 	}
+	if err := applySource(tx, intent.Source); err != nil {
+		return err
+	}
 	return root.SetSequence(root.Sequence() + 1)
-}
-
-// Reindex explicitly imports current Git entity refs into the managed authority.
-func (s *Store) Reindex(ctx context.Context) (err error) {
-	if err := s.CheckRecords(); err != nil {
-		return err
-	}
-	lock, err := managed.Lock(ctx, s.recordsCommonDir, true)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
-	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
-	if err != nil {
-		return err
-	}
-	updates := make([]gitcmd.RefUpdate, 0, len(tips))
-	for ref, tip := range tips {
-		updates = append(updates, gitcmd.RefUpdate{Ref: ref, New: tip})
-	}
-	publications := newFoldPublicationBatch(ctx, s.cache)
-	defer publications.discard()
-	rows, err := s.managedRows(ctx, updates, nil, publications)
-	if err != nil {
-		return err
-	}
-	publications.flush()
-	path := managed.Path(s.recordsCommonDir)
-	staging := path + ".reindex"
-	if err := os.Remove(staging); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	db, err := bolt.Open(staging, 0o600, nil)
-	if err != nil {
-		return err
-	}
-	err = db.Update(func(tx *bolt.Tx) error {
-		root, err := tx.CreateBucket([]byte(managed.Format))
-		if err != nil {
-			return err
-		}
-		if _, err := root.CreateBucket([]byte("refs")); err != nil {
-			return err
-		}
-		return s.applyManaged(tx, managedIntent{Updates: updates, Rows: rows})
-	})
-	err = errors.Join(err, db.Close())
-	if err != nil {
-		return err
-	}
-	if err := s.CheckRecords(); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := os.Rename(staging, path); err != nil {
-		return err
-	}
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	return errors.Join(directory.Sync(), directory.Close())
 }
 
 func (s *Store) publishSnapshot(ctx context.Context, ref string, sha, old model.SHA, snapshot model.Snapshot) error {

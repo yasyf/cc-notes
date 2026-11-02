@@ -14,7 +14,7 @@ import (
 )
 
 // Format identifies the managed authority schema and projection contract.
-const Format = "cc-notes-managed-v1"
+const Format = "cc-notes-managed-v2"
 
 // ErrReindex requires an explicit import before ordinary managed operations.
 var ErrReindex = errors.New("managed authority unavailable; run cc-notes reindex")

@@ -109,23 +109,33 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 // LoadRootedAt folds the immutable chain ending at head and returns both its
 // snapshot and unique create commit. It never resolves a mutable ref.
 func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapshot, error) {
+	rooted, publication, err := s.loadRootedAt(ctx, head)
+	if err != nil {
+		return RootedSnapshot{}, err
+	}
+	if publication != nil {
+		s.cache.writeBatch([]cachePublication{*publication})
+	}
+	return rooted, nil
+}
+
+func (s *Store) loadRootedAt(ctx context.Context, head model.SHA) (RootedSnapshot, *cachePublication, error) {
 	if err := s.CheckRecords(); err != nil {
-		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+		return RootedSnapshot{}, nil, fmt.Errorf("load rooted at %s: %w", head, err)
 	}
 	chain, err := s.Repo.ReadChain(ctx, head)
 	if err != nil {
-		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+		return RootedSnapshot{}, nil, fmt.Errorf("load rooted at %s: %w", head, err)
 	}
 	snapshot, err := fold.Fold(chain)
 	if err != nil {
-		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+		return RootedSnapshot{}, nil, fmt.Errorf("load rooted at %s: %w", head, err)
 	}
 	root, err := uniqueRootCommit(chain)
 	if err != nil {
-		return RootedSnapshot{}, fmt.Errorf("root at %s: %w", head, err)
+		return RootedSnapshot{}, nil, fmt.Errorf("root at %s: %w", head, err)
 	}
-	s.cache.putChain(head, snapshot, chain)
-	return RootedSnapshot{Snapshot: snapshot, Root: root}, nil
+	return RootedSnapshot{Snapshot: snapshot, Root: root}, foldChainPublication(head, snapshot, chain), nil
 }
 
 // HasNotes reports whether the records repository holds any cc-notes entity:
