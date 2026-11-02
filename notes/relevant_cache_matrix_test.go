@@ -316,6 +316,7 @@ type matrixFixture struct {
 	c       *notes.Client
 	note    model.EntityID
 	sibling model.EntityID
+	ledger  model.EntityID
 	root    model.SHA
 	theirs  model.SHA
 	counter gitCounter
@@ -352,6 +353,23 @@ func (fx *matrixFixture) second(t *testing.T) *notes.Client {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c
+}
+
+func makeLedger(t *testing.T, c *notes.Client, title string, anchors notes.AnchorSpec) model.EntityID {
+	t.Helper()
+	l, _, err := c.CreateLedger(t.Context(), notes.LedgerSpec{Title: title, Columns: []string{"n"}, Anchors: anchors})
+	if err != nil {
+		t.Fatalf("CreateLedger %q: %v", title, err)
+	}
+	return l.ID
+}
+
+func setLedgerRow(key string) func(*testing.T, *matrixFixture) {
+	return func(t *testing.T, fx *matrixFixture) {
+		if _, err := fx.second(t).SetRow(t.Context(), fx.ledger, key, map[string]string{"n": key}, false); err != nil {
+			t.Fatalf("SetRow %s: %v", key, err)
+		}
+	}
 }
 
 func (fx *matrixFixture) crossAuthor(t *testing.T) {
@@ -518,6 +536,28 @@ func invalidationCases() []matrixCase {
 			name: "no-op entity update",
 			writes: []matrixWrite{{name: "update-ref to the current tip", want: tierRevalidate, do: func(t *testing.T, fx *matrixFixture) {
 				fx.run(t, "update-ref", fx.noteRef(), fx.run(t, "rev-parse", fx.noteRef()))
+			}}},
+		},
+		{
+			name:  "unanchored ledger rows written by a second client",
+			setup: func(t *testing.T, fx *matrixFixture) { fx.ledger = makeLedger(t, fx.c, "desk", notes.AnchorSpec{}) },
+			writes: []matrixWrite{
+				{name: "second client sets a row", want: tierHit, do: setLedgerRow("a")},
+				{name: "second client sets another row", want: tierHit, do: setLedgerRow("b")},
+			},
+		},
+		{
+			name: "anchored ledger row written by a second client",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.ledger = makeLedger(t, fx.c, "handler desk", notes.AnchorSpec{Paths: []string{matrixTarget}})
+			},
+			writes: []matrixWrite{{name: "second client sets a row", want: tierRebuild, changes: true, do: setLedgerRow("a")}},
+		},
+		{
+			name:  "anchored ledger created beside an unanchored one",
+			setup: func(t *testing.T, fx *matrixFixture) { fx.ledger = makeLedger(t, fx.c, "desk", notes.AnchorSpec{}) },
+			writes: []matrixWrite{{name: "second client creates an anchored ledger", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+				makeLedger(t, fx.second(t), "handler desk", notes.AnchorSpec{Paths: []string{matrixTarget}})
 			}}},
 		},
 		{
