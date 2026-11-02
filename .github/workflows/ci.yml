@@ -243,6 +243,7 @@ jobs:
         run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/cc-notes_darwin_arm64 ./cmd/cc-notes
 
   helper:
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
