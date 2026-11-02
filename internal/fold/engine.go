@@ -85,9 +85,6 @@ func stream[T model.Snapshot](base model.Snapshot, c model.PackCommit, next func
 	r := &replay[T]{f: f, m: tolerant}
 	var head model.SHA
 	if base == nil {
-		if len(c.Parents) > 0 {
-			return zero, fmt.Errorf("%w: %s is not a root", ErrMissingParent, c.SHA)
-		}
 		f.fresh(c.SHA, c.AuthorTime)
 	} else {
 		if err := f.seed(base); err != nil {

@@ -351,7 +351,7 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 	stamps := slices.Clone(e.Stamps)
 	var moved []int
 	for i, s := range e.Stamps {
-		if stamps[i] = restamp(s); stamps[i] == s && !(e.Racy && s.racy(built)) {
+		if stamps[i] = restamp(s); stamps[i] == s && (!e.Racy || !s.racy(built)) {
 			continue
 		}
 		root, ok := roots[s.Path]
