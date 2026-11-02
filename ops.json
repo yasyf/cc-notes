@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_assignee","assignee":"/root/cci_canonical_union_peer \u003ccci-canonical-union-peer@codex.local\u003e"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_status","status":"in_progress"},{"kind":"set_branch","branch":"perf/reuse-cli-plan"},{"kind":"add_anchor","anchor":{"kind":"dir","value":"/Users/yasyf/repos/spawnllm-reuse-cli-plan"}}]}
