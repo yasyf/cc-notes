@@ -55,6 +55,9 @@ func waitLock(ctx context.Context, lock *os.File) error {
 	poll := time.NewTicker(trackingLockPoll)
 	defer poll.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		switch err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); {
 		case err == nil:
 			return nil
@@ -63,7 +66,6 @@ func waitLock(ctx context.Context, lock *os.File) error {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
 		case <-deadline.C:
 			return fmt.Errorf("%w for %s: %s", ErrLockHeld, lockWait, lock.Name())
 		case <-poll.C:
