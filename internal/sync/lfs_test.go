@@ -69,6 +69,7 @@ func (f *fakeLFS) remove(oid string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.objects, oid)
+	delete(f.verified, oid)
 }
 
 func (f *fakeLFS) stored(oid string) bool {
