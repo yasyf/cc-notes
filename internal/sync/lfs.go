@@ -10,6 +10,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/lfs"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
+	"github.com/yasyf/cc-notes/model"
 )
 
 // client returns the LFS client for operation ("upload" or "download"),
@@ -188,6 +189,12 @@ func (e *engine) downloadAttachments(ctx context.Context) error {
 }
 
 func (e *engine) referenced(ctx context.Context) ([]store.ReferencedObject, error) {
+	if !slices.ContainsFunc(store.AttachmentKinds[:], func(kind model.Kind) bool {
+		root := refs.Root(kind)
+		return strings.HasPrefix(root, e.prefix) || strings.HasPrefix(e.prefix, root)
+	}) {
+		return nil, nil
+	}
 	referenced, err := e.store.ReferencedAttachments(ctx)
 	if err != nil {
 		return nil, err

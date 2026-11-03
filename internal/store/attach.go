@@ -40,6 +40,10 @@ type AttachmentUse struct {
 	Name   string
 }
 
+// AttachmentKinds are the entity kinds whose state can reference an
+// attachment; no other kind's ref ever holds one.
+var AttachmentKinds = [...]model.Kind{model.KindNote, model.KindDoc, model.KindLog, model.KindAnswer}
+
 // ReferencedObject is one LFS object the repository's live entity state
 // references, with every use of it — the detail sync needs to name entities
 // in transfer errors.
@@ -155,7 +159,7 @@ func (s *Store) ensurePruneGuard(ctx context.Context) (bool, error) {
 // sorted uses, so transfer errors name entities deterministically.
 func (s *Store) ReferencedAttachments(ctx context.Context) ([]ReferencedObject, error) {
 	if s.pins == nil {
-		pinned, err := s.PinnedKinds(ctx, model.KindNote, model.KindDoc, model.KindLog, model.KindAnswer)
+		pinned, err := s.PinnedKinds(ctx, AttachmentKinds[:]...)
 		if err != nil {
 			return nil, fmt.Errorf("referenced attachments: %w", err)
 		}
