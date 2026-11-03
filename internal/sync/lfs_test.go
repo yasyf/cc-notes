@@ -604,3 +604,24 @@ func TestSyncDownloadMissingObjectNamesEntity(t *testing.T) {
 		}
 	}
 }
+
+func TestPrefixedSyncOfAKindWithNoAttachmentsMakesNoLFSRequest(t *testing.T) {
+	bare := gittest.InitBare(t)
+	f, endpoint := newFakeLFS(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+	note := createNote(t, a, "attached")
+	attachFile(t, a, refs.For(model.KindNote, note.ID), "big.bin", []byte("not this sync's business"))
+	task := createTask(t, a, "scoped", "main")
+
+	report, err := ccsync.Prefixed(t.Context(), a, "origin", false, refs.For(model.KindTask, task.ID))
+	if err != nil {
+		t.Fatalf("Prefixed: %v", err)
+	}
+	if report.Pushed != 1 || report.Uploaded != 0 {
+		t.Fatalf("scoped sync report = %+v, want the task pushed and no upload", report)
+	}
+	if got := f.requestCount(); got != 0 {
+		t.Fatalf("scoped sync made %d LFS requests, want none", got)
+	}
+}
