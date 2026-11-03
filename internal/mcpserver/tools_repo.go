@@ -30,6 +30,7 @@ type relevantArgs struct {
 type syncArgs struct {
 	Remote string `json:"remote,omitempty" jsonschema:"remote to sync with (default: origin)"`
 	Full   bool   `json:"full,omitempty" jsonschema:"force a whole-namespace reconcile scan"`
+	Prefix string `json:"prefix,omitempty" jsonschema:"converge only the refs under this refs/cc-notes/ prefix, such as one ledger's ref"`
 }
 
 type reconcileArgs struct {
@@ -99,6 +100,7 @@ func registerRepo(ts *toolset, b *bridge) {
 			flags := []string{"--json"}
 			flags = optStr(flags, "--remote", in.Remote)
 			flags = optBool(flags, "--full", in.Full)
+			flags = optStr(flags, "--prefix", in.Prefix)
 			return b.run(ctx, argvFor([]string{"sync"}, flags)...)
 		})
 

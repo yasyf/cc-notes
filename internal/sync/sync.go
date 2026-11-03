@@ -40,7 +40,7 @@ const (
 	// republishes tracking state.
 	namespace     = "refs/cc-notes/"
 	syncNamespace = "refs/cc-notes-sync/"
-	// Namespace is the prefix a whole-namespace SyncPrefix converges.
+	// Namespace is the prefix a whole-namespace Prefixed converges.
 	Namespace = namespace
 	// maxRounds bounds the fetch-reconcile-push loop against a remote that
 	// keeps moving under us.
@@ -165,14 +165,14 @@ type engine struct {
 // run then fails wrapping ErrObjectsUnavailable, naming each deferred ref,
 // and the next sync retries it.
 func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report, error) {
-	return SyncPrefix(ctx, s, remote, full, namespace)
+	return Prefixed(ctx, s, remote, full, namespace)
 }
 
-// SyncPrefix is Sync over only the refs whose names start with prefix, such
+// Prefixed is Sync over only the refs whose names start with prefix, such
 // as one ledger's ref: it lists, fetches, folds, pushes, and moves the
 // attachments of those refs alone, so converging one entity never waits on
 // the whole namespace. A prefix outside refs/cc-notes/ is an error.
-func SyncPrefix(ctx context.Context, s *store.Store, remote string, full bool, prefix string) (Report, error) {
+func Prefixed(ctx context.Context, s *store.Store, remote string, full bool, prefix string) (Report, error) {
 	if !strings.HasPrefix(prefix, namespace) {
 		return Report{}, fmt.Errorf("sync %s: prefix %q is outside %s", remote, prefix, namespace)
 	}

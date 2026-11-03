@@ -1283,7 +1283,7 @@ func TestHistoryHydratesABloblessCanonicalRef(t *testing.T) {
 	}
 }
 
-func TestSyncPrefixConvergesOnlyTheRefsUnderIt(t *testing.T) {
+func TestPrefixedSyncConvergesOnlyTheRefsUnderIt(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
@@ -1296,16 +1296,16 @@ func TestSyncPrefixConvergesOnlyTheRefsUnderIt(t *testing.T) {
 	appendOps(t, b, taskRef, model.AddComment{Body: "from bob"})
 	other := refs.For(model.KindNote, createNote(t, b, "left out").ID)
 
-	report, err := ccsync.SyncPrefix(t.Context(), a, "origin", false, taskRef)
+	report, err := ccsync.Prefixed(t.Context(), a, "origin", false, taskRef)
 	if err != nil {
-		t.Fatalf("SyncPrefix(a): %v", err)
+		t.Fatalf("Prefixed(a): %v", err)
 	}
-	if want := (ccsync.Report{Pushed: 1, Rounds: 1}); report != want {
+	if want := (ccsync.Report{Pushed: 1, Reconciled: 1, Rounds: 1}); report != want {
 		t.Fatalf("A scoped sync report = %+v, want %+v", report, want)
 	}
-	report, err = ccsync.SyncPrefix(t.Context(), b, "origin", false, taskRef)
+	report, err = ccsync.Prefixed(t.Context(), b, "origin", false, taskRef)
 	if err != nil {
-		t.Fatalf("SyncPrefix(b): %v", err)
+		t.Fatalf("Prefixed(b): %v", err)
 	}
 	if want := (ccsync.Report{Merged: 1, Pushed: 1, Reconciled: 1, Rounds: 1}); report != want {
 		t.Fatalf("B scoped sync report = %+v, want %+v", report, want)
@@ -1313,8 +1313,9 @@ func TestSyncPrefixConvergesOnlyTheRefsUnderIt(t *testing.T) {
 	if _, published := ccRefs(t, bare)[other]; published {
 		t.Fatalf("scoped sync of %s pushed %s", taskRef, other)
 	}
-	bodies := []string{}
-	for _, c := range loadTask(t, b, taskRef).Comments {
+	comments := loadTask(t, b, taskRef).Comments
+	bodies := make([]string, 0, len(comments))
+	for _, c := range comments {
 		bodies = append(bodies, c.Body)
 	}
 	slices.Sort(bodies)
@@ -1323,9 +1324,9 @@ func TestSyncPrefixConvergesOnlyTheRefsUnderIt(t *testing.T) {
 	}
 }
 
-func TestSyncPrefixRefusesAPrefixOutsideTheNamespace(t *testing.T) {
+func TestPrefixedSyncRefusesAPrefixOutsideTheNamespace(t *testing.T) {
 	s := clone(t, gittest.InitBare(t), "Alice", "alice@example.com")
-	if _, err := ccsync.SyncPrefix(t.Context(), s, "origin", false, "refs/heads/"); err == nil || !strings.Contains(err.Error(), "outside refs/cc-notes/") {
-		t.Fatalf("SyncPrefix(refs/heads/) error = %v, want an outside-namespace refusal", err)
+	if _, err := ccsync.Prefixed(t.Context(), s, "origin", false, "refs/heads/"); err == nil || !strings.Contains(err.Error(), "outside refs/cc-notes/") {
+		t.Fatalf("Prefixed(refs/heads/) error = %v, want an outside-namespace refusal", err)
 	}
 }

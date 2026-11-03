@@ -49,6 +49,7 @@ func (s *Store) RecordUploadedAttachments(endpoint string, oids []string) error 
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("record uploaded attachments: %w", err)
 	}
+	//nolint:gosec // G304: the path is this store's own upload log, named by a hash of the endpoint.
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return fmt.Errorf("record uploaded attachments: %w", err)

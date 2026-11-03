@@ -2422,6 +2422,7 @@ command: cc-notes sync
   flags:
     --full shorthand=none type=bool default="false" usage="force a whole-namespace reconcile scan"
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --prefix shorthand=none type=string default="" usage="converge only the refs under this refs/cc-notes/ prefix, such as one ledger's ref"
     --remote shorthand=none type=string default="" usage="remote to sync with (default: every cc-notes-wired remote, else origin)"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
