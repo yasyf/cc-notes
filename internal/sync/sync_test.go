@@ -1282,3 +1282,51 @@ func TestHistoryHydratesABloblessCanonicalRef(t *testing.T) {
 		t.Fatalf("History = %v, want the one step of note %s", steps, note.ID.Short())
 	}
 }
+
+func TestPrefixedSyncConvergesOnlyTheRefsUnderIt(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	task := createTask(t, a, "scoped", "main")
+	taskRef := refs.For(model.KindTask, task.ID)
+	sync(t, a)
+	sync(t, b)
+
+	appendOps(t, a, taskRef, model.AddComment{Body: "from alice"})
+	appendOps(t, b, taskRef, model.AddComment{Body: "from bob"})
+	other := refs.For(model.KindNote, createNote(t, b, "left out").ID)
+
+	report, err := ccsync.Prefixed(t.Context(), a, "origin", false, taskRef)
+	if err != nil {
+		t.Fatalf("Prefixed(a): %v", err)
+	}
+	if want := (ccsync.Report{Pushed: 1, Reconciled: 1, Rounds: 1}); report != want {
+		t.Fatalf("A scoped sync report = %+v, want %+v", report, want)
+	}
+	report, err = ccsync.Prefixed(t.Context(), b, "origin", false, taskRef)
+	if err != nil {
+		t.Fatalf("Prefixed(b): %v", err)
+	}
+	if want := (ccsync.Report{Merged: 1, Pushed: 1, Reconciled: 1, Rounds: 1}); report != want {
+		t.Fatalf("B scoped sync report = %+v, want %+v", report, want)
+	}
+	if _, published := ccRefs(t, bare)[other]; published {
+		t.Fatalf("scoped sync of %s pushed %s", taskRef, other)
+	}
+	comments := loadTask(t, b, taskRef).Comments
+	bodies := make([]string, 0, len(comments))
+	for _, c := range comments {
+		bodies = append(bodies, c.Body)
+	}
+	slices.Sort(bodies)
+	if want := []string{"from alice", "from bob"}; !slices.Equal(bodies, want) {
+		t.Fatalf("B comments after scoped sync = %v, want %v", bodies, want)
+	}
+}
+
+func TestPrefixedSyncRefusesAPrefixOutsideTheNamespace(t *testing.T) {
+	s := clone(t, gittest.InitBare(t), "Alice", "alice@example.com")
+	if _, err := ccsync.Prefixed(t.Context(), s, "origin", false, "refs/heads/"); err == nil || !strings.Contains(err.Error(), "outside refs/cc-notes/") {
+		t.Fatalf("Prefixed(refs/heads/) error = %v, want an outside-namespace refusal", err)
+	}
+}

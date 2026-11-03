@@ -1,6 +1,7 @@
 package notes
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -12,10 +13,13 @@ import (
 // SyncOptions selects what a Sync run converges. Remote names a single remote to
 // sync; an empty Remote fans out over every cc-notes-wired remote in git-config
 // order, or the default remote when none is wired. Full forces a whole-namespace
-// reconcile scan each round rather than the scoped tracking-delta scan.
+// reconcile scan each round rather than the scoped tracking-delta scan. Prefix,
+// when set, converges only the refs whose names start with it, such as one
+// ledger's ref; empty converges the whole refs/cc-notes/ namespace.
 type SyncOptions struct {
 	Remote string
 	Full   bool
+	Prefix string
 }
 
 // SyncReport tallies a Sync run, mirroring the engine's per-run report. Created,
@@ -65,7 +69,7 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 	var report SyncReport
 	var syncErr error
 	for _, r := range remotes {
-		rep, err := ccsync.Sync(ctx, c.s, r, opts.Full)
+		rep, err := ccsync.Prefixed(ctx, c.s, r, opts.Full, cmp.Or(opts.Prefix, ccsync.Namespace))
 		report.Created += rep.Created
 		report.FastForwarded += rep.FastForwarded
 		report.Merged += rep.Merged

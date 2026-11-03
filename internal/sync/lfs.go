@@ -63,7 +63,7 @@ func (e *engine) lfsEndpoint(ctx context.Context) (lfs.Endpoint, error) {
 // A repository referencing no attachments makes no LFS request at all.
 func (e *engine) uploadAttachments(ctx context.Context, secluded map[string]bool) error {
 	e.blocked, e.uploadErr = nil, nil
-	referenced, err := e.store.ReferencedAttachments(ctx)
+	referenced, err := e.referenced(ctx)
 	if err != nil {
 		return fmt.Errorf("upload attachments: %w", err)
 	}
@@ -155,7 +155,7 @@ func blockedBy(candidates []store.ReferencedObject, err error) map[string]bool {
 // this run changed, so a download an earlier sync never finished heals here.
 // A repository referencing no attachments makes no LFS request at all.
 func (e *engine) downloadAttachments(ctx context.Context) error {
-	referenced, err := e.store.ReferencedAttachments(ctx)
+	referenced, err := e.referenced(ctx)
 	if err != nil {
 		return fmt.Errorf("download attachments: %w", err)
 	}
@@ -185,6 +185,18 @@ func (e *engine) downloadAttachments(ctx context.Context) error {
 		return transferError("download", err, missing)
 	}
 	return nil
+}
+
+func (e *engine) referenced(ctx context.Context) ([]store.ReferencedObject, error) {
+	referenced, err := e.store.ReferencedAttachments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(referenced, func(obj store.ReferencedObject) bool {
+		return !slices.ContainsFunc(obj.Uses, func(use store.AttachmentUse) bool {
+			return strings.HasPrefix(refs.For(use.Kind, use.Entity), e.prefix)
+		})
+	}), nil
 }
 
 func onlySecluded(obj store.ReferencedObject, secluded map[string]bool) bool {
