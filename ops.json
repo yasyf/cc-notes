@@ -1,1 +1,1 @@
-{"v":1,"lamport":1,"session":"31e42eae-eea6-41bf-87c2-cec44886e666","ops":[{"kind":"create_log","nonce":"08bc2d3daeac8a0ebbba7f433b121e92","title":"papercuts","tags":["papercut"],"anchors":[]}]}
+{"v":1,"lamport":2,"session":"31e42eae-eea6-41bf-87c2-cec44886e666","ops":[{"kind":"append_entry","text":"Autobump verdict clean on a code-only cc-notes merge: #222 cut no release, so v0.75.17 was tagged by hand; a merged fix silently stays unreleased"}]}
