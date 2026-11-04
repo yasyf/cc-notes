@@ -40,7 +40,7 @@ func Discover(ctx context.Context, g gitcmd.Git, remote string) (Endpoint, error
 	}
 	ep, err := derive(raw)
 	if err != nil {
-		return Endpoint{}, fmt.Errorf("discover lfs endpoint for %s: %w", remote, err)
+		return Endpoint{}, fmt.Errorf("discover lfs endpoint for %s: %w", remote, redacted(err))
 	}
 	return ep, nil
 }

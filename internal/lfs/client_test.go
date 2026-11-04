@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -721,5 +722,124 @@ func TestSSHGrantMissingHref(t *testing.T) {
 	ep := lfs.Endpoint{SSHUserHost: "git@git-server.com", SSHPath: "foo/bar.git"}
 	if _, err := lfs.NewClient(t.Context(), g, ep, "upload"); err == nil || !strings.Contains(err.Error(), "no href") {
 		t.Fatalf("err = %v, want grant-has-no-href error", err)
+	}
+}
+
+const presignedQuery = "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAEXAMPLE&X-Amz-Signature=feedface"
+
+func assertRedacted(t *testing.T, err error, keep string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("err = nil, want a transfer failure")
+	}
+	for _, secret := range []string{"X-Amz", "AKIAEXAMPLE", "feedface"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error %q leaks %q", err, secret)
+		}
+	}
+	if !strings.Contains(err.Error(), keep) {
+		t.Fatalf("error %q lost %q", err, keep)
+	}
+}
+
+func presignedBatch(t *testing.T, operation, href, oid string, size int64) *httptest.Server {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"objects": []any{map[string]any{
+		"oid": oid, "size": size, "actions": map[string]any{operation: map[string]string{"href": href}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", lfs.MediaType)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func closedServerURL(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close()
+	return srv.URL
+}
+
+func TestDownloadTransportFailureRedactsPresignedQuery(t *testing.T) {
+	base := closedServerURL(t)
+	oid := strings.Repeat("ab", 32)
+	batch := presignedBatch(t, "download", base+"/objects/"+oid+presignedQuery, oid, 1)
+	c := &lfs.Client{Endpoint: batch.URL}
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+
+	_, err := c.Download(t.Context(), store, []lfs.Object{{OID: oid, Size: 1}})
+
+	assertRedacted(t, err, base+"/objects/"+oid)
+}
+
+func TestUploadTransportFailureRedactsPresignedQuery(t *testing.T) {
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+	oid, size, err := store.PutFile(writeFile(t, "a.bin", []byte("a")))
+	if err != nil {
+		t.Fatalf("PutFile: %v", err)
+	}
+	base := closedServerURL(t)
+	batch := presignedBatch(t, "upload", base+"/objects/"+oid+presignedQuery, oid, size)
+	c := &lfs.Client{Endpoint: batch.URL}
+
+	_, err = c.Upload(t.Context(), store, []lfs.Object{{OID: oid, Size: size}})
+
+	assertRedacted(t, err, base+"/objects/"+oid)
+}
+
+func TestUnparseableHrefRedactsPresignedQuery(t *testing.T) {
+	oid := strings.Repeat("ab", 32)
+	batch := presignedBatch(t, "download", "http://bucket.example/objects/\x7f"+presignedQuery, oid, 1)
+	c := &lfs.Client{Endpoint: batch.URL}
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+
+	_, err := c.Download(t.Context(), store, []lfs.Object{{OID: oid, Size: 1}})
+
+	assertRedacted(t, err, "http://bucket.example/objects/")
+}
+
+func TestUploadRefusalRedactsPresignedURLInServerBodyAndKeepsObjectError(t *testing.T) {
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+	oid, size, err := store.PutFile(writeFile(t, "a.bin", []byte("a")))
+	if err != nil {
+		t.Fatalf("PutFile: %v", err)
+	}
+	var content *httptest.Server
+	content = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprintf(w, "<Error><Resource>%s%s</Resource></Error>", content.URL, r.URL.RequestURI())
+	}))
+	t.Cleanup(content.Close)
+	batch := presignedBatch(t, "upload", content.URL+"/objects/"+oid+presignedQuery, oid, size)
+	c := &lfs.Client{Endpoint: batch.URL}
+
+	_, err = c.Upload(t.Context(), store, []lfs.Object{{OID: oid, Size: size}})
+
+	assertRedacted(t, err, content.URL+"/objects/"+oid)
+	var objErr *lfs.ObjectError
+	if !errors.As(err, &objErr) || objErr.OID != oid || objErr.Code != http.StatusForbidden {
+		t.Fatalf("err = %v, want *ObjectError for %s with code 403", err, oid)
+	}
+}
+
+func TestBatchFailureRedactsEndpointCredentialsAndKeepsUnsupported(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	endpoint := strings.Replace(srv.URL, "http://", "http://user:hunter2@", 1)
+	c := &lfs.Client{Endpoint: endpoint}
+	store := lfs.Store{Dir: filepath.Join(t.TempDir(), "lfs")}
+
+	_, err := c.Download(t.Context(), store, []lfs.Object{{OID: strings.Repeat("ab", 32), Size: 1}})
+
+	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), srv.URL) {
+		t.Fatalf("err = %v, want the endpoint without its password", err)
+	}
+	if !errors.Is(err, lfs.ErrUnsupported) {
+		t.Fatalf("err = %v, want it to still wrap ErrUnsupported", err)
 	}
 }
