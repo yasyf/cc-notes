@@ -1482,3 +1482,48 @@ func TestReadChainStaysIncompleteWhenBackfillFindsNothing(t *testing.T) {
 		t.Fatalf("ReadChain = %v, want ErrIncompleteChain", err)
 	}
 }
+
+func TestLooseObjectWriteIsGitReadableAndIdempotent(t *testing.T) {
+	dir := initRepo(t)
+	repo := open(t, dir)
+	content := []byte("loose object\n")
+	var sha model.SHA
+	writeBlob := func() {
+		t.Helper()
+		if err := repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+			var err error
+			sha, err = objects.WriteBlob(content)
+			return err
+		}); err != nil {
+			t.Fatalf("WriteBlob: %v", err)
+		}
+	}
+	writeBlob()
+	if got := git(t, dir, "cat-file", "-p", string(sha)); got != strings.TrimSpace(string(content)) {
+		t.Fatalf("cat-file -p %s = %q", sha, got)
+	}
+	fanout := filepath.Join(dir, ".git", "objects", string(sha[:2]))
+	path := filepath.Join(fanout, string(sha[2:]))
+	first, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Mode().Perm() != 0o444 {
+		t.Fatalf("object mode = %v, want 0444", first.Mode().Perm())
+	}
+	writeBlob()
+	second, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(first, second) || !first.ModTime().Equal(second.ModTime()) {
+		t.Fatalf("rewrite replaced the existing object: %v then %v", first.ModTime(), second.ModTime())
+	}
+	entries, err := os.ReadDir(fanout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("fan-out holds %d entries, want only the object: %v", len(entries), entries)
+	}
+}

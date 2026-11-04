@@ -127,14 +127,15 @@ func TestQueryMetadataCardinalityDiffWork(t *testing.T) {
 			db := newQueryMetadataDB(t)
 			original := make(map[model.EntityID]model.SHA, count)
 			if err := db.Update(func(tx *bolt.Tx) error {
+				batch := make(queryGenerationBatch)
 				for i := range count {
 					id := model.EntityID(fmt.Sprintf("id-%05d", i))
 					original[id] = "tip"
-					if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", model.Doc{ID: id})); err != nil {
+					if err := batch.replaceMetadata(tx, projectQueryMetadata("binding", "tip", model.Doc{ID: id})); err != nil {
 						return err
 					}
 				}
-				return nil
+				return batch.flush(t.Context(), tx)
 			}); err != nil {
 				t.Fatal(err)
 			}
