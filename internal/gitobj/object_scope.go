@@ -140,6 +140,8 @@ type objectReadScope struct {
 	err     error
 	refresh bool
 	closed  bool
+	// managedFresh marks the managed pack list checked for this operation.
+	managedFresh bool
 }
 
 func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {

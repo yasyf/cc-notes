@@ -346,6 +346,7 @@ func (s *Store) extendsAuthority(ctx context.Context, authoritative, tip model.S
 func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (*managedIntent, error)) (err error) {
 	var published bool
 	var publishedUpdates []gitcmd.RefUpdate
+	defer func() { err = errors.Join(err, s.Repo.ReleaseHeldPacks()) }()
 	defer func() {
 		if published && err != nil {
 			err = publicationFailure(publishedUpdates, err)

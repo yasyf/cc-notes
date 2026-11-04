@@ -24,6 +24,10 @@ type objectStorage struct {
 	objects cache.Object
 	scope   *objectReadScope
 	buffer  *objectBuffer
+	managed managedPacks
+	// holdPacks and held protect packs a writer has yet to publish refs to.
+	holdPacks bool
+	held      []string
 }
 
 func (s *objectStorage) Reindex() { s.scope.refresh = true }
@@ -88,6 +92,9 @@ func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Has
 		return nil, err
 	}
 	obj, err := s.bufferedObject(hash)
+	if errors.Is(err, plumbing.ErrObjectNotFound) {
+		obj, err = s.managedObject(hash)
+	}
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
 		obj, err = s.looseObject(hash)
 	}

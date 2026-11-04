@@ -38,9 +38,7 @@ const (
 	// rollupOneIn samples pack checksums, so most writes skip listing a pack
 	// directory that can hold thousands of files.
 	rollupOneIn = 8
-	// packKeepAge outlasts any write's gap between publishing a pack and its ref.
-	// Until then the keep file stops `git repack -a -d` deleting a pack that no
-	// ref reaches yet.
+	// packKeepAge bounds the keep file of a writer that died before releasing it.
 	packKeepAge = time.Hour
 
 	managedPackPrefix = "ccn"
@@ -169,8 +167,12 @@ func (s *objectStorage) writeObjects(objects []plumbing.EncodedObject) error {
 		return err
 	}
 	_, err = tmp.Write(pack)
-	if err := publishPack(dir, tmp, packTier(int64(len(pack))), checksum, entries, false, err); err != nil {
+	tier := packTier(int64(len(pack)))
+	if err := publishPack(dir, tmp, tier, checksum, entries, s.holdPacks, false, err); err != nil {
 		return err
+	}
+	if s.holdPacks {
+		s.held = append(s.held, filepath.Join(dir, packStem(tier, checksum)+packKeepExt))
 	}
 	if int(checksum[0])%rollupOneIn == 0 {
 		// best-effort: the pack is already visible, the next sampled write retries,
@@ -232,7 +234,7 @@ func encodePack(objects []plumbing.EncodedObject) ([]byte, []packEntry, error) {
 }
 
 func writeObjectHeader(w *bytes.Buffer, typ plumbing.ObjectType, size int64) {
-	first := byte(typ)<<4 | byte(size&0x0f)
+	first := byte(typ)<<4 | byte(size&0x0f) //nolint:gosec // G115: git object types fit three bits.
 	size >>= 4
 	for size > 0 {
 		w.WriteByte(first | 0x80)
@@ -278,11 +280,12 @@ func packStem(tier int, checksum []byte) string {
 	return fmt.Sprintf("%s%d-%x", managedPackPrefix, tier, checksum)
 }
 
-// publishPack closes tmp and renames it into place, the keep file before the
-// index, since the index is what makes git see a pack. A durable publish reaches
-// disk before it returns, because its caller deletes the packs it replaces.
-// writeErr carries a failed write to tmp.
-func publishPack(dir string, tmp *os.File, tier int, checksum []byte, entries []packEntry, durable bool, writeErr error) (resultErr error) {
+// publishPack closes tmp and renames it into place, any keep file before the
+// index, since the index is what makes git see a pack. A kept pack survives
+// `git repack -a -d` while no ref reaches it yet. A durable publish reaches disk
+// before it returns, because its caller deletes the packs it replaces. writeErr
+// carries a failed write to tmp.
+func publishPack(dir string, tmp *os.File, tier int, checksum []byte, entries []packEntry, keep, durable bool, writeErr error) (resultErr error) {
 	defer func() {
 		if resultErr != nil {
 			resultErr = errors.Join(resultErr, os.Remove(tmp.Name()))
@@ -300,8 +303,10 @@ func publishPack(dir string, tmp *os.File, tier int, checksum []byte, entries []
 	if err := errors.Join(err, syncIf(durable, indexTmp), indexTmp.Chmod(0o444), indexTmp.Close()); err != nil {
 		return errors.Join(err, os.Remove(indexTmp.Name()))
 	}
-	if err := os.WriteFile(stem+packKeepExt, nil, 0o600); err != nil {
-		return errors.Join(err, os.Remove(indexTmp.Name()))
+	if keep {
+		if err := os.WriteFile(stem+packKeepExt, nil, 0o600); err != nil {
+			return errors.Join(err, os.Remove(indexTmp.Name()))
+		}
 	}
 	if err := os.Rename(tmp.Name(), stem+packFileExt); err != nil {
 		return errors.Join(err, os.Remove(indexTmp.Name()))
@@ -338,6 +343,29 @@ func managedPackStem(name, ext string) (int, string, bool) {
 	return int(rest[0] - '0'), stem, true
 }
 
+// HoldNewPacks makes this handle protect each pack it writes with a keep file
+// until ReleaseHeldPacks, for a writer that publishes refs to them afterwards.
+func (r *Repo) HoldNewPacks() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.storage.holdPacks = true
+}
+
+// ReleaseHeldPacks drops the keep files of the packs this handle wrote, once
+// their refs are published or abandoned.
+func (r *Repo) ReleaseHeldPacks() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result error
+	for _, path := range r.storage.held {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			result = errors.Join(result, err)
+		}
+	}
+	r.storage.held = nil
+	return result
+}
+
 // RollupPacks merges every full tier of the packs source scopes wrote and reports
 // what a write's best-effort attempt would have dropped.
 func (r *Repo) RollupPacks() error {
@@ -347,9 +375,10 @@ func (r *Repo) RollupPacks() error {
 }
 
 // rollupPacks merges every full tier into the next one up, bounding the packs
-// these writes leave behind. A pack a multi-pack index lists stays where it is:
-// removing it would leave the index naming a missing pack, and the maintenance
-// that wrote the index is what consumes it.
+// these writes leave behind. A pack with a fresh keep file waits for its writer.
+// A pack a multi-pack index lists stays where it is: removing it would leave the
+// index naming a missing pack, and the maintenance that wrote the index is what
+// consumes it.
 func (s *objectStorage) rollupPacks() error {
 	dir := filepath.Join(s.root, packDir)
 	listing, err := os.ReadDir(dir)
@@ -363,10 +392,15 @@ func (s *objectStorage) rollupPacks() error {
 	var result error
 	var tiers [packTopTier][]string
 	sizes := make(map[string]int64)
+	kept := make(map[string]struct{})
 	for _, entry := range listing {
 		name := entry.Name()
 		if _, stem, ok := managedPackStem(name, packKeepExt); ok {
-			result = errors.Join(result, retireKeep(filepath.Join(dir, stem+packKeepExt), entry))
+			fresh, err := retireKeep(filepath.Join(dir, stem+packKeepExt), entry)
+			result = errors.Join(result, err)
+			if fresh {
+				kept[stem] = struct{}{}
+			}
 			continue
 		}
 		if _, stem, ok := managedPackStem(name, packFileExt); ok {
@@ -384,6 +418,10 @@ func (s *objectStorage) rollupPacks() error {
 		}
 	}
 	for tier, stems := range tiers {
+		stems = slices.DeleteFunc(stems, func(stem string) bool {
+			_, held := kept[stem]
+			return held
+		})
 		if len(stems) < packTierFanout {
 			continue
 		}
@@ -413,21 +451,21 @@ func (s *objectStorage) rollupPacks() error {
 	return result
 }
 
-func retireKeep(path string, entry os.DirEntry) error {
+func retireKeep(path string, entry os.DirEntry) (bool, error) {
 	info, err := entry.Info()
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if time.Since(info.ModTime()) < packKeepAge {
-		return nil
+		return true, nil
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 // midxPackNames returns the pack index names every multi-pack index in dir lists.
@@ -447,7 +485,7 @@ func midxPackNames(dir string) (map[string]struct{}, error) {
 }
 
 func readMidxPackNames(path string, names map[string]struct{}) (resultErr error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:gosec // G304: a path this repository's object directory names.
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -471,7 +509,7 @@ func readMidxPackNames(path string, names map[string]struct{}) (resultErr error)
 			continue
 		}
 		start := int64(binary.BigEndian.Uint64(table[i+4:]))                //nolint:gosec // G115: a file offset.
-		end := int64(binary.BigEndian.Uint64(table[i+midxChunkRowSize+4:])) //nolint:gosec // G115: a file offset.
+		end := int64(binary.BigEndian.Uint64(table[i+midxChunkRowSize+4:])) //nolint:gosec // G115, G602: a file offset, and the loop stops one row early.
 		chunk := make([]byte, end-start)
 		if _, err := file.ReadAt(chunk, start); err != nil {
 			return err
@@ -505,7 +543,7 @@ func mergePacks(dir string, tier int, stems []string) (string, error) {
 		return "", err
 	}
 	checksum, entries, writeErr := writeMergedPack(tmp, sources)
-	if err := publishPack(dir, tmp, tier, checksum, entries, true, writeErr); err != nil {
+	if err := publishPack(dir, tmp, tier, checksum, entries, false, true, writeErr); err != nil {
 		return "", err
 	}
 	merged := packStem(tier, checksum)
@@ -514,7 +552,7 @@ func mergePacks(dir string, tier int, stems []string) (string, error) {
 		if stem == merged {
 			continue
 		}
-		for _, ext := range []string{packIndexExt, packFileExt, packKeepExt} {
+		for _, ext := range []string{packIndexExt, packFileExt} {
 			if err := os.Remove(filepath.Join(dir, stem+ext)); err != nil && !errors.Is(err, os.ErrNotExist) {
 				result = errors.Join(result, err)
 			}
@@ -537,7 +575,7 @@ type mergeEntry struct {
 }
 
 func readMergeSource(stem string, seen map[plumbing.Hash]struct{}) (mergeSource, error) {
-	index, err := os.ReadFile(stem + packIndexExt)
+	index, err := os.ReadFile(stem + packIndexExt) //nolint:gosec // G304: a path this repository's object directory names.
 	if err != nil {
 		return mergeSource{}, err
 	}
@@ -597,7 +635,7 @@ func writeMergedPack(tmp *os.File, sources []mergeSource) ([]byte, []packEntry, 
 	entries := make([]packEntry, 0, total)
 	offset := int64(packHeaderSize)
 	for _, source := range sources {
-		file, err := os.Open(source.stem + packFileExt)
+		file, err := os.Open(source.stem + packFileExt) //nolint:gosec // G304: a path this repository's object directory names.
 		if err != nil {
 			return nil, nil, err
 		}

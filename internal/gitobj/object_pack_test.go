@@ -222,9 +222,6 @@ func TestRollupMergesAFullTierWithoutLosingObjects(t *testing.T) {
 	if len(merged) != 1 {
 		t.Fatalf("tier 1 indexes = %v, want one", merged)
 	}
-	if keep := scopePacks(t, dir, "ccn1-*.keep"); len(keep) != 1 {
-		t.Errorf("tier 1 keep files = %v, want one", keep)
-	}
 	git(t, dir, "verify-pack", merged[0])
 	git(t, dir, "fsck", "--full", "--strict", "--no-dangling")
 	for _, sha := range all {
@@ -262,9 +259,10 @@ func TestRollupLeavesPacksAMultiPackIndexLists(t *testing.T) {
 	git(t, dir, "multi-pack-index", "verify")
 }
 
-func TestKeepFileProtectsAPackFromRepackUntilItAges(t *testing.T) {
+func TestHeldPackSurvivesRepackUntilReleased(t *testing.T) {
 	dir := gittest.InitRepo(t)
 	repo := open(t, dir)
+	repo.HoldNewPacks()
 	var blobs []model.SHA
 	err := repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
 		blobs = writeBlobs(t, objects, "unpublished", 6)
@@ -277,24 +275,111 @@ func TestKeepFileProtectsAPackFromRepackUntilItAges(t *testing.T) {
 	if err := gitErr(dir, "cat-file", "-e", string(blobs[0])); err != nil {
 		t.Fatalf("repack deleted a pack no ref reaches yet: %v", err)
 	}
-	keeps := scopePacks(t, dir, "ccn0-*.keep")
-	if len(keeps) != 1 {
-		t.Fatalf("keep files = %v, want one", keeps)
+	if err := repo.ReleaseHeldPacks(); err != nil {
+		t.Fatal(err)
+	}
+	if keeps := scopePacks(t, dir, "*.keep"); len(keeps) != 0 {
+		t.Fatalf("keep files after release: %v", keeps)
+	}
+	git(t, dir, "reflog", "expire", "--expire=now", "--all")
+	git(t, dir, "gc", "--prune=now")
+	if err := gitErr(dir, "cat-file", "-e", string(blobs[0])); err == nil {
+		t.Fatal("gc kept an unreachable object after release")
+	}
+}
+
+func TestRollupWaitsForAFreshKeepFileAndRetiresAStaleOne(t *testing.T) {
+	dir := gittest.InitRepo(t)
+	repo := open(t, dir)
+	repo.HoldNewPacks()
+	for scope := range 8 {
+		err := repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+			writeBlobs(t, objects, fmt.Sprintf("held %d", scope), 5)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := repo.RollupPacks(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(keeps[0]); err != nil {
-		t.Fatalf("rollup removed a fresh keep file: %v", err)
+	keeps := scopePacks(t, dir, "ccn0-*.keep")
+	if got := len(scopePacks(t, dir, "ccn0-*.idx")); got != 8 || len(keeps) != 8 {
+		t.Fatalf("tier 0 indexes = %d, keep files = %v; want 8 of each", got, keeps)
 	}
 	old := time.Now().Add(-2 * time.Hour)
-	if err := os.Chtimes(keeps[0], old, old); err != nil {
-		t.Fatal(err)
+	for _, keep := range keeps {
+		if err := os.Chtimes(keep, old, old); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := repo.RollupPacks(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(keeps[0]); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("aged keep file still present: %v", err)
+	if merged := scopePacks(t, dir, "ccn1-*.idx"); len(merged) != 1 {
+		t.Fatalf("tier 1 indexes = %v, want one", merged)
+	}
+	if remaining := scopePacks(t, dir, "*.keep"); len(remaining) != 0 {
+		t.Fatalf("stale keep files remain: %v", remaining)
+	}
+}
+
+func TestManagedPacksServeReadsWithoutAGitChild(t *testing.T) {
+	dir := gittest.InitRepo(t)
+	repo := open(t, dir)
+	var blobs []model.SHA
+	err := repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+		blobs = writeBlobs(t, objects, "native", 6)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	err = repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+		for i, sha := range blobs {
+			read, err := objects.ReadBlob(sha)
+			if err != nil {
+				return err
+			}
+			if want := fmt.Sprintf("native %d\n", i); string(read) != want {
+				t.Errorf("ReadBlob(%s) = %q, want %q", sha, read, want)
+			}
+			if kind, err := objects.ObjectType(sha); err != nil || kind != plumbing.BlobObject {
+				t.Errorf("ObjectType(%s) = %v, %v", sha, kind, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagedPacksFallThroughForAnObjectGitPacked(t *testing.T) {
+	dir := gittest.InitRepo(t)
+	repo := open(t, dir)
+	blob := git(t, dir, "hash-object", "-w", "--stdin")
+	git(t, dir, "repack", "-a", "-d")
+	err := repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+		writeBlobs(t, objects, "other", 6)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+		read, err := objects.ReadBlob(model.SHA(blob))
+		if err != nil {
+			return err
+		}
+		if len(read) != 0 {
+			t.Errorf("empty blob read as %q", read)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

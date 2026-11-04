@@ -95,14 +95,22 @@ func (s *SourceObjects) ObjectType(sha model.SHA) (plumbing.ObjectType, error) {
 	if !plumbing.IsHash(string(sha)) {
 		return plumbing.InvalidObject, fmt.Errorf("invalid object sha %q", sha)
 	}
-	if value, err := s.repo.storage.bufferedObject(plumbing.NewHash(string(sha))); err == nil {
+	hash := plumbing.NewHash(string(sha))
+	value, err := s.repo.storage.bufferedObject(hash)
+	if errors.Is(err, plumbing.ErrObjectNotFound) {
+		value, err = s.repo.storage.managedObject(hash)
+	}
+	if err == nil {
 		return value.Type(), nil
+	}
+	if !errors.Is(err, plumbing.ErrObjectNotFound) {
+		return plumbing.InvalidObject, err
 	}
 	batch, err := s.repo.storage.scope.batch(s.repo.storage.backend)
 	if err != nil {
 		return plumbing.InvalidObject, err
 	}
-	info, err := batch.Info(plumbing.NewHash(string(sha)))
+	info, err := batch.Info(hash)
 	if err != nil {
 		return plumbing.InvalidObject, err
 	}
