@@ -57,7 +57,7 @@ func (s *Store) ReindexIfMissing(ctx context.Context) (err error) {
 	if err := s.CheckRecords(); err != nil {
 		return err
 	}
-	lock, err := managed.TryLock(s.recordsCommonDir)
+	lock, err := managed.TryLock(s.recordsCommonDir, true)
 	if err != nil || lock == nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 		return err
 	}
 	path := managed.Path(s.recordsCommonDir)
-	building := path + ".reindex-building"
+	building := s.reindexBuildingPath()
 	staging := path + ".reindex"
 	if err := os.Remove(building); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -258,6 +258,10 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 		return err
 	}
 	return s.finishReindex(ctx, lock)
+}
+
+func (s *Store) reindexBuildingPath() string {
+	return managed.Path(s.recordsCommonDir) + ".reindex-building"
 }
 
 func (s *Store) sourceRefTip(ctx context.Context, ref string) (model.SHA, error) {

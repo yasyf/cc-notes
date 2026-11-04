@@ -100,6 +100,32 @@ func TestRelevantCacheEntryRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRelevantCachedRacyGuardLeavesEntrySettled(t *testing.T) {
+	const window = 2 * time.Second
+	defer SetRelevantRacyWindow(window)()
+	c, dir := newWBClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	if _, _, err := c.CreateNote(ctx, NoteSpec{Title: "handler", Anchors: AnchorSpec{Paths: []string{"svc/handler.go"}}}); err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	time.Sleep(window + 500*time.Millisecond)
+	if err := os.WriteFile(filepath.Join(c.s.CommonDir(), "unrelated.lock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	render := func(entries []RelevantEntry) ([]byte, error) { return json.Marshal(entries) }
+	if _, err := c.RelevantCached(ctx, "svc/handler.go", RelevantFilter{}, "json", render); err != nil {
+		t.Fatalf("RelevantCached: %v", err)
+	}
+	entry, ok := relevantEntryOf(ctx, t, c, "svc/handler.go", RelevantFilter{})
+	if !ok {
+		t.Fatal("no cache entry was written")
+	}
+	if entry.Racy {
+		t.Fatal("a write beside the stamped files marked the entry racy")
+	}
+}
+
 func TestRelevantCachedRacyEntryWaitsOutTheWindow(t *testing.T) {
 	const window = 6 * time.Second
 	defer SetRelevantRacyWindow(window)()

@@ -27,28 +27,29 @@ import (
 )
 
 type relevantCacheEntry struct {
-	Key        string       `json:"key"`
-	Built      int64        `json:"built"`
-	Deadline   int64        `json:"deadline,omitempty"`
-	Env        string       `json:"env"`
-	Exe        string       `json:"exe"`
-	Git        string       `json:"git"`
-	Racy       bool         `json:"racy,omitempty"`
-	RacyRefs   bool         `json:"racy_refs,omitempty"`
-	Revalidate bool         `json:"revalidate,omitempty"`
-	Stamps     []fileStamp  `json:"stamps,omitempty"`
-	Files      []fileStamp  `json:"files,omitempty"`
-	Rendered   []string     `json:"rendered,omitempty"`
-	LooseRefs  []string     `json:"loose_refs,omitempty"`
-	HeadDeps   []fileStamp  `json:"head_deps,omitempty"`
-	AnyHead    bool         `json:"any_head,omitempty"`
-	ConfigSum  string       `json:"config_sum,omitempty"`
-	BaseFile   string       `json:"base_file,omitempty"`
-	BaseRef    string       `json:"base_ref,omitempty"`
-	Head       model.SHA    `json:"head,omitempty"`
-	MergeBase  model.SHA    `json:"merge_base,omitempty"`
-	Deps       relevantDeps `json:"-"`
-	Output     []byte       `json:"-"`
+	Key           string       `json:"key"`
+	Built         int64        `json:"built"`
+	Deadline      int64        `json:"deadline,omitempty"`
+	Env           string       `json:"env"`
+	Exe           string       `json:"exe"`
+	Git           string       `json:"git"`
+	Racy          bool         `json:"racy,omitempty"`
+	RacyRefs      bool         `json:"racy_refs,omitempty"`
+	Revalidate    bool         `json:"revalidate,omitempty"`
+	Stamps        []fileStamp  `json:"stamps,omitempty"`
+	Files         []fileStamp  `json:"files,omitempty"`
+	Rendered      []string     `json:"rendered,omitempty"`
+	LooseRefs     []string     `json:"loose_refs,omitempty"`
+	HeadDeps      []fileStamp  `json:"head_deps,omitempty"`
+	AnyHead       bool         `json:"any_head,omitempty"`
+	ConfigSum     string       `json:"config_sum,omitempty"`
+	LocalPushOnly bool         `json:"local_push_only,omitempty"`
+	BaseFile      string       `json:"base_file,omitempty"`
+	BaseRef       string       `json:"base_ref,omitempty"`
+	Head          model.SHA    `json:"head,omitempty"`
+	MergeBase     model.SHA    `json:"merge_base,omitempty"`
+	Deps          relevantDeps `json:"-"`
+	Output        []byte       `json:"-"`
 }
 
 type relevantCacheHeader struct {
@@ -301,6 +302,10 @@ func (f fileStamp) racyMtime(start time.Time) bool {
 	return !f.Missing && time.Unix(0, f.ModTime).After(start.Add(-relevantRacyWindow))
 }
 
+func (f fileStamp) coarse() bool {
+	return f.ModTime%time.Second.Nanoseconds() == 0 && f.Ctime%time.Second.Nanoseconds() == 0
+}
+
 func (f fileStamp) racy(start time.Time) bool {
 	edge := start.Add(-relevantRacyWindow)
 	return !f.Missing && (time.Unix(0, f.ModTime).After(edge) || time.Unix(0, f.Ctime).After(edge))
@@ -355,7 +360,9 @@ func (e relevantCacheEntry) built(now time.Time) bool {
 // sections changed: a busy repository moves both constantly, and neither a
 // sibling branch nor another branch's tracking config reaches p's rendering. A
 // moved default base qualifies when its merge base with HEAD is unchanged, the
-// only thing rendering reads from it, at the cost of one git process.
+// only thing rendering reads from it, at the cost of one git process. A moved
+// local push include qualifies when it held and still holds only what cc-notes
+// writes there, which only pushes read.
 func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relevantCacheEntry, p string, filter RelevantFilter, now time.Time) bool {
 	if (e.Racy && !e.RacyRefs) || !e.built(now) || !e.filesValid() {
 		return false
@@ -377,6 +384,9 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 		}
 		if s.Path == e.BaseFile && !stamps[i].Missing {
 			baseMoved = true
+			continue
+		}
+		if s.Path == c.localPushFile() && e.LocalPushOnly && localPushOnly(s.Path) {
 			continue
 		}
 		root, ok := roots[s.Path]
@@ -441,6 +451,15 @@ func (c *Client) branchDir(s fileStamp) bool {
 		}
 	}
 	return false
+}
+
+func (c *Client) localPushFile() string {
+	return joinPath(c.s.RecordsCommonDir(), filepath.FromSlash(store.LocalPushInclude))
+}
+
+func localPushOnly(path string) bool {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: this repository's own local push include.
+	return err == nil && store.IsLocalPushConfig(data)
 }
 
 func (c *Client) mergeBaseHeld(ctx context.Context, e relevantCacheEntry) bool {
