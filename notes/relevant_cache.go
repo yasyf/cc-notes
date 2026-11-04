@@ -403,7 +403,7 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 			return false
 		}
 	}
-	if baseMoved && !c.mergeBaseHeld(ctx, e, resolved) {
+	if baseMoved && !c.mergeBaseHeld(ctx, e) {
 		return false
 	}
 	for _, i := range moved {
@@ -443,9 +443,15 @@ func (c *Client) branchDir(s fileStamp) bool {
 	return false
 }
 
-func (c *Client) mergeBaseHeld(ctx context.Context, e relevantCacheEntry, resolved []string) bool {
-	short := strings.TrimPrefix(e.BaseRef, "refs/remotes/")
-	if e.MergeBase == "" || slices.ContainsFunc(resolved, func(rev string) bool { return rev != "" && strings.Contains(rev, short) }) {
+func (c *Client) mergeBaseHeld(ctx context.Context, e relevantCacheEntry) bool {
+	if e.MergeBase == "" {
+		return false
+	}
+	data, err := os.ReadFile(e.BaseFile) //nolint:gosec // G304: a ref file this process recorded in its own cache entry.
+	if err != nil {
+		return false
+	}
+	if _, symbolic := symrefTarget(data); symbolic {
 		return false
 	}
 	mergeBase, err := c.s.Git.MergeBase(ctx, e.BaseRef, string(e.Head))

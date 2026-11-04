@@ -83,6 +83,7 @@ type relevantInputs struct {
 	me         string
 	baseRef    model.Branch
 	baseTarget string
+	inBase     bool
 	mergeBase  model.SHA
 	base       model.SHA
 	staleAfter time.Duration
@@ -610,6 +611,11 @@ func (in *relevantInputs) watchDep(name string, depth int) {
 	if !cleanRevName(name) {
 		return
 	}
+	if name == in.baseTarget && !in.inBase {
+		if file, ok := in.refFile(name); ok {
+			in.headDeps = append(in.headDeps, lstampOf(file))
+		}
+	}
 	if seen, ok := in.depSeen[name]; ok && seen <= depth {
 		return
 	}
@@ -960,6 +966,8 @@ func (in *relevantInputs) watchBranch(ctx context.Context) error {
 }
 
 func (in *relevantInputs) watchBase(ctx context.Context) error {
+	in.inBase = true
+	defer func() { in.inBase = false }()
 	if in.filter.Base == "" {
 		in.watchRef("refs/remotes/origin/HEAD", 0)
 		in.baseTarget = in.symrefs["refs/remotes/origin/HEAD"]
@@ -1186,6 +1194,6 @@ func (in *relevantInputs) fill(e *relevantCacheEntry) {
 	e.AnyHead = in.detached()
 	e.ConfigSum = in.configSum
 	e.BaseFile = in.baseFile()
-	e.BaseRef = in.baseTarget
+	e.BaseRef = string(in.baseRef)
 	e.Head = in.head
 }
