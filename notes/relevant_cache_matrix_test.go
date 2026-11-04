@@ -339,6 +339,17 @@ func (fx *matrixFixture) noteRef() string {
 	return refs.For(model.KindNote, fx.note)
 }
 
+func (fx *matrixFixture) writeLocalPush(t *testing.T, content string) {
+	t.Helper()
+	path := filepath.Join(fx.commonDir(t), filepath.FromSlash(store.LocalPushInclude))
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (fx *matrixFixture) commonDir(t *testing.T) string {
 	t.Helper()
 	_, common := gittest.Dirs(t, fx.repo)
@@ -701,6 +712,33 @@ func invalidationCases() []matrixCase {
 				}},
 			},
 			settled: tierRevalidate,
+		},
+		{
+			name: "local push include rewritten",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.crossAuthor(t)
+				fx.writeLocalPush(t, "[cc-notes]\n\tsecluded = refs/cc-notes/notes/a\n[remote \"origin\"]\n\tpush = ^refs/cc-notes/notes/a\n")
+				fx.run(t, "config", "include.path", store.LocalPushInclude)
+			},
+			writes: []matrixWrite{
+				{name: "another ref secluded", want: tierHit, do: func(t *testing.T, fx *matrixFixture) {
+					fx.writeLocalPush(t, "[cc-notes]\n\tsecluded = refs/cc-notes/notes/a\n\tsecluded = refs/cc-notes/notes/b\n[remote \"origin\"]\n\tpush = ^refs/cc-notes/notes/a\n\tpush = ^refs/cc-notes/notes/b\n")
+				}},
+				{name: "author email set there", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+					fx.writeLocalPush(t, "[cc-notes]\n\tsecluded = refs/cc-notes/notes/a\n[user]\n\temail = "+relevantOther+"\n")
+				}},
+			},
+		},
+		{
+			name: "local push include loses the author email it carried",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.crossAuthor(t)
+				fx.writeLocalPush(t, "[user]\n\temail = "+relevantOther+"\n")
+				fx.run(t, "config", "include.path", store.LocalPushInclude)
+			},
+			writes: []matrixWrite{{name: "include rewritten as secluded refs only", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+				fx.writeLocalPush(t, "[cc-notes]\n\tsecluded = refs/cc-notes/notes/a\n")
+			}}},
 		},
 		{
 			name: "default base advances without moving the merge base",

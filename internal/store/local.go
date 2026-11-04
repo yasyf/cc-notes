@@ -2,6 +2,7 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -226,6 +227,33 @@ func (s *Store) wiredRemotes(ctx context.Context) ([]string, error) {
 	}
 	slices.Sort(remotes)
 	return remotes, nil
+}
+
+// IsLocalPushConfig reports whether data is exactly what writeLocalPush writes:
+// only the canonical section, secluded and negative push lines, with values git
+// can't read as anything else.
+func IsLocalPushConfig(data []byte) bool {
+	for line := range bytes.Lines(data) {
+		line = bytes.TrimSuffix(line, []byte("\n"))
+		value, ok := localPushLineValue(line)
+		if !ok || bytes.ContainsAny(value, " \t\r\\\"#;[]") {
+			return false
+		}
+	}
+	return true
+}
+
+func localPushLineValue(line []byte) ([]byte, bool) {
+	if bytes.Equal(line, []byte("[cc-notes]")) {
+		return nil, true
+	}
+	if name, ok := bytes.CutPrefix(line, []byte(`[remote "`)); ok {
+		return bytes.CutSuffix(name, []byte(`"]`))
+	}
+	if value, ok := bytes.CutPrefix(line, []byte("\tsecluded = ")); ok {
+		return value, true
+	}
+	return bytes.CutPrefix(line, []byte("\tpush = ^"))
 }
 
 func writeLocalPush(file string, remotes []string, secluded map[string]bool) error {
