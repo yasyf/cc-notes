@@ -55,8 +55,10 @@ func (counts *queryReferenceCounts) set(hash model.SHA, value uint64) {
 	counts.values[hash] = entry
 }
 
-const queryReferenceBlockEntries = 128
-const queryReferenceBlockBytes = queryReferenceBlockEntries * 8
+const (
+	queryReferenceBlockEntries = 128
+	queryReferenceBlockBytes   = queryReferenceBlockEntries * 8
+)
 
 func (counts *queryReferenceCounts) flush(ctx context.Context) error {
 	keys := make([]model.SHA, 0, len(counts.values))
