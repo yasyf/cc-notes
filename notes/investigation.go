@@ -101,7 +101,7 @@ func (c *Client) CreateInvestigation(ctx context.Context, spec InvestigationSpec
 	}
 	anchors := buildAnchors(AnchorSpec{Commits: commits, Paths: spec.Anchors.Paths, Dirs: spec.Anchors.Dirs, Branches: spec.Anchors.Branches})
 	ops := make([]model.Op, 0, 1+len(spec.Attachments)+len(spec.Findings))
-	ops = append(ops, model.CreateInvestigation{Nonce: model.NewNonce(), Title: spec.Title, Premise: spec.Premise, Tags: spec.Tags, Anchors: anchors})
+	ops = append(ops, model.CreateInvestigation{Nonce: model.NewNonce(), Title: spec.Title, Premise: spec.Premise, Tags: model.WireTags(spec.Tags), Anchors: anchors})
 	ops = append(ops, attachmentAddOps(spec.Attachments)...)
 	for _, text := range spec.Findings {
 		ops = append(ops, model.AddFinding{ID: model.NewNonce(), Text: text})

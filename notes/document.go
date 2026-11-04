@@ -165,7 +165,7 @@ func (c *Client) CreateNote(ctx context.Context, spec NoteSpec) (model.Note, boo
 	}
 	anchors := buildAnchors(AnchorSpec{Commits: commits, Paths: spec.Anchors.Paths, Dirs: spec.Anchors.Dirs, Branches: spec.Anchors.Branches})
 	ops := make([]model.Op, 0, 1+len(spec.Attachments))
-	ops = append(ops, model.CreateNote{Nonce: model.NewNonce(), Title: spec.Title, Body: spec.Body, Tags: spec.Tags, Anchors: anchors})
+	ops = append(ops, model.CreateNote{Nonce: model.NewNonce(), Title: spec.Title, Body: spec.Body, Tags: model.WireTags(spec.Tags), Anchors: anchors})
 	ops = append(ops, attachmentAddOps(spec.Attachments)...)
 	snap, reused, err := c.createDocument(ctx, ops)
 	if err != nil {
@@ -184,7 +184,7 @@ func (c *Client) CreateDoc(ctx context.Context, spec DocSpec) (model.Doc, bool, 
 	}
 	anchors := buildAnchors(AnchorSpec{Commits: commits, Paths: spec.Anchors.Paths, Dirs: spec.Anchors.Dirs, Branches: spec.Anchors.Branches})
 	ops := make([]model.Op, 0, 1+len(spec.Attachments))
-	ops = append(ops, model.CreateDoc{Nonce: model.NewNonce(), Title: spec.Title, Body: spec.Body, When: spec.When, Tags: spec.Tags, Anchors: anchors})
+	ops = append(ops, model.CreateDoc{Nonce: model.NewNonce(), Title: spec.Title, Body: spec.Body, When: spec.When, Tags: model.WireTags(spec.Tags), Anchors: anchors})
 	ops = append(ops, attachmentAddOps(spec.Attachments)...)
 	snap, reused, err := c.createDocument(ctx, ops)
 	if err != nil {

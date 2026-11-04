@@ -27,7 +27,7 @@ func (c *Client) CreateAnswer(ctx context.Context, spec NoteSpec) (model.Answer,
 	}
 	anchors := buildAnchors(AnchorSpec{Commits: commits, Paths: spec.Anchors.Paths, Dirs: spec.Anchors.Dirs, Branches: spec.Anchors.Branches})
 	ops := make([]model.Op, 0, 1+len(spec.Attachments))
-	ops = append(ops, model.CreateAnswer{Nonce: model.NewNonce(), Title: spec.Title, Body: spec.Body, Tags: spec.Tags, Anchors: anchors})
+	ops = append(ops, model.CreateAnswer{Nonce: model.NewNonce(), Title: spec.Title, Body: spec.Body, Tags: model.WireTags(spec.Tags), Anchors: anchors})
 	ops = append(ops, attachmentAddOps(spec.Attachments)...)
 	snap, reused, err := c.createDocument(ctx, ops)
 	if err != nil {
