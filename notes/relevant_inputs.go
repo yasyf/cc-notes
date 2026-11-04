@@ -1155,9 +1155,13 @@ func (in *relevantInputs) close() bool {
 	return true
 }
 
+// racy reports whether a stamp could hide a write in the same clock tick. A guard
+// counts only on a filesystem with whole-second times: elsewhere close sees any
+// change to it across the build, and a busy repository's .git moves constantly.
 func (in *relevantInputs) racy() bool {
 	racyAt := func(s fileStamp) bool { return s.racy(in.start) }
-	return in.untrusted || slices.ContainsFunc(in.stamps, racyAt) || slices.ContainsFunc(in.guards, racyAt)
+	racyGuard := func(s fileStamp) bool { return s.coarse() && s.racy(in.start) }
+	return in.untrusted || slices.ContainsFunc(in.stamps, racyAt) || slices.ContainsFunc(in.guards, racyGuard)
 }
 
 // racyRefs reports whether every racy fingerprint is a relevance kind's ref
@@ -1167,9 +1171,10 @@ func (in *relevantInputs) racyRefs() bool {
 	dirs := in.client.entityRootDirs()
 	racyElsewhere := func(s fileStamp) bool {
 		_, dir := dirs[s.Path]
-		return s.racy(in.start) && !dir && !in.client.branchDir(s) && s.Path != joinPath(in.commonDir, "config") && s.Path != in.baseFile()
+		return s.racy(in.start) && !dir && !in.client.branchDir(s) && s.Path != joinPath(in.commonDir, "config") && s.Path != in.client.localPushFile() && s.Path != in.baseFile()
 	}
-	return !in.untrusted && !slices.ContainsFunc(in.stamps, racyElsewhere) && !slices.ContainsFunc(in.guards, racyElsewhere)
+	racyGuard := func(s fileStamp) bool { return s.coarse() && racyElsewhere(s) }
+	return !in.untrusted && !slices.ContainsFunc(in.stamps, racyElsewhere) && !slices.ContainsFunc(in.guards, racyGuard)
 }
 
 func (in *relevantInputs) baseFile() string {
@@ -1193,6 +1198,7 @@ func (in *relevantInputs) fill(e *relevantCacheEntry) {
 	e.HeadDeps = in.headDeps
 	e.AnyHead = in.detached()
 	e.ConfigSum = in.configSum
+	e.LocalPushOnly = localPushOnly(in.client.localPushFile())
 	e.BaseFile = in.baseFile()
 	e.BaseRef = string(in.baseRef)
 	e.Head = in.head
