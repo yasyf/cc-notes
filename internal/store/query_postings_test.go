@@ -10,6 +10,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/sourcegraph"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -256,5 +257,66 @@ func TestQueryMetadataLabelStopsAtVisitorError(t *testing.T) {
 	})
 	if !errors.Is(err, stop) || visits != 1 {
 		t.Fatalf("walk error=%v visits=%d", err, visits)
+	}
+}
+
+func TestQueryMetadataReplacementPreservesUnchangedPostingPages(t *testing.T) {
+	db := newQueryMetadataDB(t)
+	var replacement queryMetadata
+	if err := db.Update(func(tx *bolt.Tx) error {
+		batch := make(queryGenerationBatch)
+		for i := range 256 {
+			row := projectQueryMetadata("binding", "before", model.Task{
+				ID: model.EntityID(fmt.Sprintf("%040x", i)), Title: "stable title",
+				Labels: []string{"stable"}, Parent: "parent", BlockedBy: []model.EntityID{"blocker"},
+				Anchors: []model.Anchor{{Kind: "branch", Value: "main"}},
+			})
+			if i == 0 {
+				replacement = row
+			}
+			if err := batch.replaceMetadata(tx, row); err != nil {
+				return err
+			}
+		}
+		return batch.flush(t.Context(), tx)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	roots := func() map[string]uint64 {
+		t.Helper()
+		result := make(map[string]uint64)
+		if err := db.View(func(tx *bolt.Tx) error {
+			binding := queryMetadataBinding(tx, "binding")
+			for _, name := range [][]byte{queryMetadataLabelsBucket, queryMetadataParentsBucket, queryMetadataBlockedByBucket, queryMetadataAnchorsBucket, queryMetadataDuplicatesBucket} {
+				root := uint64(binding.Bucket(name).Root())
+				if root == 0 {
+					t.Fatalf("%s fixture needs non-inline pages", name)
+				}
+				result[string(name)] = root
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	before := roots()
+	replacement.Tip = "after"
+	ctx, work := sourcegraph.WithWork(t.Context())
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(ctx, tx, replacement) }); err != nil {
+		t.Fatal(err)
+	}
+	if after := roots(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("unchanged posting pages changed: before=%v after=%v", before, after)
+	}
+	if writes := work.Snapshot().ValueWrites; writes != 1 {
+		t.Fatalf("retained graph wrote %d values; want only the changed row", writes)
+	}
+	rows := labelMetadata(t, db, "binding", model.KindTask, "stable")
+	if len(rows) != 256 {
+		t.Fatalf("indexed rows = %d; want 256", len(rows))
+	}
+	if !reflect.DeepEqual(rows[0], replacement) {
+		t.Fatalf("updated indexed row = %#v; want %#v", rows[0], replacement)
 	}
 }

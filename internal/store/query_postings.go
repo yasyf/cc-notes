@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/sourcegraph"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -77,49 +79,39 @@ func (b queryGenerationBatch) replaceMetadata(tx *bolt.Tx, row queryMetadata) er
 
 func putQueryMetadata(binding *bolt.Bucket, row queryMetadata, data []byte) error {
 	rows := binding.Bucket(queryMetadataRowsBucket)
-	labels := binding.Bucket(queryMetadataLabelsBucket)
-	anchors := binding.Bucket(queryMetadataAnchorsBucket)
-	superseders := binding.Bucket(queryMetadataSupersedersBucket)
-	if err := removeQueryMetadataPostings(binding, row.ID); err != nil {
-		return err
+	var before []sourcegraph.Mutation
+	if previousData := rows.Get([]byte(row.ID)); previousData != nil {
+		var previous queryMetadata
+		if err := json.Unmarshal(previousData, &previous); err != nil {
+			return err
+		}
+		before = queryRowPostings(previous)
+		if err := deleteQueryMetadataTip(binding, previous); err != nil {
+			return err
+		}
 	}
 	if err := rows.Put([]byte(row.ID), data); err != nil {
 		return err
 	}
-	for _, label := range row.Labels {
-		if err := labels.Put(queryMetadataPostingKey(queryMetadataLabelPrefix(row.Kind, label), row), nil); err != nil {
-			return err
-		}
-	}
-	for _, anchor := range row.Anchors {
-		if err := anchors.Put(queryMetadataPostingKey(queryMetadataAnchorPrefix(row.Kind, anchor), row), nil); err != nil {
-			return err
-		}
-	}
-	for _, target := range row.SupersededBy {
-		if err := superseders.Put(queryMetadataPostingKey(queryMetadataSupersedersPrefix(row.Kind, target), row), nil); err != nil {
-			return err
-		}
-	}
-	if row.Kind == model.KindTask {
-		for _, target := range row.BlockedBy {
-			if err := binding.Bucket(queryMetadataBlockedByBucket).Put(queryMetadataPostingKey(queryMetadataSupersedersPrefix(row.Kind, target), row), nil); err != nil {
-				return err
-			}
-		}
-		if err := binding.Bucket(queryMetadataParentsBucket).Put(queryMetadataPostingKey(queryMetadataSupersedersPrefix(row.Kind, row.Parent), row), nil); err != nil {
-			return err
-		}
-	}
-	for _, target := range row.RunTasks {
-		if err := binding.Bucket(queryMetadataRunTasksBucket).Put(queryMetadataPostingKey(queryMetadataSupersedersPrefix(row.Kind, target), row), nil); err != nil {
-			return err
-		}
-	}
-	if err := binding.Bucket(queryMetadataDuplicatesBucket).Put(queryMetadataPostingKey(queryMetadataLabelPrefix(row.Kind, row.DuplicateContent), row), nil); err != nil {
+	if err := applyQueryPostingChanges(binding, queryPostingChanges(before, queryRowPostings(row))); err != nil {
 		return err
 	}
 	return putQueryMetadataTip(binding, row)
+}
+
+func applyQueryPostingChanges(binding *bolt.Bucket, changes []sourcegraph.Mutation) error {
+	for _, change := range changes {
+		index, key, _ := strings.Cut(change.Key, "/")
+		bucket := binding.Bucket([]byte(index))
+		if change.Delete {
+			if err := bucket.Delete([]byte(key)); err != nil {
+				return err
+			}
+		} else if err := bucket.Put([]byte(key), nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func deleteQueryMetadata(ctx context.Context, tx *bolt.Tx, binding string, id model.EntityID) error {
@@ -153,37 +145,7 @@ func removeQueryMetadataPostings(binding *bolt.Bucket, id model.EntityID) error 
 	if err := json.Unmarshal(data, &previous); err != nil {
 		return err
 	}
-	for _, label := range previous.Labels {
-		if err := binding.Bucket(queryMetadataLabelsBucket).Delete(queryMetadataPostingKey(queryMetadataLabelPrefix(previous.Kind, label), previous)); err != nil {
-			return err
-		}
-	}
-	for _, anchor := range previous.Anchors {
-		if err := binding.Bucket(queryMetadataAnchorsBucket).Delete(queryMetadataPostingKey(queryMetadataAnchorPrefix(previous.Kind, anchor), previous)); err != nil {
-			return err
-		}
-	}
-	for _, target := range previous.SupersededBy {
-		if err := binding.Bucket(queryMetadataSupersedersBucket).Delete(queryMetadataPostingKey(queryMetadataSupersedersPrefix(previous.Kind, target), previous)); err != nil {
-			return err
-		}
-	}
-	if previous.Kind == model.KindTask {
-		for _, target := range previous.BlockedBy {
-			if err := binding.Bucket(queryMetadataBlockedByBucket).Delete(queryMetadataPostingKey(queryMetadataSupersedersPrefix(previous.Kind, target), previous)); err != nil {
-				return err
-			}
-		}
-		if err := binding.Bucket(queryMetadataParentsBucket).Delete(queryMetadataPostingKey(queryMetadataSupersedersPrefix(previous.Kind, previous.Parent), previous)); err != nil {
-			return err
-		}
-	}
-	for _, target := range previous.RunTasks {
-		if err := binding.Bucket(queryMetadataRunTasksBucket).Delete(queryMetadataPostingKey(queryMetadataSupersedersPrefix(previous.Kind, target), previous)); err != nil {
-			return err
-		}
-	}
-	if err := binding.Bucket(queryMetadataDuplicatesBucket).Delete(queryMetadataPostingKey(queryMetadataLabelPrefix(previous.Kind, previous.DuplicateContent), previous)); err != nil {
+	if err := applyQueryPostingChanges(binding, queryPostingChanges(queryRowPostings(previous), nil)); err != nil {
 		return err
 	}
 	return deleteQueryMetadataTip(binding, previous)
