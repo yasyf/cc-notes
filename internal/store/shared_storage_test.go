@@ -469,15 +469,8 @@ func TestHasNotesBounded(t *testing.T) {
 			if has != (tc.seed > 0) {
 				t.Fatalf("HasNotes = %v with %d notes", has, tc.seed)
 			}
-			lines := trace.lines(t)
-			if len(lines) != 1 {
-				t.Fatalf("HasNotes spawned %d git processes, want 1:\n%s", len(lines), strings.Join(lines, "\n"))
-			}
-			if !strings.Contains(lines[0], " for-each-ref --count=1 ") || !strings.HasSuffix(lines[0], " "+refs.Namespace) {
-				t.Fatalf("HasNotes ran %q, want one for-each-ref --count=1 over %s", lines[0], refs.Namespace)
-			}
-			if tc.bound && !strings.HasPrefix(lines[0], "-C "+filepath.Dir(f.sourceCommon)+" --git-dir="+f.sourceCommon+" ") {
-				t.Fatalf("HasNotes ran %q, want it pinned to the records repository %s from its working tree", lines[0], f.sourceCommon)
+			if lines := trace.lines(t); len(lines) != 0 {
+				t.Fatalf("HasNotes spawned %d git processes, want 0:\n%s", len(lines), strings.Join(lines, "\n"))
 			}
 		})
 	}

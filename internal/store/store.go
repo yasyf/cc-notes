@@ -283,13 +283,7 @@ func publicationFailure(updates []gitcmd.RefUpdate, err error) error {
 }
 
 func (s *Store) publishRefs(ctx context.Context, updates []gitcmd.RefUpdate, snapshots map[model.SHA]model.Snapshot) error {
-	if err := s.publishManaged(ctx, updates, snapshots); err != nil {
-		return err
-	}
-	if err := s.CheckRecords(); err != nil {
-		return publicationFailure(updates, err)
-	}
-	return nil
+	return s.publishManaged(ctx, updates, snapshots)
 }
 
 // PublishRef publishes one ref through PublishRefs.
