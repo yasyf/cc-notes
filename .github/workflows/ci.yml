@@ -199,7 +199,7 @@ jobs:
   task-dedupe-cost:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -208,18 +208,33 @@ jobs:
       - name: Fresh CLI task deduplication payload, metadata and full-list costs
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskDedupeFreshCLI(Cost|MetadataCost)$' ./internal/cli
       - name: Selected-task JSON blocking cost
+        if: ${{ !cancelled() }}
         run: ./scripts/test.sh -count=1 -v -run '^TestTaskBlockingFreshCLICost$' ./internal/cli
       - name: Selected-task reverse-posting work
+        if: ${{ !cancelled() }}
         run: ./scripts/test.sh -count=1 -v -run '^TestQueryTaskBlockingBatchWork$' ./internal/store
       - name: Query metadata cardinality contracts and work
+        if: ${{ !cancelled() }}
         run: ./scripts/test.sh -count=1 -v -run '^TestQueryMetadataCardinality' ./internal/store
       - name: Selected answer supersession contracts and fixed work
+        if: ${{ !cancelled() }}
         run: ./scripts/test.sh -count=1 -v -run '^Test(Supersession|IndexedSupersession|AnswerShowFreshCLICost|Resolve|BoundStoreFailsAfterBackendReplaced|PackedReference|SortedPackedReference|UnsortedPackedReference|NativeReferences|NativeMultiplePrefixes|ReferencePrefix)' ./notes ./internal/store ./internal/cli ./internal/gitobj
       - name: Native packed read ownership and corpus contracts
+        if: ${{ !cancelled() }}
         run: ./scripts/test.sh -race -count=1 -v -run '^Test(Native|ObjectBatch)' ./internal/gitobj ./internal/gitcmd
       - name: Fresh CLI packed ledger read beside a legacy object-index writer
         if: ${{ !cancelled() }}
         run: ./scripts/test.sh -count=1 -v -run '^TestPackedObjectIndexFreshCLICost$' ./internal/cli
+
+  scale-work:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Selected work stays flat at 10000 unrelated records
+        run: ./scripts/test.sh -count=1 -timeout 25m -v -run '^(TestAnswerCorpusWarmAndChangedPayloadWork|TestQueryDuplicateSelectedWork|TestTaskRelationsDoNotReadUnrelatedBodies|TestRelevantCachedWarmHitIsConstantWork)$' ./internal/store ./notes
 
   attachment-ref-passes:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
@@ -233,7 +248,7 @@ jobs:
 
   test:
     runs-on: ${{ github.event_name == 'schedule' && 'macos-latest' || 'ubuntu-latest' }}
-    timeout-minutes: 75
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -246,7 +261,7 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v ./internal/gitguard
 
       - name: Test (race, via the process-cap harness)
-        run: ./scripts/test.sh -race -count=1 -timeout 60m -v ./...
+        run: ./scripts/test.sh -race -count=1 -timeout 30m -v -skip '^(TestAnswerCorpusWarmAndChangedPayloadWork|TestQueryDuplicateSelectedWork|TestTaskRelationsDoNotReadUnrelatedBodies|TestRelevantCachedWarmHitIsConstantWork|TestQueryMetadataExecutableIndependentReuse|TestLoadFallbackFreshProcessCost|TestAnswerShowFreshCLICost|TestTaskDedupeFreshCLICost|TestTaskDedupeFreshCLIMetadataCost|TestTaskBlockingFreshCLICost|TestPackedObjectIndexFreshCLICost)$' ./...
 
       - name: Build (default, pure Go)
         run: go build ./...

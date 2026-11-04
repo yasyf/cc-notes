@@ -174,8 +174,8 @@ func TestQueryReferenceBlocksPreserveBoundaryNeighbors(t *testing.T) {
 		if err := counts.flush(t.Context()); err != nil {
 			return err
 		}
-		if n := root.Bucket([]byte(managed.QueryObjectRefs)).Stats().KeyN; n != 0 {
-			t.Fatalf("retired reference blocks = %d", n)
+		if key, _ := root.Bucket([]byte(managed.QueryObjectRefs)).Cursor().First(); key != nil {
+			t.Fatalf("retired reference block %x survived", key)
 		}
 		return nil
 	}); err != nil {
