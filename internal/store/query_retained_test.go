@@ -457,3 +457,103 @@ func TestQueryRetirementCoalescesWithWriter(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryRetirementReducesCombinedPageAllocation(t *testing.T) {
+	type result struct {
+		allocated       int64
+		current, active queryGeneration
+		references      map[model.SHA]uint64
+	}
+	measure := func(immediate bool) result {
+		db := newQueryMetadataDB(t)
+		rows := make([]queryMetadata, 1024)
+		if err := db.Update(func(tx *bolt.Tx) error {
+			batch := make(queryGenerationBatch)
+			for i := range rows {
+				rows[i] = projectQueryMetadata("binding", "before", model.Doc{ID: model.EntityID(fmt.Sprintf("doc-%04d", i)), Title: "stable", Tags: []string{"stable"}})
+				if err := batch.replaceMetadata(tx, rows[i]); err != nil {
+					return err
+				}
+			}
+			return batch.flush(t.Context(), tx)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		promote := func() {
+			t.Helper()
+			if err := db.Update(func(tx *bolt.Tx) error {
+				binding := queryGenerationBinding(tx, "binding")
+				current, err := readQueryGeneration(binding, queryCurrentRoot)
+				if err != nil {
+					return err
+				}
+				active, err := readQueryGeneration(binding, queryActiveRoot)
+				if err != nil {
+					return err
+				}
+				if err := activateQueryGeneration(t.Context(), tx, binding, current, active); err != nil {
+					return err
+				}
+				if err := binding.Put(queryActiveRoot, bytes.Clone(binding.Get(queryCurrentRoot))); err != nil || !immediate {
+					return err
+				}
+				retired, err := popRetiredQueryGeneration(binding)
+				if err != nil || retired == "" {
+					return err
+				}
+				root := tx.Bucket(queryGenerationsBucket)
+				counts := newQueryReferenceCounts(root)
+				if err := releaseQueryObject(t.Context(), queryObjectStoreAt(root), counts, retired); err != nil {
+					return err
+				}
+				return counts.flush(t.Context())
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		promote()
+		before := db.Stats()
+		for i := range 3 {
+			rows[i].Tip = "changed"
+			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, rows[i]) }); err != nil {
+				t.Fatal(err)
+			}
+			if i < 2 {
+				promote()
+			}
+		}
+		after := db.Stats()
+		measured := result{allocated: after.TxStats.GetPageAlloc() - before.TxStats.GetPageAlloc(), references: make(map[model.SHA]uint64)}
+		if err := db.View(func(tx *bolt.Tx) error {
+			binding := queryGenerationBinding(tx, "binding")
+			if binding.Get(queryRetiredRoot) != nil {
+				t.Fatal("combined measurement left reclamation outside its window")
+			}
+			var err error
+			if measured.current, err = readQueryGeneration(binding, queryCurrentRoot); err != nil {
+				return err
+			}
+			if measured.active, err = readQueryGeneration(binding, queryActiveRoot); err != nil {
+				return err
+			}
+			root := tx.Bucket(queryGenerationsBucket)
+			return queryObjectStoreAt(root).ids.ForEach(func(key, _ []byte) error {
+				hash := model.SHA(hex.EncodeToString(key))
+				count, err := queryObjectRefCount(root, hash)
+				measured.references[hash] = count
+				return err
+			})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return measured
+	}
+	deferred, immediate := measure(false), measure(true)
+	if deferred.current != immediate.current || deferred.active != immediate.active || !maps.Equal(deferred.references, immediate.references) {
+		t.Fatal("coalesced and immediate reclamation ended with different graphs or reference counts")
+	}
+	if deferred.allocated >= immediate.allocated {
+		t.Fatalf("coalesced allocation %d >= immediate allocation %d", deferred.allocated, immediate.allocated)
+	}
+	t.Logf("query retirement allocated bytes: coalesced=%d immediate=%d", deferred.allocated, immediate.allocated)
+}
