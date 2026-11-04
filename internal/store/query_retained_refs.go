@@ -30,7 +30,9 @@ type queryReferenceCounts struct {
 }
 
 func newQueryReferenceCounts(root *bolt.Bucket) *queryReferenceCounts {
-	return &queryReferenceCounts{root: root, bucket: root.Bucket([]byte(managed.QueryObjectRefs)), values: make(map[model.SHA]queryReferenceCount)}
+	bucket := root.Bucket([]byte(managed.QueryObjectRefs))
+	bucket.FillPercent = 0.9
+	return &queryReferenceCounts{root: root, bucket: bucket, values: make(map[model.SHA]queryReferenceCount)}
 }
 
 func (counts *queryReferenceCounts) get(hash model.SHA) (uint64, error) {

@@ -182,3 +182,63 @@ func TestQueryReferenceBlocksPreserveBoundaryNeighbors(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestQueryOrderedStorageKeepsDensePages(t *testing.T) {
+	db := newQueryMetadataDB(t)
+	hashes := make([]model.SHA, 8192)
+	values := make(map[model.SHA][]byte, len(hashes))
+	for i := range hashes {
+		data := []byte(fmt.Sprintf("%016d", i))
+		hash := model.SHA(plumbing.ComputeHash(plumbing.BlobObject, data).String())
+		hashes[i], values[hash] = hash, data
+	}
+	if err := db.Update(func(tx *bolt.Tx) error {
+		root, err := createQueryReferenceTestRoot(tx)
+		if err != nil {
+			return err
+		}
+		store := queryObjectStoreAt(root)
+		if err := store.putBatch(t.Context(), hashes, values); err != nil {
+			return err
+		}
+		counts := newQueryReferenceCounts(root)
+		for i, hash := range hashes {
+			if _, err := counts.get(hash); err != nil {
+				return err
+			}
+			counts.set(hash, uint64(i%7+1))
+		}
+		return counts.flush(t.Context())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.View(func(tx *bolt.Tx) error {
+		root := tx.Bucket([]byte("counts"))
+		store, counts := queryObjectStoreAt(root), newQueryReferenceCounts(root)
+		for i, hash := range hashes {
+			count, err := counts.get(hash)
+			if want := uint64(i%7 + 1); err != nil || count != want {
+				t.Fatalf("count %d = %d, %v; want %d", i, count, err, want)
+			}
+		}
+		blocks := (len(hashes) + queryReferenceBlockEntries) / queryReferenceBlockEntries
+		for _, item := range []struct {
+			name    string
+			bucket  *bolt.Bucket
+			entries int
+			bytes   int
+		}{
+			{"objects", store.objects, len(hashes) + 1, len(hashes)*(16+8+16) + len("shared") + 8 + 16},
+			{"reference blocks", counts.bucket, blocks, blocks * (queryReferenceBlockBytes + 8 + 16)},
+		} {
+			stats := item.bucket.Stats()
+			maxPages := item.bytes/(db.Info().PageSize*3/4) + 2
+			if stats.KeyN != item.entries || stats.LeafPageN > maxPages {
+				t.Fatalf("%s entries=%d pages=%d; want entries=%d at most %d pages", item.name, stats.KeyN, stats.LeafPageN, item.entries, maxPages)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

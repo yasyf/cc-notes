@@ -68,6 +68,7 @@ func (store queryObjectStore) get(hash model.SHA) ([]byte, error) {
 }
 
 func (store queryObjectStore) put(hash model.SHA, data []byte) error {
+	store.objects.FillPercent = 0.9
 	hashKey, err := queryObjectKey(hash)
 	if err != nil {
 		return err
@@ -84,6 +85,7 @@ func (store queryObjectStore) put(hash model.SHA, data []byte) error {
 }
 
 func (store queryObjectStore) putBatch(ctx context.Context, order []model.SHA, values map[model.SHA][]byte) error {
+	store.objects.FillPercent = 0.9
 	ids := make(map[model.SHA]uint64, len(order))
 	for _, hash := range order {
 		if err := ctx.Err(); err != nil {
