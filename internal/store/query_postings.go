@@ -53,6 +53,14 @@ func ensureQueryMetadataBinding(tx *bolt.Tx, name string) (*bolt.Bucket, error) 
 }
 
 func replaceQueryMetadata(ctx context.Context, tx *bolt.Tx, row queryMetadata) error {
+	batch := make(queryGenerationBatch)
+	if err := batch.replaceMetadata(tx, row); err != nil {
+		return err
+	}
+	return batch.flush(ctx, tx)
+}
+
+func (b queryGenerationBatch) replaceMetadata(tx *bolt.Tx, row queryMetadata) error {
 	binding, err := ensureQueryMetadataBinding(tx, row.Binding)
 	if err != nil {
 		return err
@@ -61,7 +69,7 @@ func replaceQueryMetadata(ctx context.Context, tx *bolt.Tx, row queryMetadata) e
 	if err != nil {
 		return err
 	}
-	if err := replaceQueryGeneration(ctx, tx, row.Binding, row.ID, binding.Bucket(queryMetadataRowsBucket).Get([]byte(row.ID)), data); err != nil {
+	if err := b.replace(row.Binding, row.ID, binding.Bucket(queryMetadataRowsBucket).Get([]byte(row.ID)), data); err != nil {
 		return err
 	}
 	return putQueryMetadata(binding, row, data)
@@ -115,11 +123,19 @@ func putQueryMetadata(binding *bolt.Bucket, row queryMetadata, data []byte) erro
 }
 
 func deleteQueryMetadata(ctx context.Context, tx *bolt.Tx, binding string, id model.EntityID) error {
+	batch := make(queryGenerationBatch)
+	if err := batch.deleteMetadata(tx, binding, id); err != nil {
+		return err
+	}
+	return batch.flush(ctx, tx)
+}
+
+func (b queryGenerationBatch) deleteMetadata(tx *bolt.Tx, binding string, id model.EntityID) error {
 	bucket := queryMetadataBinding(tx, binding)
 	if bucket == nil {
 		return nil
 	}
-	if err := replaceQueryGeneration(ctx, tx, binding, id, bucket.Bucket(queryMetadataRowsBucket).Get([]byte(id)), nil); err != nil {
+	if err := b.replace(binding, id, bucket.Bucket(queryMetadataRowsBucket).Get([]byte(id)), nil); err != nil {
 		return err
 	}
 	if err := removeQueryMetadataPostings(bucket, id); err != nil {

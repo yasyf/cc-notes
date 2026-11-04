@@ -3,6 +3,9 @@ package sourcegraph
 import (
 	"bytes"
 	"fmt"
+	"maps"
+	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,6 +109,81 @@ func TestSourceGraphBulkRejectsDuplicateAndInvalidKeys(t *testing.T) {
 		}
 		if _, err := NewRetention(objects).Build([]RetentionEntry{{Key: "same", Entity: RetainedEntity{Tip: tip}}, {Key: "same", Entity: RetainedEntity{Tip: tip}}}); err == nil {
 			t.Fatal("accepted duplicate retention keys")
+		}
+		return nil
+	})
+}
+
+func TestSourceGraphApplyMatchesSequentialMutations(t *testing.T) {
+	repo, _ := graphFixture(t)
+	random := rand.New(rand.NewPCG(1, 2))
+	keys := make([]string, 0, 137)
+	keys = append(keys, "", "a", "a\x00", "ab", "abc", "abd", "b", "é", strings.Repeat("z", MaxKeyBytes))
+	for i := range 64 {
+		keys = append(keys, fmt.Sprintf("rows/%03d", i), fmt.Sprintf("labels/%03d", i))
+	}
+	graphScope(t, repo, func(objects *gitobj.SourceObjects) error {
+		graph := New(objects)
+		var batched, sequential model.SHA
+		for round := range 200 {
+			chosen := make(map[string]Mutation)
+			for range 1 + random.IntN(32) {
+				key := keys[random.IntN(len(keys))]
+				if random.IntN(2) == 0 {
+					chosen[key] = Mutation{Key: key, Delete: true}
+				} else {
+					chosen[key] = Mutation{Key: key, Value: []byte(fmt.Sprint(random.IntN(4)))}
+				}
+			}
+			mutations := slices.Collect(maps.Values(chosen))
+			var err error
+			batched, err = graph.Apply(batched, mutations)
+			if err != nil {
+				return err
+			}
+			for _, mutation := range mutations {
+				if mutation.Delete {
+					sequential, err = graph.Delete(sequential, mutation.Key)
+				} else {
+					sequential, err = graph.Put(sequential, mutation.Key, mutation.Value)
+				}
+				if err != nil {
+					return err
+				}
+			}
+			if batched != sequential {
+				t.Fatalf("round %d batched=%s sequential=%s mutations=%+v", round, batched, sequential, mutations)
+			}
+			if err := graph.Validate(batched); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func TestSourceGraphApplyWritesEachTouchedNodeOnce(t *testing.T) {
+	repo, _ := graphFixture(t)
+	graphScope(t, repo, func(objects *gitobj.SourceObjects) error {
+		mutations := make([]Mutation, 4096)
+		for i := range mutations {
+			mutations[i] = Mutation{Key: fmt.Sprintf("rows/%040x", i), Value: []byte(fmt.Sprint(i))}
+		}
+		graph := New(objects)
+		root, err := graph.Apply("", mutations)
+		if err != nil {
+			return err
+		}
+		if writes := graph.Stats().NodeWrites; writes > uint64(2*len(mutations)-1) {
+			t.Fatalf("empty root rewrote %d nodes for %d keys", writes, len(mutations))
+		}
+		before := graph.Stats().NodeWrites
+		same, err := graph.Apply(root, mutations)
+		if err != nil {
+			return err
+		}
+		if same != root || graph.Stats().NodeWrites != before {
+			t.Fatalf("identical batch root=%s want=%s writes=%d", same, root, graph.Stats().NodeWrites-before)
 		}
 		return nil
 	})
