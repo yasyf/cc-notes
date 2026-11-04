@@ -12,20 +12,29 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-func activateQueryGeneration(ctx context.Context, tx *bolt.Tx, current, active queryGeneration) error {
+func activateQueryGeneration(ctx context.Context, tx *bolt.Tx, binding *bolt.Bucket, current, active queryGeneration) error {
 	if current.Root == active.Root {
 		return nil
 	}
 	root := tx.Bucket(queryGenerationsBucket)
 	objects := queryObjectStoreAt(root)
 	counts := newQueryReferenceCounts(root)
+	retired, err := popRetiredQueryGeneration(binding)
+	if err != nil {
+		return err
+	}
+	if retired != "" {
+		if err := releaseQueryObject(ctx, objects, counts, retired); err != nil {
+			return err
+		}
+	}
 	if current.Root != "" {
 		if err := retainQueryObject(ctx, objects, counts, current.Root); err != nil {
 			return err
 		}
 	}
 	if active.Root != "" {
-		if err := releaseQueryObject(ctx, objects, counts, active.Root); err != nil {
+		if err := binding.Put(queryRetiredRoot, bytes.Clone(binding.Get(queryActiveRoot))); err != nil {
 			return err
 		}
 	}
