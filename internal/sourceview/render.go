@@ -1774,7 +1774,7 @@ func runbookRunLine(r model.RunbookRun) string {
 	line := fmt.Sprintf("- %s %s — %s, %s → %s, %d done / %d skipped / %d failed",
 		render.ShortWireID(r.ID), r.Status, r.Runner, render.RFC3339(r.StartedAt), finished, done, skipped, failed)
 	if r.Task != "" {
-		line += fmt.Sprintf(" (task %s)", r.Task.Short())
+		line += fmt.Sprintf(" (task %s)", render.ShortWireID(string(r.Task)))
 	}
 	return line
 }
