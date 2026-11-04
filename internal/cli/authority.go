@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -47,7 +48,11 @@ func ensureAuthority(ctx context.Context, s *store.Store) (err error) {
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- importer.Wait() }()
-	deadline := time.After(authorityImportWait)
+	wait, err := managed.Wait(authorityImportWait)
+	if err != nil {
+		return err
+	}
+	deadline := time.After(wait)
 	poll := time.NewTicker(25 * time.Millisecond)
 	defer poll.Stop()
 	for {

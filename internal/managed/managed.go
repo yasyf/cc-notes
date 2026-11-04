@@ -39,6 +39,10 @@ var ErrBusy = errors.New("managed authority busy")
 
 var lockWait = 30 * time.Second
 
+// LockWaitEnv names a duration that shortens how long this process waits on the
+// authority, for a caller such as a hook read that would rather hear "busy" now.
+const LockWaitEnv = "CCN_LOCK_WAIT"
+
 // Path names the shared records authority database.
 func Path(commonDir string) string {
 	return filepath.Join(commonDir, "cc-notes-managed", "authority-v2.db")
@@ -83,10 +87,28 @@ func TryLock(commonDir string, exclusive bool) (*os.File, error) {
 	return file, nil
 }
 
+// Wait returns the time to wait on the authority: within, or less when
+// LockWaitEnv asks for less.
+func Wait(within time.Duration) (time.Duration, error) {
+	raw := os.Getenv(LockWaitEnv)
+	if raw == "" {
+		return within, nil
+	}
+	wait, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", LockWaitEnv, err)
+	}
+	return min(wait, within), nil
+}
+
 // Lock retains the stable authority lock until its returned file is closed,
-// failing with ErrBusy once another holder has kept it for lockWait.
+// failing with ErrBusy once another holder has kept it past Wait(lockWait).
 // Its identity stays fixed across authority cache generations.
 func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, error) {
+	wait, err := Wait(lockWait)
+	if err != nil {
+		return nil, err
+	}
 	file, err := openLock(commonDir)
 	if err != nil {
 		return nil, err
@@ -97,7 +119,7 @@ func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, erro
 	}
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
-	deadline := time.Now().Add(lockWait)
+	deadline := time.Now().Add(wait)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, file.Close())
@@ -110,7 +132,7 @@ func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, erro
 			return nil, errors.Join(err, file.Close())
 		}
 		if time.Now().After(deadline) {
-			return nil, errors.Join(fmt.Errorf("%w: %s held for %s", ErrBusy, file.Name(), lockWait), file.Close())
+			return nil, errors.Join(fmt.Errorf("%w: %s held for %s", ErrBusy, file.Name(), wait), file.Close())
 		}
 		select {
 		case <-ctx.Done():

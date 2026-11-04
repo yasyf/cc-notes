@@ -28,13 +28,20 @@ func TestTaskDedupeFreshCLICost(t *testing.T) {
 		}
 	}
 	if len(warmCounts) == 2 {
-		for _, name := range []string{"read", "openat"} {
-			if warmCounts[1][name] > warmCounts[0][name]+64 {
+		for name, allowance := range map[string]int{"read": 64, "openat": treeDepthFileOps} {
+			if warmCounts[1][name] > warmCounts[0][name]+allowance {
 				t.Errorf("warm %s grew with unrelated tasks: %d at 32, %d at 10000", name, warmCounts[0][name], warmCounts[1][name])
 			}
 		}
 	}
 }
+
+// A write copies one radix path per index, so its file operations follow tree
+// depth: 24 per doubling over the 8.3 doublings from 32 to 10000 records.
+const (
+	treeDepthFileOps = 24 * 83 / 10
+	writeStallLimit  = 10 * time.Second
+)
 
 func taskDedupeFreshCLIWork(t *testing.T) []map[string]int {
 	t.Helper()
@@ -103,6 +110,9 @@ func tracedTaskCreate(t *testing.T, dir, title string) map[string]int {
 		t.Fatalf("fresh CLI task create output: %q", out)
 	}
 	t.Logf("create=%q elapsed_ms=%.3f counters=%v", title, float64(elapsed)/float64(time.Millisecond), counts)
+	if elapsed > writeStallLimit {
+		t.Errorf("fresh CLI task create stalled for %s", elapsed)
+	}
 	return counts
 }
 
