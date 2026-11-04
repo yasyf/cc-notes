@@ -430,13 +430,24 @@ func managedCostParseTrace(data []byte) ([]managedCostCall, error) {
 	completed := regexp.MustCompile(`^([0-9]+\.[0-9]+) ([a-z0-9_]+)\((.*)\)\s+= (-?(?:0x[0-9a-f]+|[0-9]+)|\?)(?:\s.*)?$`)
 	unfinished := regexp.MustCompile(`^([0-9]+\.[0-9]+) ([a-z0-9_]+)\((.*)<unfinished \.\.\.>$`)
 	resumed := regexp.MustCompile(`^[0-9]+\.[0-9]+ <\.\.\. ([a-z0-9_]+) resumed>(.*)$`)
+	// strace prints this for a thread that exit_group took down at syscall entry: the
+	// syscall never ran, so it is no evidence as long as the thread does nothing after it.
+	exitingThread := regexp.MustCompile(`^[0-9]+\.[0-9]+ \?\?\?\( <unfinished \.\.\.>$`)
 	var calls []managedCostCall
 	var pending []string
+	exiting := false
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.Contains(line, "--- SIG") || strings.Contains(line, "+++ ") {
+			continue
+		}
+		if exiting {
+			return nil, fmt.Errorf("syscall after thread exit: %s", line)
+		}
+		if exitingThread.MatchString(line) {
+			exiting = true
 			continue
 		}
 		if match := unfinished.FindStringSubmatch(line); match != nil {
