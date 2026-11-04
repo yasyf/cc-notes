@@ -57,7 +57,7 @@ CC_NOTES_TOOLS = frozenset(
         "note_review", "note_verify", "note_supersede", "note_expire",
         "doc_add", "doc_edit", "doc_rm", "doc_show", "doc_list", "doc_search",
         "doc_review", "doc_verify", "doc_supersede", "doc_expire",
-        "answer_add", "answer_edit", "answer_rm", "answer_show", "answer_list", "answer_search",
+        "answer_add", "answer_edit", "answer_rm", "answer_show", "answer_list", "answer_search", "answer_match",
         "answer_review", "answer_verify", "answer_supersede", "answer_expire",
         "log_add", "log_append", "log_edit", "log_rm", "log_show", "log_list", "log_search",
         "log_entry_list",
@@ -400,6 +400,10 @@ def durable_answers(evt: BaseHookEvent, *anchors: str) -> list[dict[str, Any]]:
 def branch_answers(evt: BaseHookEvent) -> list[dict[str, Any]]:
     branch = current_branch(evt)
     return durable_answers(evt, "--branch", branch) if branch else []
+
+
+def matched_answers(evt: BaseHookEvent, text: str) -> list[dict[str, Any]]:
+    return parse_answers(run_cc_notes(evt, "answer", "match", "--json", "--label", "scope:durable", "--", text[:LLM_INPUT_CAP])) if text.strip() else []
 
 
 def seen_answer_ids(evt: BaseHookEvent) -> set[str]:

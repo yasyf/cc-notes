@@ -746,7 +746,7 @@ func TestListToolsInventory(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	const wantCount = 167
+	const wantCount = 168
 	if len(names) != wantCount {
 		t.Errorf("tool count = %d, want %d; got %v", len(names), wantCount, sortedKeys(names))
 	}
@@ -763,7 +763,7 @@ func TestListToolsInventory(t *testing.T) {
 		"investigation_finding_add", "investigation_finding_edit", "investigation_finding_clear", "investigation_finding_confirm", "investigation_finding_rm", "investigation_finding_list",
 		"investigation_root_cause", "investigation_fix", "investigation_confirm", "investigation_exonerate", "investigation_reopen", "investigation_abandon", "investigation_edit", "investigation_search", "investigation_rm",
 		"plan_add", "plan_list", "plan_show", "plan_edit", "plan_approve", "plan_start", "plan_reopen", "plan_done", "plan_abandon", "plan_comment", "plan_supersede", "plan_search", "plan_rm",
-		"answer_add", "answer_show", "answer_list", "answer_search", "answer_edit", "answer_verify", "answer_supersede", "answer_expire", "answer_review", "answer_rm",
+		"answer_add", "answer_show", "answer_list", "answer_search", "answer_match", "answer_edit", "answer_verify", "answer_supersede", "answer_expire", "answer_review", "answer_rm",
 		"attachment_path", "attachment_get",
 	} {
 		if !names[want] {

@@ -39,4 +39,11 @@ func registerAnswer(ts *toolset, b *bridge) {
 		})
 
 	registerNoteDocShared(ts, b, "answer", "Returns summaries carrying each answer body; answer_show reads one back in full.")
+
+	addTool(ts, &mcp.Tool{Name: "answer_match", Description: "Rank answers by the rare words they share with a text, such as a brief or an alert, with phrase labels first. Each hit is an answer summary with the phrase or terms that matched and its score."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in answerMatchArgs) (*mcp.CallToolResult, any, error) {
+			flags := optRepeated([]string{"--json"}, "--label", in.Labels)
+			flags = optInt(flags, "--limit", in.Limit)
+			return b.run(ctx, argvFor([]string{"answer", "match"}, flags, in.Text)...)
+		})
 }

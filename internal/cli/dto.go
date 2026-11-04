@@ -613,6 +613,15 @@ func newAnswerDTO(a model.Answer, drift string, supersedes, liveHead []model.Ent
 	return newNoteDTO(model.Note(a), drift, supersedes, liveHead, atts)
 }
 
+// answerMatchDTO is one "answer match" hit: the answer's listing projection with
+// why it matched.
+type answerMatchDTO struct {
+	answerSummaryDTO
+	Phrase string   `json:"phrase,omitempty"`
+	Terms  []string `json:"terms,omitempty"`
+	Score  float64  `json:"score"`
+}
+
 // newAnswerSummaryDTO renders an answer snapshot and its drift verdict into the
 // listing projection, keeping the body a reader pairs with the question.
 func newAnswerSummaryDTO(a model.Answer, drift string) answerSummaryDTO {

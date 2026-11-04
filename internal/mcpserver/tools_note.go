@@ -105,6 +105,12 @@ type entitySearchArgs struct {
 	Commit string   `json:"commit,omitempty" jsonschema:"require commit anchor"`
 }
 
+type answerMatchArgs struct {
+	Text   string   `json:"text" jsonschema:"the text to find answers for: a brief, an alert, or a line about to be sent"`
+	Labels []string `json:"labels,omitempty" jsonschema:"require every label (ANDed)"`
+	Limit  *int     `json:"limit,omitempty" jsonschema:"maximum results (default 5)"`
+}
+
 type supersedeArgs struct {
 	ID    string `json:"id" jsonschema:"the OLD entity being replaced"`
 	By    string `json:"by" jsonschema:"the NEW entity that replaces it"`

@@ -3158,6 +3158,21 @@ List answers, most recently updated first. Default drops superseded and tombston
 | `--limit N` | `0` (all) | Keep the N most recently updated matches |
 | `--json` | off | Emit JSON |
 
+### `cc-notes answer match TEXT`
+
+MCP: answer_match (text, labels, limit)
+
+Rank answers by the rare words they share with TEXT, for a caller holding a brief, an alert or a
+line and no idea what was ruled on it; `-` reads stdin. An answer with a `match:<phrase>` label
+comes first when TEXT contains that phrase. Any other answer needs two words of TEXT, each in under
+1 in 25 answers, in its question or plain labels. Answers that are expired or superseded never match.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--label <label>` | none | Require label; repeatable, ANDed |
+| `--limit N` | `5` | Maximum results |
+| `--json` | off | Emit JSON: the answer summary plus `phrase`, `terms` and `score` |
+
 ### `cc-notes answer search QUERY`
 
 MCP: answer_search (query, labels, limit, author, path, dir, branch, commit)

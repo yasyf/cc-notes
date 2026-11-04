@@ -115,6 +115,18 @@ command: cc-notes answer list
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
 
+command: cc-notes answer match
+  use: match TEXT
+  aliases: -
+  short: Rank answers by the rare words they share with TEXT; - reads stdin
+  hidden: false
+  flags:
+    --json shorthand=none type=bool default="false" usage="emit JSON"
+    --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
+    --limit shorthand=none type=int default="5" usage="maximum results"
+  inherited:
+    --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
+
 command: cc-notes answer review
   use: review
   aliases: -
