@@ -1,1 +1,1 @@
-{"v":1,"lamport":29,"ops":[{"kind":"set_assignee","assignee":"/root/ccn_release_finish/nov2_delivery/delivery_publish_successor/delivery_finish_1112/bulk_composition_peer/delivery_custodian_1126/delivery_custodian_1143/helper_normal_prepare_peer_1150/prepublish_controller_peer_1157/composition_peer_1216/controller_peer_1221"}]}
+{"v":1,"lamport":30,"ops":[{"kind":"set_assignee","assignee":"/root"}]}
