@@ -46,17 +46,17 @@ func TestQueryMetadataLabelReplaceDeleteAndRollback(t *testing.T) {
 	original := projectQueryMetadata("binding", "old-tip", model.Doc{ID: "doc", Tags: []string{"old", "shared"}, SkippedOps: 3})
 	other := projectQueryMetadata("binding", "other-tip", model.Doc{ID: "other", Tags: []string{"shared"}})
 	if err := db.Update(func(tx *bolt.Tx) error {
-		if err := replaceQueryMetadata(tx, original); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, original); err != nil {
 			return err
 		}
-		return replaceQueryMetadata(tx, other)
+		return replaceQueryMetadata(t.Context(), tx, other)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	replacement := projectQueryMetadata("binding", "new-tip", model.Doc{ID: "doc", Tags: []string{"new", "shared", "new"}})
 	rollback := errors.New("rollback")
 	if err := db.Update(func(tx *bolt.Tx) error {
-		if err := replaceQueryMetadata(tx, replacement); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, replacement); err != nil {
 			return err
 		}
 		return rollback
@@ -69,7 +69,7 @@ func TestQueryMetadataLabelReplaceDeleteAndRollback(t *testing.T) {
 	if got := labelMetadata(t, db, "binding", model.KindDoc, "new"); len(got) != 0 {
 		t.Fatalf("rollback left new postings: %#v", got)
 	}
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, replacement) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, replacement) }); err != nil {
 		t.Fatal(err)
 	}
 	if got := labelMetadata(t, db, "binding", model.KindDoc, "old"); len(got) != 0 {
@@ -82,7 +82,7 @@ func TestQueryMetadataLabelReplaceDeleteAndRollback(t *testing.T) {
 		t.Fatalf("shared rows = %#v", got)
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		if err := deleteQueryMetadata(tx, "binding", "doc"); err != nil {
+		if err := deleteQueryMetadata(t.Context(), tx, "binding", "doc"); err != nil {
 			return err
 		}
 		return rollback
@@ -92,7 +92,7 @@ func TestQueryMetadataLabelReplaceDeleteAndRollback(t *testing.T) {
 	if got := labelMetadata(t, db, "binding", model.KindDoc, "new"); len(got) != 1 {
 		t.Fatalf("delete rollback lost row: %#v", got)
 	}
-	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(tx, "binding", "doc") }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(t.Context(), tx, "binding", "doc") }); err != nil {
 		t.Fatal(err)
 	}
 	if got := labelMetadata(t, db, "binding", model.KindDoc, "new"); len(got) != 0 {
@@ -119,7 +119,7 @@ func TestQueryMetadataLabelBindingIsolationAndNUL(t *testing.T) {
 		for _, binding := range bindings {
 			for i, label := range labels {
 				row := projectQueryMetadata(binding, model.SHA(fmt.Sprintf("tip-%d", i)), model.Note{ID: model.EntityID(fmt.Sprintf("id-%d", i)), Tags: []string{label}})
-				if err := replaceQueryMetadata(tx, row); err != nil {
+				if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 					return err
 				}
 			}
@@ -139,7 +139,7 @@ func TestQueryMetadataLabelBindingIsolationAndNUL(t *testing.T) {
 	if got := labelMetadata(t, db, "missing", model.KindNote, "a"); len(got) != 0 {
 		t.Fatalf("unknown binding saw rows: %#v", got)
 	}
-	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(tx, "a", "id-0") }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(t.Context(), tx, "a", "id-0") }); err != nil {
 		t.Fatal(err)
 	}
 	if got := labelMetadata(t, db, "a\x00b", model.KindNote, ""); len(got) != 1 {
@@ -152,10 +152,10 @@ func TestQueryMetadataLabelOwnsRowsAcrossTransactions(t *testing.T) {
 	first := projectQueryMetadata("binding", "before", model.Answer{ID: "answer-a", Tags: []string{"label", "first"}, SkippedOps: 7})
 	second := projectQueryMetadata("binding", "second", model.Answer{ID: "answer-b", Tags: []string{"label", "second"}})
 	if err := db.Update(func(tx *bolt.Tx) error {
-		if err := replaceQueryMetadata(tx, first); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, first); err != nil {
 			return err
 		}
-		return replaceQueryMetadata(tx, second)
+		return replaceQueryMetadata(t.Context(), tx, second)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestQueryMetadataLabelOwnsRowsAcrossTransactions(t *testing.T) {
 		t.Fatalf("captured rows share slice storage: %#v", captured)
 	}
 	first.Tip = "after"
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, first) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, first) }); err != nil {
 		t.Fatal(err)
 	}
 	if captured[0].Tip != "before" || captured[0].SkippedOps != 7 || !slices.Equal(captured[0].Labels, wantLabels) {
@@ -202,7 +202,7 @@ func TestQueryMetadataLabelOnlyVisitsSelectedRows(t *testing.T) {
 						label = "selected"
 					}
 					row := projectQueryMetadata("binding", "tip", model.Doc{ID: model.EntityID(fmt.Sprintf("id-%04d", i)), Tags: []string{label}})
-					if err := replaceQueryMetadata(tx, row); err != nil {
+					if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 						return err
 					}
 					if i >= 2 {
@@ -238,7 +238,7 @@ func TestQueryMetadataLabelStopsAtVisitorError(t *testing.T) {
 	db := newQueryMetadataDB(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, id := range []model.EntityID{"a", "b"} {
-			if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", model.Doc{ID: id, Tags: []string{"label"}})); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", model.Doc{ID: id, Tags: []string{"label"}})); err != nil {
 				return err
 			}
 		}

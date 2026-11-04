@@ -22,7 +22,7 @@ func TestQueryMetadataLongPostingTermsReplaceAndDelete(t *testing.T) {
 			t.Fatalf("posting key depends on term length: prefix=%d", len(prefix))
 		}
 	}
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, row) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, row) }); err != nil {
 		t.Fatal(err)
 	}
 	if got := labelMetadata(t, db, "binding", model.KindDoc, oldLabel); len(got) != 1 || got[0].SkippedOps != 7 {
@@ -34,7 +34,7 @@ func TestQueryMetadataLongPostingTermsReplaceAndDelete(t *testing.T) {
 		t.Fatalf("long anchor rows = %v", got)
 	}
 	row.Tip, row.Labels, row.Anchors = "new-tip", []string{newLabel}, []model.Anchor{newAnchor}
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, row) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, row) }); err != nil {
 		t.Fatal(err)
 	}
 	if got := labelMetadata(t, db, "binding", model.KindDoc, oldLabel); len(got) != 0 {
@@ -53,7 +53,7 @@ func TestQueryMetadataLongPostingTermsReplaceAndDelete(t *testing.T) {
 	}); !slices.Equal(got, []model.EntityID{"source"}) {
 		t.Fatalf("replacement lost new long anchor: %v", got)
 	}
-	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(tx, "binding", "source") }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(t.Context(), tx, "binding", "source") }); err != nil {
 		t.Fatal(err)
 	}
 	if got := labelMetadata(t, db, "binding", model.KindDoc, newLabel); len(got) != 0 {
@@ -78,7 +78,7 @@ func TestQueryMetadataPostingDigestCollisionUsesExactStoredTerms(t *testing.T) {
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, row := range rows {
-			if err := replaceQueryMetadata(tx, row); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 				return err
 			}
 			binding := queryMetadataBinding(tx, "binding")
@@ -127,7 +127,7 @@ func TestQueryMetadataLongOpaqueBindingIsolation(t *testing.T) {
 			if i != 0 {
 				tip = "second"
 			}
-			if err := replaceQueryMetadata(tx, projectQueryMetadata(binding, tip, model.Doc{ID: "same-id", Tags: []string{"label"}})); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata(binding, tip, model.Doc{ID: "same-id", Tags: []string{"label"}})); err != nil {
 				return err
 			}
 		}

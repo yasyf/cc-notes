@@ -98,7 +98,7 @@ func TestRetainedQueryGraphUsesCanonicalSourceMap(t *testing.T) {
 			return err
 		}
 		rows := queryMetadataBinding(tx, source.binding).Bucket(queryMetadataRowsBucket)
-		return rows.ForEach(func(key, data []byte) error {
+		return rows.ForEach(func(_, data []byte) error {
 			row, err := decodeQueryMetadata(tx, source, data)
 			if err != nil {
 				return err

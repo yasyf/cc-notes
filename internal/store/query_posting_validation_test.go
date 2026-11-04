@@ -46,7 +46,7 @@ func TestQueryTaskRelationValidatesMatchingMetadata(t *testing.T) {
 				if err := putQueryMetadataAuthority(tx, row); err != nil {
 					return err
 				}
-				if err := replaceQueryMetadata(tx, row); err != nil {
+				if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 					return err
 				}
 				tc.mutate(&row)
@@ -86,7 +86,7 @@ func TestQueryTaskRelationPreservesDecodeAndCancellationOrder(t *testing.T) {
 			db := newQueryMetadataDB(t)
 			if err := db.Update(func(tx *bolt.Tx) error {
 				row := projectQueryMetadata("binding", "tip", model.Task{ID: "child", Parent: "parent"})
-				if err := replaceQueryMetadata(tx, row); err != nil {
+				if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 					return err
 				}
 				if malformed {

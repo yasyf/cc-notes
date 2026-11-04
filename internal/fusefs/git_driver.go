@@ -772,7 +772,7 @@ func (d *GitDriver) projectionStart(
 	if err != nil {
 		return 0, err
 	}
-	if !found || tenant.ID != request.Cursor.AfterTenant || causal.Generation(tenant.Generation) != request.Cursor.AfterGeneration || rank != uint64((boundary.end-1)%snapshot.count) {
+	if !found || tenant.ID != request.Cursor.AfterTenant || causal.Generation(tenant.Generation) != request.Cursor.AfterGeneration || rank != (binary.BigEndian.Uint64(request.Cursor.Continuation[8:])-1)%uint64(snapshot.count) {
 		return 0, errors.New("cc-notes source: snapshot cursor does not match indexed position")
 	}
 	objects, end, digest, err := fitSnapshotPage(

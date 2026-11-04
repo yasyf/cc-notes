@@ -39,7 +39,7 @@ func TestQueryMetadataCardinalityLifecycle(t *testing.T) {
 	db := newQueryMetadataDB(t)
 	for _, binding := range []string{"binding", "other"} {
 		if err := db.Update(func(tx *bolt.Tx) error {
-			return replaceQueryMetadata(tx, projectQueryMetadata(binding, "first", model.Doc{ID: "shared"}))
+			return replaceQueryMetadata(t.Context(), tx, projectQueryMetadata(binding, "first", model.Doc{ID: "shared"}))
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +47,7 @@ func TestQueryMetadataCardinalityLifecycle(t *testing.T) {
 	for _, skipped := range []int{2, 0} {
 		if err := db.Update(func(tx *bolt.Tx) error {
 			row := projectQueryMetadata("binding", "updated", model.Doc{ID: "shared", SkippedOps: skipped})
-			if err := replaceQueryMetadata(tx, row); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 				return err
 			}
 			return deleteQueryMetadataTip(queryMetadataBinding(tx, "binding"), queryMetadata{ID: "absent", Kind: model.KindDoc})
@@ -58,14 +58,14 @@ func TestQueryMetadataCardinalityLifecycle(t *testing.T) {
 		assertQueryTipCount(t, db, "other", model.KindDoc, 1)
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		return replaceQueryMetadata(tx, projectQueryMetadata("binding", "task", model.Task{ID: "shared"}))
+		return replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "task", model.Task{ID: "shared"}))
 	}); err != nil {
 		t.Fatal(err)
 	}
 	assertQueryTipCount(t, db, "binding", model.KindDoc, 0)
 	assertQueryTipCount(t, db, "binding", model.KindTask, 1)
 	for range 2 {
-		if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(tx, "binding", "shared") }); err != nil {
+		if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(t.Context(), tx, "binding", "shared") }); err != nil {
 			t.Fatal(err)
 		}
 		assertQueryTipCount(t, db, "binding", model.KindTask, 0)
@@ -76,19 +76,19 @@ func TestQueryMetadataCardinalityLifecycle(t *testing.T) {
 func TestQueryMetadataCardinalityRollback(t *testing.T) {
 	db := newQueryMetadataDB(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
-		return replaceQueryMetadata(tx, projectQueryMetadata("binding", "original", model.Doc{ID: "kept"}))
+		return replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "original", model.Doc{ID: "kept"}))
 	}); err != nil {
 		t.Fatal(err)
 	}
 	abort := errors.New("abort metadata changes")
 	err := db.Update(func(tx *bolt.Tx) error {
-		if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "new", model.Doc{ID: "new"})); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "new", model.Doc{ID: "new"})); err != nil {
 			return err
 		}
-		if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "changed-kind", model.Task{ID: "kept"})); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "changed-kind", model.Task{ID: "kept"})); err != nil {
 			return err
 		}
-		if err := deleteQueryMetadata(tx, "binding", "new"); err != nil {
+		if err := deleteQueryMetadata(t.Context(), tx, "binding", "new"); err != nil {
 			return err
 		}
 		return abort
@@ -130,7 +130,7 @@ func TestQueryMetadataCardinalityDiffWork(t *testing.T) {
 				for i := range count {
 					id := model.EntityID(fmt.Sprintf("id-%05d", i))
 					original[id] = "tip"
-					if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", model.Doc{ID: id})); err != nil {
+					if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", model.Doc{ID: id})); err != nil {
 						return err
 					}
 				}
@@ -180,7 +180,7 @@ func TestQueryMetadataCardinalityRejectsImpossibleCounts(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			db := newQueryMetadataDB(t)
 			row := projectQueryMetadata("binding", "tip", model.Doc{ID: "id"})
-			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, row) }); err != nil {
+			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, row) }); err != nil {
 				t.Fatal(err)
 			}
 			err := db.Update(func(tx *bolt.Tx) error {

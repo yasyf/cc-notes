@@ -135,6 +135,7 @@ jobs:
           git remote add origin "$REMOTE"
           # Signed-helper deployment starts a real FuseKit mount and belongs in
           # the VM gate, never on a hosted release runner.
+          "$BIN" reindex
           "$BIN" note add "smoke test note"
           out="$("$BIN" note list)"
           echo "$out"

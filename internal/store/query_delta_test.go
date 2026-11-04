@@ -25,7 +25,7 @@ func TestQueryMetadataDeltaOnlyFoldsChangedTips(t *testing.T) {
 					id := model.EntityID(fmt.Sprintf("id-%04d", i))
 					captured[id] = "original-tip"
 					row := projectQueryMetadata("binding", "original-tip", model.Doc{ID: id, Tags: []string{"original"}})
-					if err := replaceQueryMetadata(tx, row); err != nil {
+					if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 						return err
 					}
 					if err := queryMetadataBinding(tx, "binding").Bucket(queryMetadataRowsBucket).Put([]byte(id), []byte("invalid unchanged JSON")); err != nil {
@@ -85,7 +85,7 @@ func TestQueryMetadataDeltaOnlyFoldsChangedTips(t *testing.T) {
 func TestQueryMetadataDeltaRefoldsPartialAtSameTip(t *testing.T) {
 	db := newQueryMetadataDB(t)
 	row := projectQueryMetadata("binding", "tip", model.Doc{ID: "doc", SkippedOps: 5})
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, row) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, row) }); err != nil {
 		t.Fatal(err)
 	}
 	captured := map[model.EntityID]model.SHA{"doc": "tip"}
@@ -132,10 +132,10 @@ func TestQueryMetadataDeltaRemovalCleansAllPostings(t *testing.T) {
 	anchor := model.Anchor{Kind: model.AnchorPath, Value: "removed-path"}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		remove := projectQueryMetadata("binding", "remove-tip", model.Doc{ID: "remove", Tags: []string{"removed-label"}, Anchors: []model.Anchor{anchor}, SupersededBy: []model.EntityID{"removed-target"}})
-		if err := replaceQueryMetadata(tx, remove); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, remove); err != nil {
 			return err
 		}
-		if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "keep-tip", model.Doc{ID: "keep"})); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "keep-tip", model.Doc{ID: "keep"})); err != nil {
 			return err
 		}
 		return queryMetadataBinding(tx, "binding").Bucket(queryMetadataRowsBucket).Put([]byte("keep"), []byte("invalid unchanged JSON"))
@@ -181,7 +181,7 @@ func TestQueryMetadataDeltaErrorAndCancellationRollBack(t *testing.T) {
 			db := newQueryMetadataDB(t)
 			if err := db.Update(func(tx *bolt.Tx) error {
 				for _, id := range []model.EntityID{"a", "b"} {
-					if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "old-tip", model.Doc{ID: id, Tags: []string{"old"}})); err != nil {
+					if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "old-tip", model.Doc{ID: id, Tags: []string{"old"}})); err != nil {
 						return err
 					}
 				}
@@ -272,7 +272,7 @@ func TestQueryMetadataDeltaScopeIsolation(t *testing.T) {
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, row := range rows {
-			if err := replaceQueryMetadata(tx, row); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 				return err
 			}
 		}
@@ -360,7 +360,7 @@ func TestQueryMetadataDeltaRejectsMalformedCompactSummary(t *testing.T) {
 		t.Run(string(malformed), func(t *testing.T) {
 			db := newQueryMetadataDB(t)
 			if err := db.Update(func(tx *bolt.Tx) error {
-				if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", model.Doc{ID: "id"})); err != nil {
+				if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", model.Doc{ID: "id"})); err != nil {
 					return err
 				}
 				return queryMetadataKindTips(tx, "binding", model.KindDoc).Put([]byte("id"), malformed)

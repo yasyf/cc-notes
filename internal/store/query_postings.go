@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -51,7 +52,7 @@ func ensureQueryMetadataBinding(tx *bolt.Tx, name string) (*bolt.Bucket, error) 
 	return binding, nil
 }
 
-func replaceQueryMetadata(tx *bolt.Tx, row queryMetadata) error {
+func replaceQueryMetadata(ctx context.Context, tx *bolt.Tx, row queryMetadata) error {
 	binding, err := ensureQueryMetadataBinding(tx, row.Binding)
 	if err != nil {
 		return err
@@ -67,7 +68,7 @@ func replaceQueryMetadata(tx *bolt.Tx, row queryMetadata) error {
 	if err != nil {
 		return err
 	}
-	if err := replaceQueryGeneration(tx, row.Binding, row.ID, rows.Get([]byte(row.ID)), data); err != nil {
+	if err := replaceQueryGeneration(ctx, tx, row.Binding, row.ID, rows.Get([]byte(row.ID)), data); err != nil {
 		return err
 	}
 	if err := rows.Put([]byte(row.ID), data); err != nil {
@@ -109,12 +110,12 @@ func replaceQueryMetadata(tx *bolt.Tx, row queryMetadata) error {
 	return putQueryMetadataTip(binding, row)
 }
 
-func deleteQueryMetadata(tx *bolt.Tx, binding string, id model.EntityID) error {
+func deleteQueryMetadata(ctx context.Context, tx *bolt.Tx, binding string, id model.EntityID) error {
 	bucket := queryMetadataBinding(tx, binding)
 	if bucket == nil {
 		return nil
 	}
-	if err := replaceQueryGeneration(tx, binding, id, bucket.Bucket(queryMetadataRowsBucket).Get([]byte(id)), nil); err != nil {
+	if err := replaceQueryGeneration(ctx, tx, binding, id, bucket.Bucket(queryMetadataRowsBucket).Get([]byte(id)), nil); err != nil {
 		return err
 	}
 	if err := removeQueryMetadataPostings(bucket, id); err != nil {
