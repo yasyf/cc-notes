@@ -1,68 +1,13 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
-	"reflect"
 	"testing"
 
 	bolt "go.etcd.io/bbolt"
-
-	"github.com/yasyf/cc-notes/internal/managed"
-	"github.com/yasyf/cc-notes/model"
 )
-
-func TestBulkQueryMetadataMatchesIncrementalGraph(t *testing.T) {
-	rows := make([]queryMetadata, 0, 48)
-	for i := range 48 {
-		id := model.EntityID(fmt.Sprintf("doc-%02d", i))
-		row := projectQueryMetadata(fmt.Sprintf("binding-%d", i%2), model.SHA(fmt.Sprintf("tip-%02d", i)), model.Doc{ID: id, Tags: []string{"shared", fmt.Sprintf("tag-%d", i%3)}})
-		row.Labels = append(row.Labels, "shared")
-		rows = append(rows, row)
-	}
-	bulk, incremental := newQueryMetadataDB(t), newQueryMetadataDB(t)
-	if err := bulk.Update(func(tx *bolt.Tx) error { return buildQueryMetadata(t.Context(), tx, rows) }); err != nil {
-		t.Fatal(err)
-	}
-	if err := incremental.Update(func(tx *bolt.Tx) error {
-		for _, row := range rows {
-			if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	snapshot := func(db *bolt.DB) map[string][]byte {
-		t.Helper()
-		values := make(map[string][]byte)
-		if err := db.View(func(tx *bolt.Tx) error {
-			root := tx.Bucket(queryGenerationsBucket)
-			for _, binding := range []string{"binding-0", "binding-1"} {
-				values[binding] = bytes.Clone(queryGenerationBinding(tx, binding).Get(queryCurrentRoot))
-			}
-			for _, name := range [][]byte{queryObjectsBucket, []byte(managed.QueryObjectRefs)} {
-				if err := root.Bucket(name).ForEach(func(key, value []byte) error {
-					values[string(name)+"/"+string(key)] = bytes.Clone(value)
-					return nil
-				}); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-		return values
-	}
-	if got, want := snapshot(bulk), snapshot(incremental); !reflect.DeepEqual(got, want) {
-		t.Fatalf("bulk graph differs from incremental graph: bulk=%d entries incremental=%d", len(got), len(want))
-	}
-}
 
 func TestQueryReferenceCountsCancelWithoutDirtyingPages(t *testing.T) {
 	db := newQueryMetadataDB(t)

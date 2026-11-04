@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 
@@ -70,6 +71,37 @@ func (counts *queryReferenceCounts) flush(ctx context.Context) error {
 		counts.values[hash] = queryReferenceCount{before: value, after: value}
 	}
 	return ctx.Err()
+}
+
+type queryObjectWrites struct {
+	objects map[model.SHA][]byte
+	refs    map[model.SHA]uint64
+}
+
+func (w *queryObjectWrites) flush(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts) ([]model.SHA, error) {
+	created := slices.Sorted(maps.Keys(w.objects))
+	for _, hash := range created {
+		if err := objects.Put([]byte(hash), w.objects[hash]); err != nil {
+			return nil, err
+		}
+	}
+	for hash, refs := range w.refs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if objects.Get([]byte(hash)) == nil {
+			return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
+		}
+		count, err := counts.get(hash)
+		if err != nil {
+			return nil, err
+		}
+		if math.MaxUint64-count < refs {
+			return nil, fmt.Errorf("immutable query object reference count overflow %s: %w", hash, managed.ErrReindex)
+		}
+		counts.set(hash, count+refs)
+	}
+	return created, nil
 }
 
 func queryObjectRefCount(counts *bolt.Bucket, hash model.SHA) (uint64, error) {

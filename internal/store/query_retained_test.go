@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"testing"
 
@@ -222,5 +223,70 @@ func TestRetainedMetadataReclaimsRetiredAndTransientObjects(t *testing.T) {
 	}
 	if after := count(); after > before+32 {
 		t.Fatalf("retired graphs grew object count from %d to %d", before, after)
+	}
+}
+
+func TestQueryGenerationBatchMatchesPerRowReplacement(t *testing.T) {
+	rows := make([]queryMetadata, 0, 512)
+	for i := range 256 {
+		id := model.EntityID(fmt.Sprintf("doc-%03d", i))
+		binding := fmt.Sprintf("binding-%d", i%3)
+		rows = append(rows, projectQueryMetadata(binding, "first", model.Doc{ID: id, Tags: []string{"shared", string(id)}}))
+	}
+	for i := range 128 {
+		id := model.EntityID(fmt.Sprintf("doc-%03d", i))
+		binding := fmt.Sprintf("binding-%d", i%3)
+		rows = append(rows, projectQueryMetadata(binding, "second", model.Doc{ID: id, Tags: []string{"changed"}}))
+	}
+	removed := model.EntityID("doc-200")
+	dump := func(db *bolt.DB) map[string]string {
+		t.Helper()
+		state := make(map[string]string)
+		if err := db.View(func(tx *bolt.Tx) error {
+			root := tx.Bucket(queryGenerationsBucket)
+			for _, name := range []string{managed.QueryObjects, managed.QueryObjectRefs} {
+				if err := root.Bucket([]byte(name)).ForEach(func(key, value []byte) error {
+					state[name+"/"+string(key)] = string(value)
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+			for i := range 3 {
+				binding := fmt.Sprintf("binding-%d", i)
+				state[binding] = string(root.Bucket(queryMetadataAtom(binding)).Get(queryCurrentRoot))
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	single := newQueryMetadataDB(t)
+	for _, row := range rows {
+		if err := single.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, row) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := single.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(t.Context(), tx, "binding-2", removed) }); err != nil {
+		t.Fatal(err)
+	}
+	batched := newQueryMetadataDB(t)
+	if err := batched.Update(func(tx *bolt.Tx) error {
+		batch := make(queryGenerationBatch)
+		for _, row := range rows {
+			if err := batch.replaceMetadata(tx, row); err != nil {
+				return err
+			}
+		}
+		if err := batch.deleteMetadata(tx, "binding-2", removed); err != nil {
+			return err
+		}
+		return batch.flush(t.Context(), tx)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want, got := dump(single), dump(batched); !maps.Equal(want, got) {
+		t.Fatalf("batched generation state differs: %d keys per row, %d keys batched", len(want), len(got))
 	}
 }
