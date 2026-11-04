@@ -1508,9 +1508,6 @@ func TestLooseObjectWriteIsGitReadableAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Mode().Perm() != 0o444 {
-		t.Fatalf("object mode = %v, want 0444", first.Mode().Perm())
-	}
 	writeBlob()
 	second, err := os.Stat(path)
 	if err != nil {

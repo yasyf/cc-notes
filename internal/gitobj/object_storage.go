@@ -28,8 +28,8 @@ type objectStorage struct {
 func (s *objectStorage) Reindex() { s.scope.refresh = true }
 
 // SetEncodedObject replaces go-git's loose write, which writes through a shared
-// temp directory, checks for the object only afterwards and restats it to fix
-// permissions; one source graph publication writes about ninety objects.
+// temp directory and checks for the object only afterwards; one source graph
+// publication writes about ninety objects.
 func (s *objectStorage) SetEncodedObject(o plumbing.EncodedObject) (plumbing.Hash, error) {
 	if o.Type() == plumbing.OFSDeltaObject || o.Type() == plumbing.REFDeltaObject {
 		return plumbing.ZeroHash, plumbing.ErrInvalidType
@@ -72,7 +72,7 @@ func writeLooseObject(tmp *os.File, o plumbing.EncodedObject) (resultErr error) 
 		return errors.Join(err, reader.Close(), writer.Close())
 	}
 	_, copyErr := io.Copy(writer, reader)
-	return errors.Join(copyErr, reader.Close(), writer.Close(), tmp.Chmod(0o444))
+	return errors.Join(copyErr, reader.Close(), writer.Close())
 }
 
 func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Hash) (plumbing.EncodedObject, error) {
