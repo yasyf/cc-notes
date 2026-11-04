@@ -18,7 +18,8 @@ func activateQueryGeneration(ctx context.Context, tx *bolt.Tx, current, active q
 		return nil
 	}
 	root := tx.Bucket(queryGenerationsBucket)
-	objects, counts := root.Bucket(queryObjectsBucket), root.Bucket([]byte(managed.QueryObjectRefs))
+	objects := root.Bucket(queryObjectsBucket)
+	counts := newQueryReferenceCounts(root.Bucket([]byte(managed.QueryObjectRefs)))
 	if current.Root != "" {
 		if err := retainQueryObject(ctx, objects, counts, current.Root); err != nil {
 			return err
@@ -29,10 +30,10 @@ func activateQueryGeneration(ctx context.Context, tx *bolt.Tx, current, active q
 			return err
 		}
 	}
-	return ctx.Err()
+	return counts.flush(ctx)
 }
 
-func copyQueryObject(ctx context.Context, source, objects, counts *bolt.Bucket, hash model.SHA) error {
+func copyQueryObject(ctx context.Context, source, objects *bolt.Bucket, counts *queryReferenceCounts, hash model.SHA) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -87,8 +88,9 @@ func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination 
 			return nil
 		}
 		next := destination.Bucket(queryGenerationsBucket)
-		objects, counts := next.Bucket(queryObjectsBucket), next.Bucket([]byte(managed.QueryObjectRefs))
-		return old.ForEach(func(key, value []byte) error {
+		objects := next.Bucket(queryObjectsBucket)
+		counts := newQueryReferenceCounts(next.Bucket([]byte(managed.QueryObjectRefs)))
+		err := old.ForEach(func(key, value []byte) error {
 			if value != nil || string(key) == managed.QueryObjects || string(key) == managed.QueryObjectRefs {
 				return nil
 			}
@@ -121,5 +123,9 @@ func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination 
 			}
 			return target.Put(queryActiveRoot, data)
 		})
+		if err != nil {
+			return err
+		}
+		return counts.flush(ctx)
 	})
 }

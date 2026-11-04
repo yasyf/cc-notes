@@ -35,7 +35,7 @@ type queryGeneration struct {
 type queryGraphObjects struct {
 	ctx     context.Context
 	bucket  *bolt.Bucket
-	counts  *bolt.Bucket
+	counts  *queryReferenceCounts
 	created *[]model.SHA
 }
 type retainedQuery struct {
@@ -255,10 +255,11 @@ func replaceQueryGeneration(ctx context.Context, tx *bolt.Tx, binding string, id
 	if err != nil {
 		return err
 	}
-	counts, err := root.CreateBucketIfNotExists([]byte(managed.QueryObjectRefs))
+	counterBucket, err := root.CreateBucketIfNotExists([]byte(managed.QueryObjectRefs))
 	if err != nil {
 		return err
 	}
+	counts := newQueryReferenceCounts(counterBucket)
 	var created []model.SHA
 	index := sourcegraph.New(queryGraphObjects{ctx: ctx, bucket: objects, counts: counts, created: &created})
 	previousRoot := generation.Root
@@ -311,6 +312,9 @@ func replaceQueryGeneration(ctx context.Context, tx *bolt.Tx, binding string, id
 		}
 	}
 	if err := pruneQueryObjects(ctx, objects, counts, created); err != nil {
+		return err
+	}
+	if err := counts.flush(ctx); err != nil {
 		return err
 	}
 	data, err := json.Marshal(generation)

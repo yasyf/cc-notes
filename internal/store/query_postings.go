@@ -57,18 +57,22 @@ func replaceQueryMetadata(ctx context.Context, tx *bolt.Tx, row queryMetadata) e
 	if err != nil {
 		return err
 	}
+	data, err := json.Marshal(row)
+	if err != nil {
+		return err
+	}
+	if err := replaceQueryGeneration(ctx, tx, row.Binding, row.ID, binding.Bucket(queryMetadataRowsBucket).Get([]byte(row.ID)), data); err != nil {
+		return err
+	}
+	return putQueryMetadata(binding, row, data)
+}
+
+func putQueryMetadata(binding *bolt.Bucket, row queryMetadata, data []byte) error {
 	rows := binding.Bucket(queryMetadataRowsBucket)
 	labels := binding.Bucket(queryMetadataLabelsBucket)
 	anchors := binding.Bucket(queryMetadataAnchorsBucket)
 	superseders := binding.Bucket(queryMetadataSupersedersBucket)
 	if err := removeQueryMetadataPostings(binding, row.ID); err != nil {
-		return err
-	}
-	data, err := json.Marshal(row)
-	if err != nil {
-		return err
-	}
-	if err := replaceQueryGeneration(ctx, tx, row.Binding, row.ID, rows.Get([]byte(row.ID)), data); err != nil {
 		return err
 	}
 	if err := rows.Put([]byte(row.ID), data); err != nil {

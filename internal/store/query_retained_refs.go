@@ -3,9 +3,9 @@ package store
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -14,6 +14,63 @@ import (
 	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/model"
 )
+
+type queryReferenceCount struct {
+	before uint64
+	after  uint64
+}
+
+type queryReferenceCounts struct {
+	bucket *bolt.Bucket
+	values map[model.SHA]queryReferenceCount
+}
+
+func newQueryReferenceCounts(bucket *bolt.Bucket) *queryReferenceCounts {
+	return &queryReferenceCounts{bucket: bucket, values: make(map[model.SHA]queryReferenceCount)}
+}
+
+func (counts *queryReferenceCounts) get(hash model.SHA) (uint64, error) {
+	if value, found := counts.values[hash]; found {
+		return value.after, nil
+	}
+	value, err := queryObjectRefCount(counts.bucket, hash)
+	if err != nil {
+		return 0, err
+	}
+	counts.values[hash] = queryReferenceCount{before: value, after: value}
+	return value, nil
+}
+
+func (counts *queryReferenceCounts) set(hash model.SHA, value uint64) {
+	entry := counts.values[hash]
+	entry.after = value
+	counts.values[hash] = entry
+}
+
+func (counts *queryReferenceCounts) flush(ctx context.Context) error {
+	keys := make([]model.SHA, 0, len(counts.values))
+	for hash, value := range counts.values {
+		if value.before != value.after {
+			keys = append(keys, hash)
+		}
+	}
+	slices.Sort(keys)
+	for _, hash := range keys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		value := counts.values[hash].after
+		if value == 0 {
+			if err := counts.bucket.Delete([]byte(hash)); err != nil {
+				return err
+			}
+		} else if err := counts.bucket.Put([]byte(hash), binary.BigEndian.AppendUint64(nil, value)); err != nil {
+			return err
+		}
+		counts.values[hash] = queryReferenceCount{before: value, after: value}
+	}
+	return ctx.Err()
+}
 
 func queryObjectRefCount(counts *bolt.Bucket, hash model.SHA) (uint64, error) {
 	data := counts.Get([]byte(hash))
@@ -53,28 +110,29 @@ func queryObjectChildren(ctx context.Context, objects *bolt.Bucket, hash model.S
 	return children, nil
 }
 
-func retainQueryObject(ctx context.Context, objects, counts *bolt.Bucket, hash model.SHA) error {
+func retainQueryObject(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts, hash model.SHA) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if _, err := queryObjectChildren(ctx, objects, hash); err != nil {
 		return err
 	}
-	count, err := queryObjectRefCount(counts, hash)
+	count, err := counts.get(hash)
 	if err != nil {
 		return err
 	}
 	if count == math.MaxUint64 {
 		return fmt.Errorf("immutable query object reference count overflow %s: %w", hash, managed.ErrReindex)
 	}
-	return counts.Put([]byte(hash), binary.BigEndian.AppendUint64(nil, count+1))
+	counts.set(hash, count+1)
+	return nil
 }
 
-func releaseQueryObject(ctx context.Context, objects, counts *bolt.Bucket, hash model.SHA) error {
+func releaseQueryObject(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts, hash model.SHA) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	count, err := queryObjectRefCount(counts, hash)
+	count, err := counts.get(hash)
 	if err != nil {
 		return err
 	}
@@ -85,19 +143,21 @@ func releaseQueryObject(ctx context.Context, objects, counts *bolt.Bucket, hash 
 		if objects.Get([]byte(hash)) == nil {
 			return fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
 		}
-		return counts.Put([]byte(hash), binary.BigEndian.AppendUint64(nil, count-1))
+		counts.set(hash, count-1)
+		return nil
 	}
 	return deleteQueryObject(ctx, objects, counts, hash)
 }
 
-func deleteQueryObject(ctx context.Context, objects, counts *bolt.Bucket, hash model.SHA) error {
+func deleteQueryObject(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts, hash model.SHA) error {
 	children, err := queryObjectChildren(ctx, objects, hash)
 	if err != nil {
 		return err
 	}
-	if err := errors.Join(objects.Delete([]byte(hash)), counts.Delete([]byte(hash))); err != nil {
+	if err := objects.Delete([]byte(hash)); err != nil {
 		return err
 	}
+	counts.set(hash, 0)
 	for _, child := range children {
 		if err := releaseQueryObject(ctx, objects, counts, child); err != nil {
 			return err
@@ -106,12 +166,12 @@ func deleteQueryObject(ctx context.Context, objects, counts *bolt.Bucket, hash m
 	return ctx.Err()
 }
 
-func pruneQueryObjects(ctx context.Context, objects, counts *bolt.Bucket, created []model.SHA) error {
+func pruneQueryObjects(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts, created []model.SHA) error {
 	for _, hash := range created {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		count, err := queryObjectRefCount(counts, hash)
+		count, err := counts.get(hash)
 		if err != nil {
 			return err
 		}
