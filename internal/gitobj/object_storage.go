@@ -88,7 +88,7 @@ func (s *objectStorage) packedObject(hash plumbing.Hash) (plumbing.EncodedObject
 		}
 		s.scope.refresh = false
 	}
-	batch, err := s.scope.batch(s.scope.ctx, s.backend)
+	batch, err := s.scope.batch(s.backend)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func (o *nativeObject) Writer() (io.WriteCloser, error) {
 }
 
 func (o *nativeObject) Reader() (io.ReadCloser, error) {
-	batch, err := o.scope.batch(o.scope.ctx, o.backend)
+	batch, err := o.scope.batch(o.backend)
 	if err != nil {
 		return nil, err
 	}
