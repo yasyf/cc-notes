@@ -21,6 +21,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceindex"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -350,13 +351,19 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 	built := time.Unix(0, e.Built)
 	stamps := slices.Clone(e.Stamps)
 	var moved []int
+	headsMoved := false
 	for i, s := range e.Stamps {
 		if stamps[i] = restamp(s); stamps[i] == s && (!e.Racy || !s.racy(built)) {
 			continue
 		}
 		root, ok := roots[s.Path]
-		if !ok || s.Link || s.Ident || stamps[i].Missing || stamps[i].Inode != s.Inode || stamps[i].Mode != s.Mode {
+		heads := s.Path == c.headsDir()
+		if (!ok && !heads) || s.Link || s.Ident || stamps[i].Missing || stamps[i].Inode != s.Inode || stamps[i].Mode != s.Mode {
 			return false
+		}
+		if heads {
+			headsMoved = true
+			continue
 		}
 		if slices.ContainsFunc(e.LooseRefs, func(ref string) bool { return strings.HasPrefix(ref, root) && !c.looseRef(ref) }) ||
 			slices.ContainsFunc(resolved, func(rev string) bool { return strings.Contains(rev, strings.TrimPrefix(root, "refs/")) }) {
@@ -365,6 +372,9 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 		moved = append(moved, i)
 	}
 	cutoff := e.Built - relevantRacyWindow.Nanoseconds()
+	if headsMoved && !onlyLiveRefSince(c.headsDir(), cutoff) {
+		return false
+	}
 	for _, i := range moved {
 		if !c.unscoredSince(ctx, e.Stamps[i].Path, roots[e.Stamps[i].Path], p, e.Rendered, cutoff) {
 			return false
@@ -384,6 +394,34 @@ func (c *Client) entityRootDirs() map[string]string {
 		dirs[joinPath(c.s.RecordsCommonDir(), filepath.FromSlash(strings.TrimSuffix(root, "/")))] = root
 	}
 	return dirs
+}
+
+func (c *Client) headsDir() string {
+	return joinPath(c.s.RecordsCommonDir(), filepath.FromSlash("refs/heads"))
+}
+
+// onlyLiveRefSince reports whether the source projection's live ref, which every
+// managed write moves, is the one entry of the branch directory written at or
+// after cutoff (nanoseconds). A branch removed since is watched by its own stamp.
+func onlyLiveRefSince(dir string, cutoff int64) bool {
+	live := strings.TrimPrefix(sourceindex.LiveRef, "refs/heads/")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false
+		}
+		if ctime, _ := gitobj.StatIdentity(info); entry.Name() != live && (ctime >= cutoff || info.ModTime().UnixNano() >= cutoff) {
+			return false
+		}
+	}
+	return true
 }
 
 // unscoredSince reports whether every loose ref in dir, the directory of
