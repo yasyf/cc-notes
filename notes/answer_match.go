@@ -16,13 +16,16 @@ const (
 	// text containing it, whatever the ranking says of the rest.
 	MatchPhrasePrefix = "match:"
 
-	matchRareShare  = 25
-	matchRareFloor  = 2
-	matchTitleTerms = 2
-	matchTitleBoost = 3
-	matchLengthBias = 10
-	matchMinTerm    = 3
-	matchStatusLen  = 3
+	matchRareShare   = 25
+	matchRareFloor   = 2
+	matchTitleTerms  = 2
+	matchBodyTerms   = 3
+	matchTitleRarity = 1.4
+	matchBodyRarity  = 2.0
+	matchTitleBoost  = 3
+	matchLengthBias  = 10
+	matchMinTerm     = 3
+	matchStatusLen   = 3
 )
 
 var (
@@ -50,9 +53,12 @@ type AnswerMatch struct {
 
 // MatchAnswers ranks the live, unexpired answers against the words of text, so
 // an answer reaches a reader with no anchor and no search of their own. Phrase
-// matches come first. Any other answer needs two rare words of text in its
-// question or plain labels, and the result stays at f's limit however many
-// answers the store holds.
+// matches come first. A word's rarity runs from 1 for a word only one answer
+// uses down to 0 for one they all use. Any other answer needs two rare words of
+// text in its question or plain labels whose rarities sum to 1.4, or three
+// anywhere that sum to 2 and make up at least half of text's rare words. Those
+// floors keep a record that merely shares a word or two from drawing a ruling,
+// and the result stays at f's limit however many answers the store holds.
 func (c *Client) MatchAnswers(ctx context.Context, text string, f SearchFilter) ([]AnswerMatch, error) {
 	answers, err := c.s.ListAnswers(ctx, false, false)
 	if err != nil {
@@ -82,25 +88,37 @@ func matchAnswers(answers []model.Answer, text string, limit int) []AnswerMatch 
 		}
 	}
 	rare := max(matchRareFloor, len(answers)/matchRareShare)
+	askedRare := 0
+	for term := range asked {
+		if seen[term] <= rare {
+			askedRare++
+		}
+	}
+	allAnswers := float64(len(answers) + 1)
 	var found []AnswerMatch
 	for i, a := range answers {
 		match := AnswerMatch{Answer: a, Phrase: phraseIn(a.Tags, lowered)}
 		inQuestion := 0
+		var questionRarity, rarity float64
 		for term := range asked {
 			_, question := questions[i][term]
 			_, body := bodies[i][term]
 			if (!question && !body) || seen[term] > rare {
 				continue
 			}
-			weight := math.Log(float64(len(answers)+1) / float64(seen[term]))
+			weight := math.Log(allAnswers / float64(seen[term]))
+			rarity += weight / math.Log(allAnswers)
 			if question {
 				inQuestion++
+				questionRarity += weight / math.Log(allAnswers)
 				weight *= matchTitleBoost
 			}
 			match.Terms = append(match.Terms, term)
 			match.Score += weight
 		}
-		if match.Phrase == "" && inQuestion < matchTitleTerms {
+		namedInQuestion := inQuestion >= matchTitleTerms && questionRarity >= matchTitleRarity
+		mostOfText := len(match.Terms) >= matchBodyTerms && rarity >= matchBodyRarity && len(match.Terms)*2 >= askedRare
+		if match.Phrase == "" && !namedInQuestion && !mostOfText {
 			continue
 		}
 		match.Score /= math.Log(float64(matchLengthBias + len(questions[i]) + len(bodies[i])))

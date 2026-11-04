@@ -3164,8 +3164,11 @@ MCP: answer_match (text, labels, limit)
 
 Rank answers by the rare words they share with TEXT, for a caller holding a brief, an alert or a
 line and no idea what was ruled on it; `-` reads stdin. An answer with a `match:<phrase>` label
-comes first when TEXT contains that phrase. Any other answer needs two words of TEXT, each in under
-1 in 25 answers, in its question or plain labels. Answers that are expired or superseded never match.
+comes first when TEXT contains that phrase. Any other answer needs two rare words of TEXT in its
+question or plain labels whose rarities sum to 1.4, or three anywhere that sum to 2 and make up at
+least half of TEXT's rare words. A word is rare when at most 1 in 25 answers use it, and its rarity
+runs from 1 for a word one answer uses toward 0 for one they all use. Answers that are expired or
+superseded never match.
 
 | Flag | Default | Meaning |
 |------|---------|---------|

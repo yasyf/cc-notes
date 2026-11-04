@@ -63,6 +63,50 @@ func TestMatchAnswersCarriesTheAkamaiRulingToAnAlertNamingA403(t *testing.T) {
 	}
 }
 
+const writerQuestion = "A chat can die with a duplicate-entry error when two copies of it write at once: how far should the fix go?"
+
+func writerRuling() notes.NoteSpec {
+	return notes.NoteSpec{
+		Title: writerQuestion,
+		Body:  "Writers should be goroutines with a channel and those alone hold the write connection to a db, can have multiple readers from anywhere.",
+		Tags:  []string{"from:owner", "scope:durable"},
+	}
+}
+
+func TestMatchAnswersFindsARulingOnItsOwnSentenceWithItsWordsOnlyInItsBody(t *testing.T) {
+	c, _ := newClient(t)
+	createAnswers(t, c, writerRuling(), notes.NoteSpec{Title: "Which channel do alerts post to?", Body: "The readers channel.", Tags: []string{"scope:durable"}})
+	got := matchedTitles(t, c, "Writers should be goroutines with a channel and those alone hold the write connection to a db, can have multiple readers from anywhere", 5)
+	if !slices.Equal(got, []string{writerQuestion}) {
+		t.Fatalf("matched %q, want the writer ruling alone", got)
+	}
+}
+
+func TestMatchAnswersLeavesALongTextThatSharesAFewBodyWords(t *testing.T) {
+	c, _ := newClient(t)
+	createAnswers(t, c, writerRuling())
+	long := "Writers and goroutines and a channel appear here among deploys rollbacks canaries migrations backfills tenants clusters nodes pods"
+	if got := matchedTitles(t, c, long, 5); len(got) != 0 {
+		t.Fatalf("matched %q on a few words of a long text", got)
+	}
+}
+
+func TestMatchAnswersLeavesALineSharingACommonWordWithItsQuestion(t *testing.T) {
+	c, _ := newClient(t)
+	specs := make([]notes.NoteSpec, 0, 44)
+	specs = append(specs,
+		notes.NoteSpec{Title: "O19. Start refusals vs E2: E2 bans refusals the apply does not need", Body: "Keep frozen envs.", Tags: []string{"scope:durable"}},
+		notes.NoteSpec{Title: "Before Oct 2, an exact stack deploy refused when a declared upstream was behind the commit", Body: "Refuse only when the upstream has a real change.", Tags: []string{"scope:durable"}},
+	)
+	for i := range 42 {
+		specs = append(specs, notes.NoteSpec{Title: fmt.Sprintf("Filler %d about the name of the path to the fix", i), Body: "Answer on a file.", Tags: []string{"scope:durable"}})
+	}
+	createAnswers(t, c, specs...)
+	if got := matchedTitles(t, c, "The -g help says file, directory or glob; refusals of --path name the fix", 5); len(got) != 0 {
+		t.Fatalf("matched %q on a flag's help text", got)
+	}
+}
+
 func TestMatchAnswersLeavesAnAlertThatNamesNoneOfItsWords(t *testing.T) {
 	c, _ := newClient(t)
 	createAnswers(t, c, akamaiRuling())
