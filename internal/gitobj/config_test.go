@@ -127,3 +127,26 @@ func TestFileID(t *testing.T) {
 		t.Fatalf("FileID of the directory = %v, want the files' device and a nonzero inode", dirID)
 	}
 }
+
+func TestWithoutBranchSections(t *testing.T) {
+	const kept = "[core]\n\tbare = false\n[cc-notes]\n\tstorage = x\n"
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"no branch sections", kept, kept},
+		{"between other sections", "[core]\n\tbare = false\n[branch \"a\"]\n\tremote = origin\n[cc-notes]\n\tstorage = x\n", kept},
+		{"case variant", "[BRANCH \"a\"]\n\tremote = origin\n" + kept, kept},
+		{"section variable without a subsection stays", "[branch]\n\tsort = x\n" + kept, "[branch]\n\tsort = x\n" + kept},
+		{"unterminated header stays", "[branch \"a\n" + kept, "[branch \"a\n" + kept},
+		{"backslash keeps the whole file", "[branch \"a\"] # \\\n" + kept, "[branch \"a\"] # \\\n" + kept},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := string(gitobj.WithoutBranchSections([]byte(tc.input))); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
