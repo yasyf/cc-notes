@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -196,10 +198,36 @@ func TestRetainedMetadataReclaimsRetiredAndTransientObjects(t *testing.T) {
 		total := 0
 		err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
 			root := tx.Bucket(queryGenerationsBucket)
-			objects, counts := root.Bucket(queryObjectsBucket), root.Bucket([]byte(managed.QueryObjectRefs))
-			return objects.ForEach(func(hash, _ []byte) error {
+			objects := queryObjectStoreAt(root)
+			if objects.objects.Stats().KeyN != objects.ids.Stats().KeyN {
+				t.Fatal("object, identity, and reference indexes differ in cardinality")
+			}
+			references := 0
+			if err := root.Bucket([]byte(managed.QueryObjectRefs)).ForEach(func(key, data []byte) error {
+				block := binary.BigEndian.Uint64(key)
+				for i := range queryReferenceBlockEntries {
+					if binary.BigEndian.Uint64(data[i*8:i*8+8]) == 0 {
+						continue
+					}
+					references++
+					id := block*queryReferenceBlockEntries + uint64(i) + 1
+					if objects.objects.Get(binary.BigEndian.AppendUint64(nil, id)) == nil {
+						t.Fatal("orphaned reference count")
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			if references != objects.ids.Stats().KeyN {
+				t.Fatal("reference and identity cardinalities differ")
+			}
+			return objects.ids.ForEach(func(hash, id []byte) error {
+				if objects.objects.Get(id) == nil {
+					t.Fatalf("missing object data %s", hash)
+				}
 				total++
-				references, err := queryObjectRefCount(counts, model.SHA(hash))
+				references, err := queryObjectRefCount(root, model.SHA(hex.EncodeToString(hash)))
 				if err != nil {
 					return err
 				}
@@ -244,13 +272,18 @@ func TestQueryGenerationBatchMatchesPerRowReplacement(t *testing.T) {
 		state := make(map[string]string)
 		if err := db.View(func(tx *bolt.Tx) error {
 			root := tx.Bucket(queryGenerationsBucket)
-			for _, name := range []string{managed.QueryObjects, managed.QueryObjectRefs} {
-				if err := root.Bucket([]byte(name)).ForEach(func(key, value []byte) error {
-					state[name+"/"+string(key)] = string(value)
-					return nil
-				}); err != nil {
+			objects := queryObjectStoreAt(root)
+			if err := objects.ids.ForEach(func(key, id []byte) error {
+				hash := model.SHA(hex.EncodeToString(key))
+				state[managed.QueryObjects+"/"+string(hash)] = string(objects.objects.Get(id))
+				count, err := queryObjectRefCount(root, hash)
+				if err != nil {
 					return err
 				}
+				state[managed.QueryObjectRefs+"/"+string(hash)] = string(binary.BigEndian.AppendUint64(nil, count))
+				return nil
+			}); err != nil {
+				return err
 			}
 			for i := range 3 {
 				binding := fmt.Sprintf("binding-%d", i)

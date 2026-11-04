@@ -95,7 +95,7 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 	if err := os.Remove(building); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	db, err := bolt.Open(building, 0o600, nil)
+	db, err := bolt.Open(building, 0o600, &bolt.Options{PageSize: managed.PageSize})
 	if err != nil {
 		return err
 	}
@@ -118,6 +118,9 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 			return err
 		}
 		if _, err := generations.CreateBucket([]byte(managed.QueryObjects)); err != nil {
+			return err
+		}
+		if _, err := generations.CreateBucket([]byte(managed.QueryObjectIDs)); err != nil {
 			return err
 		}
 		if _, err := generations.CreateBucket([]byte(managed.QueryObjectRefs)); err != nil {

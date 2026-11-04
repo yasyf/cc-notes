@@ -18,8 +18,8 @@ func activateQueryGeneration(ctx context.Context, tx *bolt.Tx, current, active q
 		return nil
 	}
 	root := tx.Bucket(queryGenerationsBucket)
-	objects := root.Bucket(queryObjectsBucket)
-	counts := newQueryReferenceCounts(root.Bucket([]byte(managed.QueryObjectRefs)))
+	objects := queryObjectStoreAt(root)
+	counts := newQueryReferenceCounts(root)
 	if current.Root != "" {
 		if err := retainQueryObject(ctx, objects, counts, current.Root); err != nil {
 			return err
@@ -33,19 +33,27 @@ func activateQueryGeneration(ctx context.Context, tx *bolt.Tx, current, active q
 	return counts.flush(ctx)
 }
 
-func copyQueryObject(ctx context.Context, source, objects *bolt.Bucket, counts *queryReferenceCounts, hash model.SHA) error {
+func copyQueryObject(ctx context.Context, source, objects queryObjectStore, counts *queryReferenceCounts, hash model.SHA) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if objects.Get([]byte(hash)) != nil {
+	existing, err := objects.get(hash)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
 		return nil
 	}
-	data := bytes.Clone(source.Get([]byte(hash)))
+	originalData, err := source.get(hash)
+	if err != nil {
+		return err
+	}
+	data := bytes.Clone(originalData)
 	if len(data) == 0 {
 		return managed.ErrReindex
 	}
 	if data[0] == byte(plumbing.TreeObject) {
-		original := queryGraphObjects{ctx: ctx, bucket: source}
+		original := queryGraphObjects{ctx: ctx, store: source}
 		entries, err := original.ReadTree(hash)
 		if err != nil {
 			return err
@@ -55,7 +63,7 @@ func copyQueryObject(ctx context.Context, source, objects *bolt.Bucket, counts *
 				return err
 			}
 		}
-		if err := objects.Put([]byte(hash), data); err != nil {
+		if err := objects.put(hash, data); err != nil {
 			return err
 		}
 		for _, entry := range entries {
@@ -68,7 +76,7 @@ func copyQueryObject(ctx context.Context, source, objects *bolt.Bucket, counts *
 	if data[0] != byte(plumbing.BlobObject) || plumbing.ComputeHash(plumbing.BlobObject, data[1:]).String() != string(hash) {
 		return managed.ErrReindex
 	}
-	return objects.Put([]byte(hash), data)
+	return objects.put(hash, data)
 }
 
 func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination *bolt.Tx) (err error) {
@@ -88,8 +96,8 @@ func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination 
 			return nil
 		}
 		next := destination.Bucket(queryGenerationsBucket)
-		objects := next.Bucket(queryObjectsBucket)
-		counts := newQueryReferenceCounts(next.Bucket([]byte(managed.QueryObjectRefs)))
+		objects := queryObjectStoreAt(next)
+		counts := newQueryReferenceCounts(next)
 		err := old.ForEach(func(key, value []byte) error {
 			if value != nil || string(key) == managed.QueryObjects || string(key) == managed.QueryObjectRefs {
 				return nil
@@ -104,7 +112,7 @@ func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination 
 				return err
 			}
 			if generation.Root != "" {
-				if err := copyQueryObject(ctx, old.Bucket(queryObjectsBucket), objects, counts, generation.Root); err != nil {
+				if err := copyQueryObject(ctx, queryObjectStoreAt(old), objects, counts, generation.Root); err != nil {
 					return err
 				}
 				if err := retainQueryObject(ctx, objects, counts, generation.Root); err != nil {
