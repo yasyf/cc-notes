@@ -1132,12 +1132,13 @@ func (in *relevantInputs) racy() bool {
 }
 
 // racyRefs reports whether every racy fingerprint is a relevance kind's ref
-// directory, which restampUnscoredWrites reads afresh rather than trusts.
+// directory or the branch directory, which restampUnscoredWrites reads afresh
+// rather than trusts.
 func (in *relevantInputs) racyRefs() bool {
 	dirs := in.client.entityRootDirs()
 	racyElsewhere := func(s fileStamp) bool {
 		_, dir := dirs[s.Path]
-		return s.racy(in.start) && !dir
+		return s.racy(in.start) && !dir && s.Path != in.client.headsDir()
 	}
 	return !in.untrusted && !slices.ContainsFunc(in.stamps, racyElsewhere) && !slices.ContainsFunc(in.guards, racyElsewhere)
 }
