@@ -184,7 +184,7 @@ func TestSourceCachedAppendCostDoesNotGrowWithHistory(t *testing.T) {
 		for _, counter := range []struct {
 			name                    string
 			small, large, allowance int64
-		}{{"read_return_bytes", small.ReadBytes, large.ReadBytes, 256 << 10}, {"write_return_bytes", small.WriteBytes, large.WriteBytes, 256 << 10}, {"minor_faults", small.MinorFaults, large.MinorFaults, 256}, {"git_processes", small.GitProcesses, large.GitProcesses, 8}} {
+		}{{"read_return_bytes", small.ReadBytes, large.ReadBytes, 256 << 10}, {"write_return_bytes", small.WriteBytes, large.WriteBytes, 256 << 10}, {"minor_faults", small.MinorFaults, large.MinorFaults, minorFaultsPerDoubling * historyDoublings}, {"git_processes", small.GitProcesses, large.GitProcesses, 8}} {
 			if counter.large > counter.small+counter.allowance {
 				t.Errorf("deep-history %s grew:32=%d1024=%d allowance=%d", counter.name, counter.small, counter.large, counter.allowance)
 			}
