@@ -23,6 +23,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/cli"
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/managed"
 )
 
 const matrixActor = "Matrix Worker <worker@example.com>"
@@ -806,7 +807,7 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 func TestFirstCommandImportsAMissingAuthority(t *testing.T) {
 	dir := initRepo(t)
 	id := strings.TrimSpace(mustBin(t, dir, actorA, "note", "add", "Kept across the import", "--json"))
-	authority := filepath.Join(dir, ".git", "cc-notes-managed", "authority-v1.db")
+	authority := managed.Path(filepath.Join(dir, ".git"))
 	if err := os.Remove(authority); err != nil {
 		t.Fatal(err)
 	}
