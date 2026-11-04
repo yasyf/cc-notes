@@ -58,7 +58,7 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 		return err
 	}
 	if lock == nil {
-		if served, err := s.managedViewPublished(ctx, read); served || err != nil {
+		if served, err := s.managedViewPublished(read); served || err != nil {
 			return errors.Join(err, s.CheckRecords(), ctx.Err())
 		}
 		if lock, err = managed.Lock(ctx, s.recordsCommonDir, false); err != nil {
@@ -125,7 +125,7 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 	return errors.Join(err, s.CheckRecords(), ctx.Err())
 }
 
-func (s *Store) managedViewPublished(ctx context.Context, read func(*bolt.Tx) error) (served bool, err error) {
+func (s *Store) managedViewPublished(read func(*bolt.Tx) error) (served bool, err error) {
 	db, err := s.openManaged(true)
 	if err != nil {
 		return false, nil
