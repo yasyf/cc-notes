@@ -156,6 +156,12 @@ var routingEnv = []string{
 // promisor remote: a partial clone answers "missing" instead of dialing out.
 const noLazyFetchEnv = "GIT_NO_LAZY_FETCH=1"
 
+// transferEnv bounds a fetch or push: git never blocks on a terminal prompt
+// (a credential helper may still answer), and an HTTP transfer that moves
+// under one byte a second for five minutes aborts instead of holding its
+// caller, and the tracking lock its waiters queue behind, indefinitely.
+var transferEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_HTTP_LOW_SPEED_LIMIT=1", "GIT_HTTP_LOW_SPEED_TIME=300"}
+
 func routesRepository(kv string) bool {
 	name, _, _ := strings.Cut(kv, "=")
 	return slices.Contains(routingEnv, name)
@@ -215,6 +221,11 @@ func (g Git) run(ctx context.Context, stdin string, args ...string) (string, err
 // must answer from the local object database alone.
 func (g Git) probe(ctx context.Context, stdin string, args ...string) (string, error) {
 	return g.runEnv(ctx, append(os.Environ(), noLazyFetchEnv), stdin, args...)
+}
+
+// transfer runs a command that talks to a remote, under transferEnv.
+func (g Git) transfer(ctx context.Context, stdin string, args ...string) (string, error) {
+	return g.runEnv(ctx, append(os.Environ(), transferEnv...), stdin, args...)
 }
 
 func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
@@ -415,7 +426,7 @@ func (g Git) DeleteRef(ctx context.Context, ref string, old model.SHA) error {
 // outside the sync path. A rejected delete wraps ErrNonFastForward via the
 // shared push classification; the caller continues past per-ref failures.
 func (g Git) DeleteRemoteRef(ctx context.Context, remote, ref string) error {
-	_, err := g.run(ctx, "", "push", remote, "--delete", ref)
+	_, err := g.transfer(ctx, "", "push", remote, "--delete", ref)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("delete remote ref %s on %s: %w", ref, remote, err)
 	}
@@ -679,7 +690,7 @@ func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
 // sync could union-merge it. A rejected update — a non-forced refspec that
 // does not fast-forward — wraps ErrNonFastForward.
 func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.run(ctx, "", append([]string{"fetch", "--recurse-submodules=no", "--refmap=", remote}, refspecs...)...)
+	_, err := g.transfer(ctx, "", append([]string{"fetch", "--recurse-submodules=no", "--refmap=", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}
@@ -689,7 +700,7 @@ func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error
 // LsRemote maps every ref remote advertises under prefix to its tip, reading
 // the advertisement over the remote's transport and writing nothing locally.
 func (g Git) LsRemote(ctx context.Context, remote, prefix string) (map[string]model.SHA, error) {
-	out, err := g.run(ctx, "", "ls-remote", "--refs", remote, prefix+"*")
+	out, err := g.transfer(ctx, "", "ls-remote", "--refs", remote, prefix+"*")
 	if err != nil {
 		return nil, fmt.Errorf("ls-remote %s: %w", remote, err)
 	}
@@ -729,7 +740,7 @@ func (g Git) MissingObjects(ctx context.Context, tips []model.SHA) ([]model.SHA,
 // clone filter, reading the ids from stdin. Like Fetch, it skips submodule
 // recursion: the records it hydrates contain no gitlinks.
 func (g Git) FetchObjects(ctx context.Context, remote string, oids []model.SHA) error {
-	if _, err := g.run(ctx, joinSHAs(oids), "-c", "fetch.negotiationAlgorithm=noop", "fetch", "--recurse-submodules=no", "--refmap=", "--no-write-fetch-head", "--stdin", remote); err != nil {
+	if _, err := g.transfer(ctx, joinSHAs(oids), "-c", "fetch.negotiationAlgorithm=noop", "fetch", "--recurse-submodules=no", "--refmap=", "--no-write-fetch-head", "--stdin", remote); err != nil {
 		return fmt.Errorf("fetch %d objects from %s: %w", len(oids), remote, err)
 	}
 	return nil
@@ -749,7 +760,7 @@ func joinSHAs(shas []model.SHA) string {
 // a repo hook such as git-lfs's rescans every pushed ref. A rejected update
 // wraps ErrNonFastForward.
 func (g Git) Push(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.run(ctx, "", append([]string{"push", "--no-verify", remote}, refspecs...)...)
+	_, err := g.transfer(ctx, "", append([]string{"push", "--no-verify", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("push %s: %w", remote, err)
 	}
@@ -886,6 +897,27 @@ func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), nil
+}
+
+// ConfigLocal lists every entry of the repository-local config in file
+// order, as key/value pairs keyed the way git config --list spells them:
+// section and variable names lowercased, subsection names verbatim. A
+// multi-valued key yields one pair per value, and a bare "[section] key" line
+// an empty value. It is the single-read form of ConfigGetAll over every key.
+func (g Git) ConfigLocal(ctx context.Context) ([][2]string, error) {
+	out, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--list", "-z")
+	if err != nil {
+		return nil, fmt.Errorf("config list --local: %w", err)
+	}
+	if out == "" {
+		return nil, nil
+	}
+	var pairs [][2]string
+	for _, entry := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		pairs = append(pairs, [2]string{key, value})
+	}
+	return pairs, nil
 }
 
 // ConfigAdd appends value as a new line for key in the repository-local

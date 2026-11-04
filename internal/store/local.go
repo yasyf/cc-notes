@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
@@ -186,7 +185,7 @@ func (s *Store) Seclude(ctx context.Context, add, release []string) (err error) 
 			err = fmt.Errorf("seclude: %w", closeErr)
 		}
 	}()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := waitLock(ctx, lock); err != nil {
 		return fmt.Errorf("seclude: %w", err)
 	}
 	current, err := s.Secluded()

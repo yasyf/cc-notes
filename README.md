@@ -182,7 +182,7 @@ Each noun carries a fuller verb set — `cc-notes <noun> --help` lists it, and t
 
 `cc-notes mcp` runs a stdio [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that mirrors the CLI surface: one `noun_verb` tool per agent-facing command across all ten entity kinds — `doc_add`, `note_edit`, `answer_add`, `task_claim`, `task_criterion_met`, `investigation_open`, `runbook_run_done`, `plan_approve`, `sprint_add`, and the rest — with parity tests guarding both directions. Each tool drives the real CLI in-process, so it validates and returns exactly what the command does — a tool result is the command's `--json`, a summary from a listing or a write, the whole record from a `*_show`. A long doc or note body rides the `body` parameter, so an agent records a handoff in one call, no scratch file and no stdin.
 
-The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` pointed at the `cc-notes` on your `PATH`, and the tools surface as `mcp__plugin_cc-notes_cc-notes__<tool>`. Nothing to install or configure. The plugin also auto-approves cc-notes CLI and MCP calls, so agents are never permission-prompted for them. Recording a handoff is one tool call:
+The Claude Code plugin wires the server for you: it ships a bundled `.mcp.json` pointed at the `cc-notes` on your `PATH`, and the tools surface as `mcp__plugin_cc-notes_cc-notes__<tool>`. Nothing to install or configure. The plugin also auto-approves cc-notes CLI and MCP calls, so agents are never permission-prompted for them. A session started outside a repository, such as one in `$HOME`, still gets the server, and each tool call names its repository with the optional `repo` property, the tool form of `--repo`. Recording a handoff is one tool call:
 
 ```json
 {

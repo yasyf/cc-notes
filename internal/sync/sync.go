@@ -41,6 +41,8 @@ const (
 	// republishes tracking state.
 	namespace     = "refs/cc-notes/"
 	syncNamespace = "refs/cc-notes-sync/"
+	// Namespace is the prefix a whole-namespace Prefixed converges.
+	Namespace = namespace
 	// maxRounds bounds the fetch-reconcile-push loop against a remote that
 	// keeps moving under us.
 	maxRounds = 5
@@ -112,6 +114,8 @@ const (
 type engine struct {
 	store  *store.Store
 	remote string
+	full   bool
+	prefix string
 
 	created       atomic.Int64
 	fastForwarded atomic.Int64
@@ -145,8 +149,9 @@ type engine struct {
 // union merge, never a clobber. A non-fast-forward push means the remote
 // moved mid-round: the next round merges the new tips. full forces a
 // whole-namespace reconcile each round, the escape hatch when the scoped
-// scan is suspect. Exhausting maxRounds fails wrapping ErrSyncContended; an
-// unconfigured remote fails wrapping ErrRemoteNotFound.
+// scan is suspect, and re-asks the LFS server about every attachment the
+// upload log already confirms. Exhausting maxRounds fails wrapping
+// ErrSyncContended; an unconfigured remote fails wrapping ErrRemoteNotFound.
 //
 // Referenced, locally-present attachment objects upload each round before
 // the push; a failed upload holds back only the refs referencing the failed
@@ -161,24 +166,36 @@ type engine struct {
 // run then fails wrapping ErrObjectsUnavailable, naming each deferred ref,
 // and the next sync retries it.
 func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report, error) {
+	return Prefixed(ctx, s, remote, full, namespace)
+}
+
+// Prefixed is Sync over only the refs whose names start with prefix, such
+// as one ledger's ref: it lists, fetches, folds, pushes, and moves the
+// attachments of those refs alone, so converging one entity never waits on
+// the whole namespace. A prefix outside refs/cc-notes/ is an error.
+func Prefixed(ctx context.Context, s *store.Store, remote string, full bool, prefix string) (Report, error) {
+	if !strings.HasPrefix(prefix, namespace) {
+		return Report{}, fmt.Errorf("sync %s: prefix %q is outside %s", remote, prefix, namespace)
+	}
 	if err := s.CheckRecords(); err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
 	}
 	if err := ensureRemote(ctx, s.RecordsGit, remote); err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
 	}
-	e := &engine{store: s, remote: remote}
+	e := &engine{store: s, remote: remote, full: full, prefix: prefix}
 	trackingPrefix := syncNamespace + remote + "/"
-	fetchSpec := "+" + namespace + "*:" + trackingPrefix + "*"
+	trackingScope := trackingPrefix + strings.TrimPrefix(prefix, namespace)
+	fetchSpec := "+" + prefix + "*:" + trackingScope + "*"
 	for round := 1; round <= maxRounds; round++ {
-		before, err := trackingView(ctx, s, trackingPrefix)
+		before, err := trackingView(ctx, s, trackingScope)
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		if err := refreshTracking(ctx, s, remote, trackingPrefix, fetchSpec); err != nil {
+		if err := refreshTracking(ctx, s, remote, prefix, trackingPrefix, trackingScope, fetchSpec); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		after, err := trackingView(ctx, s, trackingPrefix)
+		after, err := trackingView(ctx, s, trackingScope)
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
@@ -258,8 +275,8 @@ func (e *engine) report(rounds, pushed int) Report {
 	}
 }
 
-func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix, fetchSpec string) (err error) {
-	listed, err := s.RecordsGit.LsRemote(ctx, remote, namespace)
+func refreshTracking(ctx context.Context, s *store.Store, remote, prefix, trackingPrefix, trackingScope, fetchSpec string) (err error) {
+	listed, err := s.RecordsGit.LsRemote(ctx, remote, prefix)
 	if err != nil {
 		return err
 	}
@@ -268,7 +285,7 @@ func refreshTracking(ctx context.Context, s *store.Store, remote, trackingPrefix
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
-	tracking, err := recordRefs(ctx, s, trackingPrefix)
+	tracking, err := recordRefs(ctx, s, trackingScope)
 	if err != nil {
 		return err
 	}
@@ -404,11 +421,11 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 // remote tip the local chain does not contain is always in scope, however
 // quiet the tracking delta: correctness over speed.
 func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA) (map[string]model.SHA, error) {
-	local, err := e.store.ManagedTips(ctx, namespace)
+	local, err := e.store.ManagedTips(ctx, e.prefix)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := recordRefs(ctx, e.store, namespace)
+	raw, err := recordRefs(ctx, e.store, e.prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +460,7 @@ func (e *engine) changed(ctx context.Context, before, after map[string]model.SHA
 // clone joins the set before anything is pushed, so an entity written by a
 // cc-notes predating the policy never leaves on its first sync.
 func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) ([]string, map[string]bool, error) {
-	local, err := recordRefs(ctx, e.store, namespace)
+	local, err := recordRefs(ctx, e.store, e.prefix)
 	if err != nil {
 		return nil, nil, err
 	}

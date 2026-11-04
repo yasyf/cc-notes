@@ -3,7 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: "47 6 * * *"
   pull_request:
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -14,7 +17,9 @@ permissions:
 
 jobs:
   bounded-cache-cost:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -172,6 +177,7 @@ jobs:
 
   release-monotonic:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -191,7 +197,9 @@ jobs:
 
 
   task-dedupe-cost:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -214,7 +222,9 @@ jobs:
         run: ./scripts/test.sh -count=1 -v -run '^TestPackedObjectIndexFreshCLICost$' ./internal/cli
 
   attachment-ref-passes:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -222,7 +232,8 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v -run '^TestReferencedAttachmentsPackedRefPasses$' ./internal/store
 
   test:
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'macos-latest' }}
+    runs-on: ${{ github.event_name == 'schedule' && 'macos-latest' || 'ubuntu-latest' }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -247,7 +258,9 @@ jobs:
         run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/cc-notes_darwin_arm64 ./cmd/cc-notes
 
   helper:
+    if: github.event_name == 'schedule'
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -296,6 +309,7 @@ jobs:
   # keep it on a cheap linux runner instead of billing macOS minutes 10x.
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       GOOS: darwin
       GOARCH: arm64
@@ -309,6 +323,7 @@ jobs:
 
   vuln:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
       GOOS: darwin
       GOARCH: arm64
@@ -322,6 +337,7 @@ jobs:
 
   hook-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
       CAPT_HOOK_VERSION: "12.89.1"
     steps:
@@ -360,6 +376,7 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
 
@@ -392,6 +409,7 @@ jobs:
 
   webui:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: web
     steps:
       - uses: actions/checkout@v7

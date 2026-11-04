@@ -11,6 +11,8 @@ import (
 	"github.com/yasyf/cc-notes/internal/refs"
 )
 
+const queryIndexSubdir = "cc-notes-query"
+
 func (q queryMetadataSource) indexPath() string {
 	return managed.Path(q.store.recordsCommonDir)
 }

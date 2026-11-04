@@ -52,6 +52,7 @@ type kindFold struct {
 	fold   func([]model.PackCommit, mode) (model.Snapshot, error)
 	walk   func([]model.PackCommit, func(Step) error) error
 	extend func(model.Snapshot, model.PackCommit) (model.Snapshot, error)
+	stream func(model.Snapshot, model.PackCommit, func() (model.PackCommit, bool, error)) (model.Snapshot, error)
 }
 
 func kindFoldOf[T model.Snapshot, F folder[T]](newFolder func() F) kindFold {
@@ -64,6 +65,9 @@ func kindFoldOf[T model.Snapshot, F folder[T]](newFolder func() F) kindFold {
 		},
 		extend: func(base model.Snapshot, c model.PackCommit) (model.Snapshot, error) {
 			return extend[T](base, c, newFolder())
+		},
+		stream: func(base model.Snapshot, first model.PackCommit, next func() (model.PackCommit, bool, error)) (model.Snapshot, error) {
+			return stream[T](base, first, next, newFolder())
 		},
 	}
 }
@@ -130,6 +134,41 @@ func Extend(base model.Snapshot, commit model.PackCommit) (model.Snapshot, error
 		return nil, fmt.Errorf("%w: base %s skipped %d ops", ErrKindMismatch, meta.Head, meta.SkippedOps)
 	}
 	return folders[meta.Kind].extend(base, commit)
+}
+
+// Stream folds a linear chain that next yields oldest first, one commit at a
+// time and never holding the chain. With a nil base it starts from the chain's
+// create commit and folds as Fold does; with a base it extends it as repeated
+// Extend does, so each commit's lamport must exceed base's ExtendFloor for the
+// result to equal Strict over the chain. Every commit must be the sole child
+// of the one before it (ErrMissingParent) and carry no checkpoint
+// (ErrExtendCheckpoint).
+func Stream(base model.Snapshot, next func() (model.PackCommit, bool, error)) (model.Snapshot, error) {
+	first, ok, err := next()
+	if err != nil {
+		return nil, err
+	}
+	if base == nil {
+		if !ok {
+			return nil, fmt.Errorf("%w: chain has no ops", ErrNoCreate)
+		}
+		if len(first.Parents) > 0 {
+			return nil, fmt.Errorf("%w: %s is not a root", ErrMissingParent, first.SHA)
+		}
+		kf, err := dispatch(firstOp([]model.PackCommit{first}))
+		if err != nil {
+			return nil, err
+		}
+		return kf.stream(nil, first, next)
+	}
+	meta := base.Meta()
+	if meta.SkippedOps > 0 {
+		return nil, fmt.Errorf("%w: base %s skipped %d ops", ErrKindMismatch, meta.Head, meta.SkippedOps)
+	}
+	if !ok {
+		return base, nil
+	}
+	return folders[meta.Kind].stream(base, first, next)
 }
 
 // ExtendFloor returns the lamport a sole child of commits' head must exceed for

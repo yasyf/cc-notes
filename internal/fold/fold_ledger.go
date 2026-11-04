@@ -10,14 +10,15 @@ import (
 )
 
 type ledgerFolder struct {
-	l       model.Ledger
-	labels  map[string]bool
-	anchors map[model.Anchor]bool
-	rows    []model.LedgerRow
+	l            model.Ledger
+	labels       map[string]bool
+	anchors      map[model.Anchor]bool
+	rows         []model.LedgerRow
+	rowPositions map[string]int
 }
 
 func newLedgerFolder() *ledgerFolder {
-	return &ledgerFolder{labels: map[string]bool{}, anchors: map[model.Anchor]bool{}}
+	return &ledgerFolder{labels: map[string]bool{}, anchors: map[model.Anchor]bool{}, rowPositions: map[string]int{}}
 }
 
 func foldLedger(ordered []model.PackCommit, m mode) (model.Ledger, error) {
@@ -27,6 +28,7 @@ func foldLedger(ordered []model.PackCommit, m mode) (model.Ledger, error) {
 func (f *ledgerFolder) fresh(sha model.SHA, createdAt int64) {
 	f.l = model.Ledger{ID: model.EntityID(sha), CreatedAt: createdAt, Comments: []model.Comment{}}
 	f.rows = []model.LedgerRow{}
+	clear(f.rowPositions)
 }
 
 func (f *ledgerFolder) seed(state model.Snapshot) error {
@@ -38,6 +40,7 @@ func (f *ledgerFolder) seed(state model.Snapshot) error {
 	f.l.Comments = slices.Clone(seed.Comments)
 	f.l.Columns = slices.Clone(seed.Columns)
 	f.rows = cloneRows(seed.Rows)
+	f.indexRows()
 	for _, l := range seed.Labels {
 		f.labels[l] = true
 	}
@@ -81,8 +84,9 @@ func (f *ledgerFolder) apply(op model.Op, c model.PackCommit) bool {
 	case model.UpsertRow:
 		f.upsert(o, c)
 	case model.RemoveRow:
-		if i := rowIndex(f.rows, o.Key); i >= 0 {
+		if i, ok := f.rowPositions[o.Key]; ok {
 			f.rows = slices.Delete(f.rows, i, i+1)
+			f.indexRows()
 		}
 	case model.DeleteNote:
 		f.l.Deleted = true
@@ -92,12 +96,10 @@ func (f *ledgerFolder) apply(op model.Op, c model.PackCommit) bool {
 	return true
 }
 
-// upsert merges o into the row keyed by o.Key, inserting it when absent.
-// Replace swaps the field map wholesale; otherwise each named field wins
-// last-write-wins over its prior value and unnamed fields stand.
 func (f *ledgerFolder) upsert(o model.UpsertRow, c model.PackCommit) {
-	i := rowIndex(f.rows, o.Key)
-	if i < 0 {
+	i, ok := f.rowPositions[o.Key]
+	if !ok {
+		f.rowPositions[o.Key] = len(f.rows)
 		f.rows = append(f.rows, model.LedgerRow{
 			Key:       o.Key,
 			Fields:    maps.Clone(nonNilFields(o.Fields)),
@@ -132,6 +134,7 @@ func (f *ledgerFolder) finalize(head model.SHA, skipped int) model.Ledger {
 		}
 		return cmp.Compare(a.Key, b.Key)
 	})
+	f.indexRows()
 	f.l.Rows = f.rows
 	if f.l.Columns == nil {
 		f.l.Columns = []string{}
@@ -151,13 +154,11 @@ func applyLedgerStatus(l *model.Ledger, status model.LedgerStatus, at int64) {
 	}
 }
 
-func rowIndex(rows []model.LedgerRow, key string) int {
-	for i := range rows {
-		if rows[i].Key == key {
-			return i
-		}
+func (f *ledgerFolder) indexRows() {
+	clear(f.rowPositions)
+	for i := len(f.rows) - 1; i >= 0; i-- {
+		f.rowPositions[f.rows[i].Key] = i
 	}
-	return -1
 }
 
 func nonNilFields(fields map[string]string) map[string]string {

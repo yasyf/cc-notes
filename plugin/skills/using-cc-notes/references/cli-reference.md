@@ -729,6 +729,11 @@ README's MCP-server section); run it by hand only to drive cc-notes from another
 |------|---------|---------|
 | `--dir <path>` | `--repo`, else `$CCN_REPO`, else `$CLAUDE_PROJECT_DIR`, else cwd | Repository the server operates on |
 
+Every tool also takes an optional `repo` property, the tool form of `--repo`. A server whose
+directory is not inside a repository, as when Claude Code starts a session in `$HOME`, still
+connects: a call that names its repository through `repo` runs against it, and a call that names
+none returns the repository open error.
+
 Two tools depart from their lean CLI shape: `attachment_get` requires an `output` file path and
 writes the bytes there (never inline), and `task_validate` takes a `yes` boolean in place of the
 interactive confirmation. Free text is passed directly — the literal `-` (the CLI's stdin form) is

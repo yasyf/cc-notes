@@ -29,8 +29,33 @@ const (
 // walk aborts the whole listing on the first empty file. It also serves the
 // loose-<hash> packs git maintenance's loose-objects task writes under their
 // pack-<hash> names, because go-git only ever lists and opens pack-<hash>.
+// Loose-object reads open and stat the joined path directly: the chroot
+// helper lstats every component of every path to chase symlinks, which made
+// each loose-object probe, including the failed one before every packed read,
+// cost a dozen system calls. Every other path keeps the helper, so a ref
+// symlinked outside the git directory stays refused.
 type gitDirFS struct {
 	billy.Filesystem
+}
+
+type directFile struct {
+	*os.File
+	name string
+}
+
+func (f directFile) Name() string  { return f.name }
+func (f directFile) Lock() error   { return billy.ErrNotSupported }
+func (f directFile) Unlock() error { return billy.ErrNotSupported }
+
+func (fs gitDirFS) open(path string) (billy.File, error) {
+	if !looseObjectPath(path) {
+		return fs.Filesystem.Open(path)
+	}
+	file, err := os.Open(filepath.Join(fs.Root(), path)) //nolint:gosec // G304: loose-object paths go-git derives inside this git directory.
+	if err != nil {
+		return nil, err
+	}
+	return directFile{File: file, name: path}, nil
 }
 
 func (fs gitDirFS) ReadDir(path string) ([]os.FileInfo, error) {
@@ -77,9 +102,9 @@ func referenceFileInfos(entries []os.DirEntry) ([]os.FileInfo, error) {
 }
 
 func (fs gitDirFS) Open(path string) (billy.File, error) {
-	file, err := fs.Filesystem.Open(path)
+	file, err := fs.open(path)
 	if loose, ok := loosePackPath(path); ok && errors.Is(err, os.ErrNotExist) {
-		file, err = fs.Filesystem.Open(loose)
+		file, err = fs.open(loose)
 	}
 	if err != nil || !packIndexPath(path) {
 		return file, err
@@ -113,11 +138,18 @@ func packIndexPath(path string) bool {
 }
 
 func (fs gitDirFS) Stat(path string) (os.FileInfo, error) {
-	info, err := fs.Filesystem.Stat(path)
+	info, err := fs.stat(path)
 	if loose, ok := loosePackPath(path); ok && errors.Is(err, os.ErrNotExist) {
-		return fs.Filesystem.Stat(loose)
+		return fs.stat(loose)
 	}
 	return info, err
+}
+
+func (fs gitDirFS) stat(path string) (os.FileInfo, error) {
+	if !looseObjectPath(path) {
+		return fs.Filesystem.Stat(path)
+	}
+	return os.Stat(filepath.Join(fs.Root(), path))
 }
 
 func loosePackPath(path string) (string, bool) {
@@ -139,4 +171,9 @@ func (info renamedInfo) Name() string { return info.name }
 func underRefs(path string) bool {
 	clean := filepath.Clean(path)
 	return clean == refsDir || strings.HasPrefix(clean, refsDir+string(filepath.Separator))
+}
+
+func looseObjectPath(path string) bool {
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(path)), "/")
+	return len(parts) == 3 && parts[0] == "objects" && len(parts[1]) == 2
 }

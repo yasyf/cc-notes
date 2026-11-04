@@ -145,9 +145,12 @@ func (o *nativeObject) Reader() (io.ReadCloser, error) {
 	return batch.Contents(o.info)
 }
 
-func (r *Repo) beginRead(ctx context.Context) { r.storage.scope = &objectReadScope{ctx: ctx} }
+func (r *Repo) beginRead(ctx context.Context) {
+	r.storage.scope = &objectReadScope{ctx: ctx, pool: readersFrom(ctx).pool(r)}
+}
+
 func (r *Repo) endRead(resultErr *error) {
-	*resultErr = errors.Join(*resultErr, r.storage.scope.closeBatches())
+	*resultErr = errors.Join(*resultErr, r.storage.scope.release())
 	r.storage.scope.closed = true
 	r.storage.scope = nil
 }

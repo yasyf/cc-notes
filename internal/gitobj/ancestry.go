@@ -1,6 +1,7 @@
 package gitobj
 
 import (
+	"container/heap"
 	"context"
 	"errors"
 	"fmt"
@@ -38,8 +39,36 @@ const (
 // whose parents the repository does not hold, so that negative is unproven.
 type reach struct {
 	seen      map[plumbing.Hash]bool
-	queue     []plumbing.Hash
+	queue     frontier
 	truncated bool
+}
+
+// frontier is a max-heap on generation, so a walk expands the newest commits
+// first and can stop once every unexpanded commit sits below the ancestor's
+// generation.
+type frontier []frontierCommit
+
+type frontierCommit struct {
+	hash       plumbing.Hash
+	generation uint64
+}
+
+func (f frontier) Len() int           { return len(f) }
+func (f frontier) Less(i, j int) bool { return f[i].generation > f[j].generation }
+func (f frontier) Swap(i, j int)      { f[i], f[j] = f[j], f[i] }
+func (f *frontier) Push(x any)        { *f = append(*f, x.(frontierCommit)) }
+func (f *frontier) Pop() any {
+	old := *f
+	last := old[len(old)-1]
+	*f = old[:len(old)-1]
+	return last
+}
+
+func (r *Repo) refreshAncestry() error {
+	if err := r.refreshGraft(); err != nil {
+		return err
+	}
+	return r.refreshCommitGraph()
 }
 
 // IsAncestor reports whether a is an ancestor of — or equal to — b. A
@@ -54,7 +83,7 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (_ bool, resultEr
 	defer r.mu.Unlock()
 	r.beginRead(ctx)
 	defer r.endRead(&resultErr)
-	if err := r.refreshGraft(); err != nil {
+	if err := r.refreshAncestry(); err != nil {
 		return false, err
 	}
 	ancestor, err := r.commit(a)
@@ -88,7 +117,7 @@ func (r *Repo) Ancestry(ctx context.Context, a, b model.SHA) (_ Ancestry, result
 	defer r.mu.Unlock()
 	r.beginRead(ctx)
 	defer r.endRead(&resultErr)
-	if err := r.refreshGraft(); err != nil {
+	if err := r.refreshAncestry(); err != nil {
 		return NotAncestor, err
 	}
 	ancestor, err := r.commit(a)
@@ -124,7 +153,7 @@ func (r *Repo) AbsentAncestry(ctx context.Context, b model.SHA) (_ Ancestry, res
 	defer r.mu.Unlock()
 	r.beginRead(ctx)
 	defer r.endRead(&resultErr)
-	if err := r.refreshGraft(); err != nil {
+	if err := r.refreshAncestry(); err != nil {
 		return NotAncestor, err
 	}
 	return r.absentAncestry(ctx, b)
@@ -147,13 +176,18 @@ func (r *Repo) absentAncestry(ctx context.Context, b model.SHA) (Ancestry, error
 	return w.drained(), nil
 }
 
-// reachable expands descendant's frontier until it reaches ancestor or runs
-// out, resuming a frontier an earlier call left partially expanded.
+// reachable expands descendant's frontier until it reaches ancestor, runs out,
+// or holds only commits whose generation is below ancestor's, none of which can
+// reach it. It resumes a frontier an earlier call left partially expanded.
 func (r *Repo) reachable(ctx context.Context, ancestor, descendant plumbing.Hash) (Ancestry, error) {
 	w := r.reachOf(descendant)
+	floor := r.generation(ancestor)
 	for !w.seen[ancestor] {
 		if len(w.queue) == 0 {
 			return w.drained(), nil
+		}
+		if w.queue[0].generation < floor {
+			return NotAncestor, nil
 		}
 		if err := r.expand(ctx, w); err != nil {
 			return NotAncestor, err
@@ -175,19 +209,24 @@ func (r *Repo) expand(ctx context.Context, w *reach) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	commit, err := r.lookupCommit(w.queue[0])
-	if err != nil {
-		return err
+	parents, ok := r.graphParents(w.queue[0].hash)
+	if !ok {
+		commit, err := r.lookupCommit(w.queue[0].hash)
+		if err != nil {
+			return err
+		}
+		if r.shallow[commit.Hash] {
+			heap.Pop(&w.queue)
+			w.truncated = w.truncated || len(commit.ParentHashes) > 0
+			return nil
+		}
+		parents = commit.ParentHashes
 	}
-	w.queue = w.queue[1:]
-	if r.shallow[commit.Hash] {
-		w.truncated = w.truncated || len(commit.ParentHashes) > 0
-		return nil
-	}
-	for _, parent := range commit.ParentHashes {
+	heap.Pop(&w.queue)
+	for _, parent := range parents {
 		if !w.seen[parent] {
 			w.seen[parent] = true
-			w.queue = append(w.queue, parent)
+			heap.Push(&w.queue, frontierCommit{hash: parent, generation: r.generation(parent)})
 		}
 	}
 	return nil
@@ -208,7 +247,7 @@ func (r *Repo) reachOf(descendant plumbing.Hash) *reach {
 		r.reachOrder = append(slices.Delete(r.reachOrder, i, i+1), descendant)
 		return w
 	}
-	w := &reach{seen: map[plumbing.Hash]bool{descendant: true}, queue: []plumbing.Hash{descendant}}
+	w := &reach{seen: map[plumbing.Hash]bool{descendant: true}, queue: frontier{{hash: descendant, generation: r.generation(descendant)}}}
 	r.reaches[descendant] = w
 	r.reachOrder = append(r.reachOrder, descendant)
 	for len(r.reachOrder) > reachCap {

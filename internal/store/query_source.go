@@ -31,8 +31,12 @@ func queryMetadataIdentity(ctx context.Context, s *Store, kind model.Kind) (quer
 		store:   s,
 		pinned:  s.pins != nil,
 		kind:    kind,
-		binding: s.listCacheName(kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, ""),
+		binding: s.queryMetadataBindingName(kind),
 	}, nil
+}
+
+func (s *Store) queryMetadataBindingName(kind model.Kind) string {
+	return s.listCacheName(kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, "")
 }
 
 func captureQueryMetadata(ctx context.Context, s *Store, kind model.Kind) (queryMetadataSource, error) {

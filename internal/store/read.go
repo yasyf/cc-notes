@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/yasyf/cc-notes/internal/fold"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -90,6 +91,11 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 			}
 		}
 	}
+	if err == nil && !slices.ContainsFunc(commit.Pack.Ops, isCheckpoint) {
+		if snapshot, publication, ok := s.foldLinear(ctx, commit); ok {
+			return snapshot, publication, nil
+		}
+	}
 	var chain []model.PackCommit
 	if err == nil {
 		chain, err = s.Repo.ReadChainFromCommit(ctx, commit)
@@ -104,6 +110,54 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 		return nil, nil, err
 	}
 	return snapshot, foldChainPublication(head, snapshot, chain), nil
+}
+
+// foldLinear folds a chain that is linear below head without holding it: it
+// walks first parents back to the nearest commit the fold cache holds, or to
+// the root, then streams the commits above that base through the fold oldest
+// first, so memory stays at one snapshot however long the chain. A merge, a
+// checkpoint, or a commit the fold refuses leaves the chain to the full fold,
+// and foldLinear reports false.
+func (s *Store) foldLinear(ctx context.Context, head model.PackCommit) (model.Snapshot, *cachePublication, bool) {
+	ctx, release := gitobj.ShareReaders(ctx)
+	defer func() { _ = release() }()
+	var base model.Snapshot
+	var top, floor model.Lamport
+	var cached []model.SHA
+	walked, linear, err := s.Repo.LinearHistory(ctx, head.SHA, func(sha model.SHA) bool {
+		snap, snapTop, snapFloor, ok := s.cache.getTop(sha)
+		if ok {
+			base, top, floor, cached = snap, snapTop, snapFloor, []model.SHA{sha}
+		}
+		return ok
+	})
+	if err != nil || !linear {
+		return nil, nil, false
+	}
+	next := len(walked) - 1
+	snapshot, err := fold.Stream(base, func() (model.PackCommit, bool, error) {
+		if next < 0 {
+			return model.PackCommit{}, false, nil
+		}
+		sha := walked[next]
+		next--
+		c := head
+		if sha != head.SHA {
+			var err error
+			if c, err = s.Repo.ReadCommit(ctx, sha); err != nil {
+				return model.PackCommit{}, false, err
+			}
+		}
+		if base != nil && c.Pack.Lamport <= floor {
+			return model.PackCommit{}, false, fmt.Errorf("%s at lamport %d is not above the cached floor %d", c.SHA, c.Pack.Lamport, floor)
+		}
+		top = max(top, c.Pack.Lamport)
+		return c, true, nil
+	})
+	if err != nil {
+		return nil, nil, false
+	}
+	return snapshot, foldPublication(head.SHA, snapshot, top, floor, cached...), true
 }
 
 // LoadRootedAt folds the immutable chain ending at head and returns both its

@@ -6,13 +6,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -28,9 +33,12 @@ type relevantCacheEntry struct {
 	Exe        string       `json:"exe"`
 	Git        string       `json:"git"`
 	Racy       bool         `json:"racy,omitempty"`
+	RacyRefs   bool         `json:"racy_refs,omitempty"`
 	Revalidate bool         `json:"revalidate,omitempty"`
 	Stamps     []fileStamp  `json:"stamps,omitempty"`
 	Files      []fileStamp  `json:"files,omitempty"`
+	Rendered   []string     `json:"rendered,omitempty"`
+	LooseRefs  []string     `json:"loose_refs,omitempty"`
 	Deps       relevantDeps `json:"-"`
 	Output     []byte       `json:"-"`
 }
@@ -91,7 +99,11 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 			// Lock-and-rename publishes (git, libgit2, gix, JGit, cc-notes) move a
 			// stamp; a foreign in-place rewrite of an existing loose ref under a
 			// directory stamp (go-git setRef) is not covered.
-			if cached, hit, cachedOK = readRelevantCacheEntry(f, now); hit {
+			cached, hit, cachedOK = readRelevantCacheEntry(f, now)
+			if !hit && cachedOK {
+				hit = c.restampUnscoredWrites(ctx, name, cached, p, filter, now)
+			}
+			if hit {
 				if _, bound := c.s.Binding(); bound {
 					if err := c.s.CheckRecords(); err != nil {
 						return nil, err
@@ -110,6 +122,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 		return nil, err
 	}
 	if cachedOK && cached.Key == in.key() && cached.clockValid(in.start) && cached.filesValid() {
+		cached.LooseRefs = c.looseRefs(cached.Rendered)
 		if in.close() {
 			in.fill(&cached)
 			c.writeRelevantCache(name, cached)
@@ -137,11 +150,13 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if err != nil {
 		return nil, err
 	}
+	rendered := renderedRefs(entries)
+	loose := c.looseRefs(rendered)
 	after := stampsOf(paths)
 	if !slices.Equal(before, after) || slices.ContainsFunc(after, func(f fileStamp) bool { return f.racyMtime(in.start) }) || in.noCache || !in.close() {
 		return out, nil
 	}
-	entry := relevantCacheEntry{Key: in.key(), Files: after, Output: out}
+	entry := relevantCacheEntry{Key: in.key(), Files: after, Rendered: rendered, LooseRefs: loose, Output: out}
 	in.fill(&entry)
 	for _, e := range entries {
 		if fe, ok := freshOf(e); ok && e.Verdict == "" && fe.StaleAt == 0 && fe.VerifiedAt != 0 {
@@ -293,16 +308,160 @@ func (c *Client) relevantName(p string, filter RelevantFilter, variant, exe stri
 }
 
 func (e relevantCacheEntry) hit(now time.Time) bool {
-	if e.Racy || e.Revalidate || !e.clockValid(now) || e.Env != relevantEnv() {
+	return e.settled(now) && e.stampsValid() && e.filesValid()
+}
+
+// settled reports whether everything but the fingerprints still holds: the
+// entry is neither racy nor marked for revalidation, its clock window is
+// open, and it was built under this environment, executable, and git.
+func (e relevantCacheEntry) settled(now time.Time) bool {
+	return !e.Racy && e.built(now)
+}
+
+func (e relevantCacheEntry) built(now time.Time) bool {
+	if e.Revalidate || !e.clockValid(now) || e.Env != relevantEnv() {
 		return false
 	}
 	if exe, err := os.Executable(); err != nil || exe != e.Exe {
 		return false
 	}
-	if git, err := exec.LookPath("git"); err != nil || git != e.Git {
+	git, err := exec.LookPath("git")
+	return err == nil && git == e.Git
+}
+
+// restampUnscoredWrites serves an entry whose only moved fingerprints are
+// entity ref directories, each the same directory as before and holding none
+// of the refs the entry renders or resolves a branch, base, or commit
+// through, when every ref written there since the entry was built names an
+// entity that scores nothing against p: one with no anchors, or with path
+// and dir anchors nowhere at, above, or beside p. Such an entity cannot enter
+// p's rendering, so a ledger's row writes, the bulk of a drive's churn, and
+// edits to records anchored elsewhere leave it standing. An entry racy only
+// in those directories qualifies too, since they are read afresh rather than
+// trusted. The moved stamps, taken before the directories are read, persist
+// with the check's start as the entry's build time once they are older than
+// the racy window.
+func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relevantCacheEntry, p string, filter RelevantFilter, now time.Time) bool {
+	if (e.Racy && !e.RacyRefs) || !e.built(now) || !e.filesValid() {
 		return false
 	}
-	return e.stampsValid() && e.filesValid()
+	roots := c.entityRootDirs()
+	resolved := slices.Concat(e.Deps.Branches, e.Deps.Commits, []string{filter.Branch, filter.Base})
+	built := time.Unix(0, e.Built)
+	stamps := slices.Clone(e.Stamps)
+	var moved []int
+	for i, s := range e.Stamps {
+		if stamps[i] = restamp(s); stamps[i] == s && (!e.Racy || !s.racy(built)) {
+			continue
+		}
+		root, ok := roots[s.Path]
+		if !ok || s.Link || s.Ident || stamps[i].Missing || stamps[i].Inode != s.Inode || stamps[i].Mode != s.Mode {
+			return false
+		}
+		if slices.ContainsFunc(e.LooseRefs, func(ref string) bool { return strings.HasPrefix(ref, root) && !c.looseRef(ref) }) ||
+			slices.ContainsFunc(resolved, func(rev string) bool { return strings.Contains(rev, strings.TrimPrefix(root, "refs/")) }) {
+			return false
+		}
+		moved = append(moved, i)
+	}
+	cutoff := e.Built - relevantRacyWindow.Nanoseconds()
+	for _, i := range moved {
+		if !c.unscoredSince(ctx, e.Stamps[i].Path, roots[e.Stamps[i].Path], p, e.Rendered, cutoff) {
+			return false
+		}
+	}
+	if !slices.ContainsFunc(stamps, func(s fileStamp) bool { return s.racy(now) }) {
+		e.Built, e.Stamps, e.Racy = now.UnixNano(), stamps, false
+		c.writeRelevantCache(name, e)
+	}
+	return true
+}
+
+// entityRootDirs maps each relevance kind's loose ref directory to its root.
+func (c *Client) entityRootDirs() map[string]string {
+	dirs := make(map[string]string, len(relevantRefRoots))
+	for _, root := range relevantRefRoots {
+		dirs[joinPath(c.s.RecordsCommonDir(), filepath.FromSlash(strings.TrimSuffix(root, "/")))] = root
+	}
+	return dirs
+}
+
+// unscoredSince reports whether every loose ref in dir, the directory of
+// root, written at or after cutoff (nanoseconds) holds an entity that scores
+// nothing against p and is not one the entry renders. A ref removed since is
+// no rendered entry's, the caller having checked those, so it changes nothing.
+func (c *Client) unscoredSince(ctx context.Context, dir, root, p string, rendered []string, cutoff int64) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false
+		}
+		if ctime, _ := gitobj.StatIdentity(info); ctime < cutoff && info.ModTime().UnixNano() < cutoff {
+			continue
+		}
+		if !info.Mode().IsRegular() || strings.HasSuffix(entry.Name(), ".lock") || slices.Contains(rendered, root+entry.Name()) {
+			return false
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name())) //nolint:gosec // G304: a loose ref under this store's own ref directory.
+		tip, found := strings.CutSuffix(string(data), "\n")
+		if err != nil || !found || !plumbing.IsHash(tip) {
+			return false
+		}
+		snapshot, err := c.s.LoadAt(ctx, model.SHA(tip))
+		if err != nil {
+			return false
+		}
+		if e, ok := snapshotEntry(snapshot); !ok || !scoresNothingAt(e.anchors(), p) {
+			return false
+		}
+	}
+	return true
+}
+
+// scoresNothingAt reports whether anchors earn no score for p in any
+// repository state: every anchor is a path or dir anchor, and none is at p,
+// above it, or beside it. Branch and commit anchors score from history, so
+// an entity carrying one never qualifies.
+func scoresNothingAt(anchors []model.Anchor, p string) bool {
+	for _, a := range anchors {
+		if a.Kind != model.AnchorPath && a.Kind != model.AnchorDir {
+			return false
+		}
+	}
+	return !hasAnchorIn(anchors, model.AnchorPath, p) && deepestDirAnchor(anchors, p) == "" && len(siblingAnchors(anchors, p)) == 0
+}
+
+// looseRefs lists the rendered refs that are loose files, the ones whose
+// deletion leaves packed-refs untouched. Callers take it before the inputs'
+// final validation, which a deletion racing it fails.
+func (c *Client) looseRefs(rendered []string) []string {
+	var loose []string
+	for _, ref := range rendered {
+		if c.looseRef(ref) {
+			loose = append(loose, ref)
+		}
+	}
+	return loose
+}
+
+func renderedRefs(entries []RelevantEntry) []string {
+	rendered := make([]string, len(entries))
+	for i, e := range entries {
+		rendered[i] = refs.For(e.Kind, e.id())
+	}
+	return rendered
+}
+
+func (c *Client) looseRef(ref string) bool {
+	info, err := os.Lstat(joinPath(c.s.RecordsCommonDir(), filepath.FromSlash(ref)))
+	return err == nil && info.Mode().IsRegular()
 }
 
 func (e relevantCacheEntry) clockValid(now time.Time) bool {

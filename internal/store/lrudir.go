@@ -45,6 +45,7 @@ type cacheHit struct {
 
 type lruDir struct {
 	capacity int
+	budget   int64
 	dir      string
 
 	writer sync.Mutex
@@ -385,6 +386,9 @@ func (l *lruDir) writeBatch(values []cachePublication) {
 		}
 		l.mu.Unlock()
 	}
+	if l.budget > 0 {
+		l.trim(file, nil, l.budget)
+	}
 }
 
 func (l *lruDir) chooseSlot(window cacheHintWindow, tag uint64) cacheHintSlot {
@@ -585,6 +589,10 @@ func (l *lruDir) sweep(stale func(cacheHint) bool, budget int64) int {
 	if err != nil {
 		return 0
 	}
+	return l.trim(file, stale, budget)
+}
+
+func (l *lruDir) trim(file *os.File, stale func(cacheHint) bool, budget int64) int {
 	records := make([]byte, l.capacity*cacheHintRecordSize)
 	if _, err := file.ReadAt(records, cacheHintHeaderSize); err != nil {
 		return 0

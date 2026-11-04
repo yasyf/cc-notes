@@ -80,6 +80,37 @@ func extend[T model.Snapshot](base model.Snapshot, c model.PackCommit, f folder[
 	return r.snapshot(c.SHA)
 }
 
+func stream[T model.Snapshot](base model.Snapshot, c model.PackCommit, next func() (model.PackCommit, bool, error), f folder[T]) (T, error) {
+	var zero T
+	r := &replay[T]{f: f, m: tolerant}
+	var head model.SHA
+	if base == nil {
+		f.fresh(c.SHA, c.AuthorTime)
+	} else {
+		if err := f.seed(base); err != nil {
+			return zero, err
+		}
+		r.m, r.created, head = strict, true, base.Meta().Head
+	}
+	for ok := true; ok; {
+		if head != "" && (len(c.Parents) != 1 || c.Parents[0] != head) {
+			return zero, fmt.Errorf("%w: %s does not extend head %s", ErrMissingParent, c.SHA, head)
+		}
+		if _, isCheckpoint := checkpointOf(c); isCheckpoint {
+			return zero, fmt.Errorf("%w: %s", ErrExtendCheckpoint, c.SHA)
+		}
+		if err := r.step(c); err != nil {
+			return zero, err
+		}
+		head = c.SHA
+		var err error
+		if c, ok, err = next(); err != nil {
+			return zero, err
+		}
+	}
+	return r.snapshot(head)
+}
+
 func walk[T model.Snapshot](ordered []model.PackCommit, newFolder func() folder[T], fn func(Step) error) error {
 	var seeds seedTracker
 	var r *replay[T]

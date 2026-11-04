@@ -18,11 +18,24 @@ type toolProps struct {
 	required map[string]bool
 }
 
+// repoArg is the property every tool accepts to name the repository a call
+// operates on, the MCP form of the CLI's --repo. A session rooted outside a
+// repository passes it on each call.
+const repoArg = "repo"
+
 func addTool[In, Out any](ts *toolset, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
 	schema, err := jsonschema.For[In](&jsonschema.ForOptions{})
 	if err != nil {
 		panic(err)
 	}
+	if schema.Properties == nil {
+		schema.Properties = map[string]*jsonschema.Schema{}
+	}
+	schema.Properties[repoArg] = &jsonschema.Schema{
+		Type:        "string",
+		Description: "repository to operate on (any path inside it); defaults to the project the server started in",
+	}
+	t.InputSchema = schema
 	required := make(map[string]bool, len(schema.Required))
 	accepted := make([]string, 0, len(schema.Properties))
 	for _, name := range schema.Required {

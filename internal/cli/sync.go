@@ -149,6 +149,7 @@ func newSyncCmd() *cobra.Command {
 	var remote string
 	var jsonOut bool
 	var full bool
+	var prefix string
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Converge refs/cc-notes/* with a remote and push",
@@ -159,7 +160,7 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, syncErr := c.Sync(ctx, notes.SyncOptions{Remote: remote, Full: full})
+			report, syncErr := c.Sync(ctx, notes.SyncOptions{Remote: remote, Full: full, Prefix: prefix})
 			// A failed sync can still have done real work — e.g. a download
 			// failure after the push loop converged — so the report prints
 			// before the error propagates to a non-zero exit. A run that
@@ -216,6 +217,7 @@ func newSyncCmd() *cobra.Command {
 	bindRemote(flags, &remote, "", "sync with")
 	bindJSON(flags, &jsonOut)
 	flags.BoolVar(&full, "full", false, "force a whole-namespace reconcile scan")
+	flags.StringVar(&prefix, "prefix", "", "converge only the refs under this refs/cc-notes/ prefix, such as one ledger's ref")
 	return cmd
 }
 
