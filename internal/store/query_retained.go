@@ -28,6 +28,7 @@ var (
 	queryObjectsBucket     = []byte(managed.QueryObjects)
 	queryCurrentRoot       = []byte("current")
 	queryActiveRoot        = []byte("active")
+	queryRetiredRoot       = []byte("retired")
 )
 
 type queryGeneration struct {
@@ -213,6 +214,18 @@ func readQueryGeneration(bucket *bolt.Bucket, key []byte) (queryGeneration, erro
 	}
 	return generation, nil
 }
+
+func popRetiredQueryGeneration(bucket *bolt.Bucket) (model.SHA, error) {
+	retired, err := readQueryGeneration(bucket, queryRetiredRoot)
+	if err != nil {
+		return "", err
+	}
+	if err := bucket.Delete(queryRetiredRoot); err != nil {
+		return "", err
+	}
+	return retired.Root, nil
+}
+
 func queryRowKey(id model.EntityID) string     { return "rows/" + string(id) }
 func queryPostingKey(index, key []byte) string { return string(index) + "/" + string(key) }
 func queryRowPostings(row queryMetadata) []sourcegraph.Mutation {
@@ -339,6 +352,13 @@ func (b queryGenerationBatch) flush(ctx context.Context, tx *bolt.Tx) error {
 		generation, err := readQueryGeneration(bucket, queryCurrentRoot)
 		if err != nil {
 			return err
+		}
+		retired, err := popRetiredQueryGeneration(bucket)
+		if err != nil {
+			return err
+		}
+		if retired != "" {
+			released = append(released, retired)
 		}
 		previousRoot := generation.Root
 		generation.Root, err = index.Apply(previousRoot, slices.Collect(maps.Values(delta.mutations)))
@@ -495,7 +515,7 @@ func readIndexedQuery[T any](ctx context.Context, q queryMetadataSource, read fu
 			return err
 		}
 		if advance {
-			if err := activateQueryGeneration(ctx, tx, current, active); err != nil {
+			if err := activateQueryGeneration(ctx, tx, bucket, current, active); err != nil {
 				return err
 			}
 			if err := bucket.Put(queryActiveRoot, bucket.Get(queryCurrentRoot)); err != nil {
