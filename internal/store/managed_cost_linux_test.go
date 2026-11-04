@@ -244,7 +244,7 @@ const (
 	writeStallLimit   = 10 * time.Second
 )
 
-func syscallGrowth(name string) int {
+func syscallGrowth(name string) int64 {
 	if name == "openat" || name == "newfstatat" {
 		return 24 * 83 / 10
 	}
