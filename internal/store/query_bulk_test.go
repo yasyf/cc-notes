@@ -16,7 +16,7 @@ import (
 )
 
 func TestBulkQueryMetadataMatchesIncrementalGraph(t *testing.T) {
-	var rows []queryMetadata
+	rows := make([]queryMetadata, 0, 48)
 	for i := range 48 {
 		id := model.EntityID(fmt.Sprintf("doc-%02d", i))
 		row := projectQueryMetadata(fmt.Sprintf("binding-%d", i%2), model.SHA(fmt.Sprintf("tip-%02d", i)), model.Doc{ID: id, Tags: []string{"shared", fmt.Sprintf("tag-%d", i%3)}})
