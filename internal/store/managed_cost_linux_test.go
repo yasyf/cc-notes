@@ -239,9 +239,11 @@ func TestManagedFreshProcessCost(t *testing.T) {
 // doubling, about 1.3 MiB a write. At the monorepo's peak of 560 writes an hour
 // that is 0.2 MiB/s, under 0.01% of this Mac's 2.5 GiB/s disk.
 const (
-	writeBytesGrowth  = (128 << 10) * 83 / 10
-	minorFaultsGrowth = 160 * 83 / 10
-	writeStallLimit   = 10 * time.Second
+	writeBytesGrowth       = (128 << 10) * 83 / 10
+	minorFaultsPerDoubling = 160
+	minorFaultsGrowth      = minorFaultsPerDoubling * 83 / 10
+	historyDoublings       = 5
+	writeStallLimit        = 10 * time.Second
 )
 
 func syscallGrowth(name string) int64 {
