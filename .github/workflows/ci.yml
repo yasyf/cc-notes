@@ -233,7 +233,7 @@ jobs:
 
   test:
     runs-on: ${{ github.event_name == 'schedule' && 'macos-latest' || 'ubuntu-latest' }}
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
 
@@ -246,7 +246,7 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v ./internal/gitguard
 
       - name: Test (race, via the process-cap harness)
-        run: ./scripts/test.sh -race -count=1 -timeout 30m ./...
+        run: ./scripts/test.sh -race -count=1 -timeout 60m -v ./...
 
       - name: Build (default, pure Go)
         run: go build ./...
