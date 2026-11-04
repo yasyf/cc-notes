@@ -1,6 +1,7 @@
 package notes
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -87,6 +88,8 @@ type relevantInputs struct {
 	config     []gitcmd.ConfigEntry
 	tips       map[string]model.SHA
 	deps       relevantDeps
+	headDeps   []fileStamp
+	configSum  string
 	fixed      []string
 	values     map[string]model.SHA
 }
@@ -629,6 +632,9 @@ func (in *relevantInputs) watchDep(name string, depth int) {
 		in.revalidate = true
 		return
 	}
+	if strings.HasPrefix(name, "refs/heads/") {
+		in.headDeps = append(in.headDeps, lstampOf(file))
+	}
 	in.watch(nearestExisting(parentPath(file)))
 	in.watch(joinPath(in.commonDir, "packed-refs"))
 	info, err := os.Lstat(file)
@@ -698,6 +704,7 @@ func (in *relevantInputs) watchConfig(ctx context.Context) error {
 	for _, file := range candidates {
 		in.watch(file)
 	}
+	in.configSum = configSumWithoutBranches(joinPath(in.commonDir, "config"))
 	entries, err := git.ConfigOrigins(ctx)
 	if err != nil {
 		return err
@@ -708,7 +715,9 @@ func (in *relevantInputs) watchConfig(ctx context.Context) error {
 	}
 	in.config = entries
 	for _, e := range entries {
-		in.record("config %s %s %q %t", e.Origin, e.Key, e.Value, e.HasValue)
+		if !strings.HasPrefix(e.Key, "branch.") {
+			in.record("config %s %s %q %t", e.Origin, e.Key, e.Value, e.HasValue)
+		}
 	}
 	vars, dump := splitVarList(varList)
 	for _, line := range vars {
@@ -741,6 +750,31 @@ func (in *relevantInputs) watchConfig(ctx context.Context) error {
 	in.staleAfter = staleAfter
 	in.record("stale %s", staleAfter)
 	return nil
+}
+
+func configSumWithoutBranches(path string) string {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: this repository's own git config.
+	if err != nil {
+		return ""
+	}
+	sum := sha256.New()
+	inBranch := false
+	for line := range bytes.Lines(data) {
+		trimmed := bytes.TrimSpace(line)
+		// A trailing backslash may continue a value or sit in a comment; telling
+		// them apart takes git's full parser, so such a file is digested whole.
+		if bytes.HasSuffix(trimmed, []byte(`\`)) {
+			whole := sha256.Sum256(data)
+			return hex.EncodeToString(whole[:])
+		}
+		if bytes.HasPrefix(trimmed, []byte("[")) {
+			inBranch = bytes.HasPrefix(bytes.ToLower(trimmed), []byte(`[branch "`))
+		}
+		if !inBranch {
+			sum.Write(line)
+		}
+	}
+	return hex.EncodeToString(sum.Sum(nil))
 }
 
 func (in *relevantInputs) configStamped() map[string]bool {
@@ -1138,7 +1172,7 @@ func (in *relevantInputs) racyRefs() bool {
 	dirs := in.client.entityRootDirs()
 	racyElsewhere := func(s fileStamp) bool {
 		_, dir := dirs[s.Path]
-		return s.racy(in.start) && !dir && s.Path != in.client.headsDir()
+		return s.racy(in.start) && !dir && !in.client.branchDir(s) && s.Path != joinPath(in.commonDir, "config")
 	}
 	return !in.untrusted && !slices.ContainsFunc(in.stamps, racyElsewhere) && !slices.ContainsFunc(in.guards, racyElsewhere)
 }
@@ -1153,4 +1187,7 @@ func (in *relevantInputs) fill(e *relevantCacheEntry) {
 	e.Revalidate = in.revalidate
 	e.Stamps = in.stamps
 	e.Deps = in.deps
+	e.HeadDeps = in.headDeps
+	e.AnyHead = in.detached()
+	e.ConfigSum = in.configSum
 }
