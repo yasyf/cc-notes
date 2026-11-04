@@ -208,7 +208,10 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 		sourceUpdates = append(sourceUpdates, gitcmd.RefUpdate{Ref: sourceindex.CatalogRef, Old: imported.catalog, New: catalog})
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		if err := s.applyManaged(ctx, tx, managedIntent{Updates: updates, Rows: rows, Source: &sourcePublication{Revision: &current}}); err != nil {
+		if err := s.applyManaged(ctx, tx, managedIntent{Updates: updates, Source: &sourcePublication{Revision: &current}}); err != nil {
+			return err
+		}
+		if err := buildQueryMetadata(ctx, tx, rows); err != nil {
 			return err
 		}
 		if err := s.preserveActiveQueryGenerations(ctx, tx); err != nil {
