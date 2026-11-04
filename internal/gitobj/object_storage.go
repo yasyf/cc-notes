@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/cache"
@@ -18,12 +19,61 @@ import (
 type objectStorage struct {
 	*filesystem.Storage
 	dir     *dotgit.DotGit
+	root    string
 	backend gitcmd.Git
 	objects cache.Object
 	scope   *objectReadScope
 }
 
 func (s *objectStorage) Reindex() { s.scope.refresh = true }
+
+// SetEncodedObject replaces go-git's loose write, which writes through a shared
+// temp directory and checks for the object only afterwards; one source graph
+// publication writes about ninety objects.
+func (s *objectStorage) SetEncodedObject(o plumbing.EncodedObject) (plumbing.Hash, error) {
+	if o.Type() == plumbing.OFSDeltaObject || o.Type() == plumbing.REFDeltaObject {
+		return plumbing.ZeroHash, plumbing.ErrInvalidType
+	}
+	hash := o.Hash()
+	name := hash.String()
+	dir := filepath.Join(s.root, "objects", name[:2])
+	path := filepath.Join(dir, name[2:])
+	if _, err := os.Lstat(path); err == nil {
+		return hash, nil
+	}
+	tmp, err := os.CreateTemp(dir, "tmp_obj_")
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(dir, 0o777); err != nil { //nolint:gosec // G301: git creates object fan-out directories under the process umask.
+			return plumbing.ZeroHash, err
+		}
+		tmp, err = os.CreateTemp(dir, "tmp_obj_")
+	}
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	err = writeLooseObject(tmp, o)
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		return plumbing.ZeroHash, errors.Join(err, os.Remove(tmp.Name()))
+	}
+	return hash, nil
+}
+
+func writeLooseObject(tmp *os.File, o plumbing.EncodedObject) (resultErr error) {
+	defer func() { resultErr = errors.Join(resultErr, tmp.Close()) }()
+	reader, err := o.Reader()
+	if err != nil {
+		return err
+	}
+	writer := objfile.NewWriter(tmp)
+	if err := writer.WriteHeader(o.Type(), o.Size()); err != nil {
+		return errors.Join(err, reader.Close(), writer.Close())
+	}
+	_, copyErr := io.Copy(writer, reader)
+	return errors.Join(copyErr, reader.Close(), writer.Close())
+}
 
 func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Hash) (plumbing.EncodedObject, error) {
 	if err := s.scope.ctx.Err(); err != nil {

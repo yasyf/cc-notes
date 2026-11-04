@@ -16,10 +16,11 @@ func TestQueryTaskBlockingBatchWork(t *testing.T) {
 			db := newQueryMetadataDB(t)
 			source := queryMetadataSource{binding: "binding", kind: model.KindTask, tips: make(map[model.EntityID]model.SHA, count+4)}
 			if err := db.Update(func(tx *bolt.Tx) error {
+				batch := make(queryGenerationBatch)
 				for i := range count {
 					task := model.Task{ID: model.EntityID(fmt.Sprintf("other-%05d", i)), Labels: []string{"other"}}
 					source.tips[task.ID] = "tip"
-					if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", task)); err != nil {
+					if err := batch.replaceMetadata(tx, projectQueryMetadata("binding", "tip", task)); err != nil {
 						return err
 					}
 				}
@@ -30,11 +31,11 @@ func TestQueryTaskBlockingBatchWork(t *testing.T) {
 					{ID: "deleted", Deleted: true, BlockedBy: []model.EntityID{"target"}},
 				} {
 					source.tips[task.ID] = "tip"
-					if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", task)); err != nil {
+					if err := batch.replaceMetadata(tx, projectQueryMetadata("binding", "tip", task)); err != nil {
 						return err
 					}
 				}
-				return nil
+				return batch.flush(t.Context(), tx)
 			}); err != nil {
 				t.Fatal(err)
 			}
