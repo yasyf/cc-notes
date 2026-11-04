@@ -310,8 +310,15 @@ func TestRelevantCachedScopesRefLookupToDependencies(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("create unrelated refs: %v\n%s", err, out)
 	}
+	if calls := counted("unrelated branches written"); len(calls) != 0 {
+		t.Fatalf("hit after unrelated branches ran git: %v", calls)
+	}
+	pack := exec.CommandContext(t.Context(), realGit, "-C", dir, "pack-refs", "--all")
+	if out, err := pack.CombinedOutput(); err != nil {
+		t.Fatalf("pack refs: %v\n%s", err, out)
+	}
 	var enumerations, resolutions [][]string
-	for _, call := range counted("unrelated branches written") {
+	for _, call := range counted("refs packed") {
 		switch call[0] {
 		case "for-each-ref":
 			enumerations = append(enumerations, call[2:])
