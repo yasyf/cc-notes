@@ -1,1 +1,1 @@
-{"v":1,"lamport":6,"ops":[{"kind":"add_label","label":"ccn-query-retirement"}]}
+{"v":1,"lamport":7,"ops":[{"kind":"set_criterion_status","id":"a97f7a7fb62d28ec749d31e42253a5b6","status":"met","note":"Retirement/pinned/cancellation/reindex/reclamation and fully-drained allocation comparison passed both PR lanes and both exact merged-main lanes. Independent ownership review PASS, no findings; final roots/reference counts identical to immediate reclamation."}]}
