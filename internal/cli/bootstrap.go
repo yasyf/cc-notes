@@ -59,6 +59,17 @@ func repoDir(cmd *cobra.Command) (string, error) {
 // openStore opens the store for the repository containing the working
 // directory, or the one named by --repo or $CCN_REPO.
 func openStore(cmd *cobra.Command) (*store.Store, error) {
+	s, err := openRawStore(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureAuthority(cmd.Context(), s); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func openRawStore(cmd *cobra.Command) (*store.Store, error) {
 	s, retained, err := retainedStore(cmd)
 	if err != nil {
 		return nil, err

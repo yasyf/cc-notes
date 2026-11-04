@@ -205,7 +205,51 @@ func TestManagedAuthorityBootstrapPreservesEveryKind(t *testing.T) {
 	}
 }
 
-func TestManagedAuthorityDirectWritesNeedExplicitReindex(t *testing.T) {
+func TestAdoptExtendedRefsImportsExtensionsAndKeepsRewinds(t *testing.T) {
+	s := initStore(t)
+	extended := create(t, s, noteOps("extended outside managed publication"))
+	extendedRef := refs.For(model.KindNote, extended.EntityID())
+	raw, err := s.PrepareAppendAt(t.Context(), extendedRef, extended.Meta().Head, []model.Op{model.SetBody{Body: "raw extension"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{raw.RefUpdate()}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.PrepareCreateExact(t.Context(), noteOps("created outside managed publication"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{created.RefUpdate()}); err != nil {
+		t.Fatal(err)
+	}
+	rewound := create(t, s, noteOps("rewound outside managed publication"))
+	rewoundRef := refs.For(model.KindNote, rewound.EntityID())
+	kept, err := s.Append(t.Context(), rewoundRef, []model.Op{model.SetBody{Body: "managed append"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: rewoundRef, Old: kept.Meta().Head, New: rewound.Meta().Head}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if adopted, err := s.AdoptExtendedRefs(t.Context()); err != nil || adopted != 2 {
+		t.Fatalf("AdoptExtendedRefs=%d, %v; want the extension and the create", adopted, err)
+	}
+	requireManagedProjection(t, s, extendedRef, raw.Snapshot)
+	requireManagedProjection(t, s, created.Ref, created.Snapshot)
+	if loaded, err := s.Load(t.Context(), rewoundRef); err != nil || !reflect.DeepEqual(loaded, kept) {
+		t.Fatalf("rewound ref changed authority=%#v, %v; want %#v", loaded, err, kept)
+	}
+	if _, err := s.Append(t.Context(), rewoundRef, []model.Op{model.SetBody{Body: "over a rewind"}}); !errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("append over a rewind=%v; want ErrReindex", err)
+	}
+	if adopted, err := s.AdoptExtendedRefs(t.Context()); err != nil || adopted != 0 {
+		t.Fatalf("second AdoptExtendedRefs=%d, %v; want none", adopted, err)
+	}
+}
+
+func TestManagedAuthorityAdoptsExtensionsAndReindexesTheRest(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, answerOps("managed before raw writer")).(model.Answer)
 	ref := refs.For(model.KindAnswer, a.ID)
@@ -221,14 +265,16 @@ func TestManagedAuthorityDirectWritesNeedExplicitReindex(t *testing.T) {
 		t.Fatalf("raw writer changed managed read=%#v, %v; want %#v", loaded, err, a)
 	}
 	requireManagedAnswerLabel(t, s, "raw")
-	if _, err := s.Append(t.Context(), ref, []model.Op{model.AddTag{Tag: "must not overwrite raw"}}); !errors.Is(err, managed.ErrReindex) {
-		t.Fatalf("managed publication over raw drift=%v; want explicit reindex", err)
+	appended, err := s.Append(t.Context(), ref, []model.Op{model.AddTag{Tag: "after raw"}})
+	if err != nil {
+		t.Fatalf("append over a raw extension: %v", err)
 	}
-	if err := s.Reindex(t.Context()); err != nil {
-		t.Fatal(err)
+	if got := appended.(model.Answer); got.Body != "raw replacement" {
+		t.Fatalf("append dropped the raw extension: %#v", got)
 	}
-	requireManagedProjection(t, s, ref, prepared.Snapshot)
+	requireManagedProjection(t, s, ref, appended)
 	requireManagedAnswerLabel(t, s, "raw", a.ID)
+	requireManagedAnswerLabel(t, s, "after raw", a.ID)
 	created, err := s.PrepareCreateExact(t.Context(), append(answerOps("raw create"), model.AddTag{Tag: "raw"}))
 	if err != nil {
 		t.Fatal(err)
@@ -245,10 +291,10 @@ func TestManagedAuthorityDirectWritesNeedExplicitReindex(t *testing.T) {
 	}
 	requireManagedProjection(t, s, created.Ref, created.Snapshot)
 	requireManagedAnswerLabel(t, s, "raw", a.ID, created.Snapshot.EntityID())
-	if err := s.RecordsGit.DeleteRef(t.Context(), ref, prepared.New); err != nil {
+	if err := s.RecordsGit.DeleteRef(t.Context(), ref, appended.Meta().Head); err != nil {
 		t.Fatal(err)
 	}
-	if loaded, err := s.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(loaded, prepared.Snapshot) {
+	if loaded, err := s.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(loaded, appended) {
 		t.Fatalf("raw deletion changed captured authority=%#v, %v", loaded, err)
 	}
 	if err := s.Reindex(t.Context()); err != nil {

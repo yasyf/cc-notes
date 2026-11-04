@@ -28,13 +28,23 @@ const QueryObjectRefs = "object-refs"
 // ErrReindex requires an explicit import before ordinary managed operations.
 var ErrReindex = errors.New("managed authority unavailable; run cc-notes reindex")
 
+// ErrBusy reports a lock held past lockWait, in practice by a full import.
+var ErrBusy = errors.New("managed authority busy")
+
+var lockWait = 30 * time.Second
+
 // Path names the shared records authority database.
 func Path(commonDir string) string {
 	return filepath.Join(commonDir, "cc-notes-managed", "authority-v1.db")
 }
 
-// Lock retains the stable authority lock until its returned file is closed.
-func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, error) {
+// Exists reports whether the authority database is present.
+func Exists(commonDir string) bool {
+	_, err := os.Stat(Path(commonDir))
+	return err == nil
+}
+
+func openLock(commonDir string) (*os.File, error) {
 	path := Path(commonDir) + ".lock"
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, errors.Join(ErrReindex, err)
@@ -43,12 +53,40 @@ func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, erro
 	if err != nil {
 		return nil, errors.Join(ErrReindex, err)
 	}
+	return file, nil
+}
+
+// TryLock takes the exclusive authority lock without waiting, returning a nil
+// file when another process holds it.
+func TryLock(commonDir string) (*os.File, error) {
+	file, err := openLock(commonDir)
+	if err != nil {
+		return nil, err
+	}
+	err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return nil, file.Close()
+	}
+	if err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
+}
+
+// Lock retains the stable authority lock until its returned file is closed,
+// failing with ErrBusy once another holder has kept it for lockWait.
+func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, error) {
+	file, err := openLock(commonDir)
+	if err != nil {
+		return nil, err
+	}
 	mode := syscall.LOCK_SH
 	if exclusive {
 		mode = syscall.LOCK_EX
 	}
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+	deadline := time.Now().Add(lockWait)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, file.Close())
@@ -59,6 +97,9 @@ func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, erro
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, errors.Join(err, file.Close())
+		}
+		if time.Now().After(deadline) {
+			return nil, errors.Join(fmt.Errorf("%w: %s held for %s", ErrBusy, file.Name(), lockWait), file.Close())
 		}
 		select {
 		case <-ctx.Done():

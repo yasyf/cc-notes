@@ -7,14 +7,18 @@ import (
 )
 
 func newReindexCmd() *cobra.Command {
-	return &cobra.Command{
+	var ifMissing bool
+	cmd := &cobra.Command{
 		Use:   "reindex",
 		Short: "Import Git entity refs into the managed authority",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(cmd)
+			s, err := openRawStore(cmd)
 			if err != nil {
 				return err
+			}
+			if ifMissing {
+				return s.ReindexIfMissing(cmd.Context())
 			}
 			if err := s.Reindex(cmd.Context()); err != nil {
 				return err
@@ -23,4 +27,6 @@ func newReindexCmd() *cobra.Command {
 			return err
 		},
 	}
+	cmd.Flags().BoolVar(&ifMissing, "if-missing", false, "import only when no authority exists and no other import is running")
+	return cmd
 }

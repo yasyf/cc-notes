@@ -56,7 +56,7 @@ type SyncReport struct {
 // report, which still carries everything the run pushed. A clean run that moved
 // a ref in either direction ends with GC's local tidy, the one point that sees
 // refs moved by a fetch or by a writer that could not supersede its own cache
-// entry.
+// entry. An unscoped run first adopts refs an older binary or raw Git extended.
 func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error) {
 	remotes := []string{opts.Remote}
 	if opts.Remote == "" {
@@ -65,6 +65,11 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 			return SyncReport{}, err
 		}
 		remotes = targets
+	}
+	if opts.Prefix == "" {
+		if _, err := c.s.AdoptExtendedRefs(ctx); err != nil {
+			return SyncReport{}, err
+		}
 	}
 	var report SyncReport
 	var syncErr error
