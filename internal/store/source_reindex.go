@@ -57,7 +57,7 @@ func (s *Store) ReindexIfMissing(ctx context.Context) (err error) {
 	if err := s.CheckRecords(); err != nil {
 		return err
 	}
-	lock, err := managed.TryLock(s.recordsCommonDir)
+	lock, err := managed.TryLock(s.recordsCommonDir, true)
 	if err != nil || lock == nil {
 		return err
 	}
