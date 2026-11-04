@@ -1,4 +1,4 @@
-package fusefs
+package sourceview
 
 import (
 	"errors"
@@ -26,28 +26,28 @@ var junkNames = map[string]bool{
 	".localized":            true,
 }
 
-// flatLayout is the namespace shape of an entity kind's flat files: the
+// Layout is the namespace shape of an entity kind's flat files: the
 // directory they live directly under, their file extension, and whether the
 // filename carries a title slug. It is the single source ParsePath and Filename
 // share, so a kind's directory and naming stay defined in one place.
-type flatLayout struct {
-	dir     string
-	ext     string
-	slugged bool
+type Layout struct {
+	Dir     string
+	Ext     string
+	Slugged bool
 }
 
-var layouts = map[model.Kind]flatLayout{
-	model.KindNote:          {dir: "/notes", ext: ".md", slugged: true},
-	model.KindDoc:           {dir: "/docs", ext: ".md", slugged: true},
-	model.KindLog:           {dir: "/logs", ext: ".md", slugged: true},
-	model.KindRunbook:       {dir: "/runbooks", ext: ".md", slugged: true},
-	model.KindInvestigation: {dir: "/investigations", ext: ".md", slugged: true},
-	model.KindPlan:          {dir: "/plans", ext: ".md", slugged: true},
-	model.KindAnswer:        {dir: "/answers", ext: ".md", slugged: true},
-	model.KindLedger:        {dir: "/ledgers", ext: ".md", slugged: true},
-	model.KindTask:          {dir: "/tasks", ext: ".json"},
-	model.KindSprint:        {dir: "/sprints", ext: ".json"},
-	model.KindProject:       {dir: "/projects", ext: ".json"},
+var layouts = map[model.Kind]Layout{
+	model.KindNote:          {Dir: "/notes", Ext: ".md", Slugged: true},
+	model.KindDoc:           {Dir: "/docs", Ext: ".md", Slugged: true},
+	model.KindLog:           {Dir: "/logs", Ext: ".md", Slugged: true},
+	model.KindRunbook:       {Dir: "/runbooks", Ext: ".md", Slugged: true},
+	model.KindInvestigation: {Dir: "/investigations", Ext: ".md", Slugged: true},
+	model.KindPlan:          {Dir: "/plans", Ext: ".md", Slugged: true},
+	model.KindAnswer:        {Dir: "/answers", Ext: ".md", Slugged: true},
+	model.KindLedger:        {Dir: "/ledgers", Ext: ".md", Slugged: true},
+	model.KindTask:          {Dir: "/tasks", Ext: ".json"},
+	model.KindSprint:        {Dir: "/sprints", Ext: ".json"},
+	model.KindProject:       {Dir: "/projects", Ext: ".json"},
 }
 
 // Node is one parsed namespace path: the root (Root), the flat per-kind
@@ -176,18 +176,18 @@ func (AttachmentsDir) node()        {}
 func (AttachmentEntityDir) node()   {}
 func (AttachmentFile) node()        {}
 
-// Filename names snap's flat file. Slugged kinds get "<short7>-<slug><ext>",
-// dropping the slug when the title yields none; the rest get "<short7><ext>".
+// Filename names snap's flat file. Slugged kinds get "<id>-<slug><ext>",
+// dropping the slug when the title yields none; the rest get "<id><ext>".
 func Filename(snap model.Snapshot) string {
 	m := snap.Meta()
 	layout := layouts[m.Kind]
-	base := snap.EntityID().Short()
-	if layout.slugged {
+	base := string(snap.EntityID())
+	if layout.Slugged {
 		if s := slug(m.Title); s != "" {
 			base += "-" + s
 		}
 	}
-	return base + layout.ext
+	return base + layout.Ext
 }
 
 // slug lowercases the title and joins its [a-z0-9]+ runs with dashes,
@@ -291,7 +291,7 @@ func ParsePath(path string) (Node, error) {
 // are matched by name before reaching this so their browse trees parse first.
 func kindForDir(name string) (model.Kind, bool) {
 	for kind, layout := range layouts {
-		if strings.TrimPrefix(layout.dir, "/") == name {
+		if strings.TrimPrefix(layout.Dir, "/") == name {
 			return kind, true
 		}
 	}
@@ -306,7 +306,7 @@ func parseFlat(full string, kind model.Kind, tail []string) (Node, error) {
 		return KindDir{Kind: kind}, nil
 	case 1:
 		shortID, ok := ShortIDOf(tail[0])
-		if !ok || !strings.HasSuffix(tail[0], layouts[kind].ext) {
+		if !ok || !strings.HasSuffix(tail[0], layouts[kind].Ext) {
 			return nil, errPath(full)
 		}
 		return EntityFile{Kind: kind, ShortID: shortID}, nil
@@ -454,4 +454,10 @@ func taskLinkID(name string) (string, bool) {
 
 func errPath(full string) error {
 	return fmt.Errorf("%w: %q", ErrPath, full)
+}
+
+// LayoutOf looks up the flat namespace rules for an entity kind.
+func LayoutOf(kind model.Kind) (Layout, bool) {
+	layout, ok := layouts[kind]
+	return layout, ok
 }

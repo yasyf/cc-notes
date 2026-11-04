@@ -6,12 +6,15 @@
 package gittest
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/yasyf/cc-notes/internal/managed"
 )
 
 // ScrubEnv clears every git environment knob that could leak host state into
@@ -63,6 +66,15 @@ func Dirs(t testing.TB, dir string) (gitDir, commonDir string) {
 	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
 }
 
+// InitializeEmpty installs managed state for a fixture known to contain no entity refs.
+func InitializeEmpty(t testing.TB, dir string) {
+	t.Helper()
+	_, common := Dirs(t, dir)
+	if err := managed.Initialize(context.Background(), common); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // InitRepo scrubs the git environment and creates a repository on branch
 // main with a local "Test User <test@example.com>" identity, returning its
 // directory.
@@ -73,6 +85,9 @@ func InitRepo(t testing.TB) string {
 	Git(t, dir, "init", "-q", "-b", "main")
 	Git(t, dir, "config", "user.name", "Test User")
 	Git(t, dir, "config", "user.email", "test@example.com")
+	if err := managed.Initialize(context.Background(), filepath.Join(dir, ".git")); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -108,6 +123,9 @@ func ShallowClone(t testing.TB, source string, depth int) string {
 	Git(t, filepath.Dir(dir), "clone", "-q", "--no-local", "--depth="+strconv.Itoa(depth), "--single-branch", "file://"+source, dir)
 	Git(t, dir, "config", "user.name", "Test User")
 	Git(t, dir, "config", "user.email", "test@example.com")
+	if err := managed.Initialize(context.Background(), filepath.Join(dir, ".git")); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -127,5 +145,8 @@ func InitBare(t testing.TB) string {
 	ScrubEnv(t)
 	dir := t.TempDir()
 	Git(t, dir, "init", "-q", "--bare")
+	if err := managed.Initialize(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }

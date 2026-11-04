@@ -73,6 +73,7 @@ func taskDedupeFreshCLIWork(t *testing.T) []map[string]int {
 			if err := os.WriteFile(filepath.Join(gitDir, "packed-refs"), []byte(strings.Join(packed, "\n")+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			mustBin(t, dir, actorA, "reindex")
 			cold := tracedTaskCreate(t, dir, "cold probe")
 			time.Sleep(2100 * time.Millisecond)
 			mustBin(t, dir, actorA, "task", "list", "--all", "--label", "target")
@@ -87,8 +88,8 @@ func taskDedupeFreshCLIWork(t *testing.T) []map[string]int {
 			if fullListOpens > count+515 || fullList["fsync"] > 8 || fullList["fdatasync"] > 8 || fullList["pwrite64"] > 64 {
 				t.Errorf("full task list added per-hit cache opens or writes: %v", fullList)
 			}
-			if cold["read"] <= count {
-				t.Fatalf("cold population did not account for %d fixture histories: %v", count, cold)
+			if cold["read"] > 512 || cold["openat"] > 512 {
+				t.Errorf("cold managed create read unrelated task bodies: %v", cold)
 			}
 		})
 	}

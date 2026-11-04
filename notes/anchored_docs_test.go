@@ -295,7 +295,7 @@ func anchoredDocAt(t *testing.T, c *Client, title string, at int64) model.Doc {
 		t.Fatal(err)
 	}
 	id := model.EntityID(tip)
-	if err := c.s.RecordsGit.UpdateRef(t.Context(), refs.For(model.KindDoc, id), tip, ""); err != nil {
+	if err := c.s.PublishRef(t.Context(), refs.For(model.KindDoc, id), tip, ""); err != nil {
 		t.Fatal(err)
 	}
 	doc, err := c.Doc(t.Context(), id)

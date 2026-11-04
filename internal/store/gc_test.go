@@ -386,6 +386,9 @@ func TestGCLocalPrunesOrphanedCacheEntry(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 	gittest.Git(t, s.Git.Dir, "update-ref", ref, string(note.Head), string(appended.Meta().Head))
+	if err := s.Reindex(ctx); err != nil {
+		t.Fatalf("Reindex after external rollback: %v", err)
+	}
 	if _, err := s.Load(ctx, ref); err != nil {
 		t.Fatalf("Load (populate): %v", err)
 	}

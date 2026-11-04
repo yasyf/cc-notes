@@ -1,8 +1,8 @@
-// Package fusefs owns the product projection between entities and their
+// Package sourceview owns the product projection between entities and their
 // catalog representations: notes render as markdown with YAML frontmatter,
 // tasks as the CLI's --json document pretty-printed. Render, parse, diff, and
 // the namespace model are plain Go with no native filesystem dependency.
-package fusefs
+package sourceview
 
 import (
 	"bytes"
@@ -1833,7 +1833,7 @@ func RenderInvestigation(inv model.Investigation) []byte {
 	}
 	for _, attachment := range inv.Attachments {
 		label := strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`).Replace(attachment.Name)
-		fmt.Fprintf(buf, "- [%s](../attachments/%s/%s)\n", label, inv.ID.Short(), url.PathEscape(attachment.Name))
+		fmt.Fprintf(buf, "- [%s](../attachments/%s/%s)\n", label, inv.ID, url.PathEscape(attachment.Name))
 	}
 
 	if !bytes.HasSuffix(buf.Bytes(), []byte("\n\n")) {

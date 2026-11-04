@@ -15,6 +15,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/fold"
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -55,28 +56,21 @@ func TestIndexedDuplicateAllKindsAndHeldIndex(t *testing.T) {
 			if got := mustDedupe(t, s, ops("same content")); got.EntityID() != first.EntityID() {
 				t.Fatal("cold cache changed the duplicate survivor")
 			}
-			q, err := queryMetadataIdentity(t.Context(), s, kind)
+			lock, err := managed.Lock(t.Context(), s.recordsCommonDir, true)
 			if err != nil {
 				t.Fatal(err)
 			}
-			db, err := bolt.Open(q.indexPath(), 0o600, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if err := db.Close(); err != nil {
-					t.Error(err)
-				}
-			}()
+			t.Cleanup(func() { _ = lock.Close() })
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, hit, err := indexedDuplicateList(ctx, s, kind, fingerprint, fold.Fold); err != nil || hit {
-				t.Fatalf("held index = hit %t, error %v", hit, err)
+			if _, hit, err := indexedDuplicateList(ctx, s, kind, fingerprint, fold.Fold); !errors.Is(err, context.DeadlineExceeded) || hit {
+				t.Fatalf("held authority = hit %t, error %v", hit, err)
 			}
-			got, err := s.Create(ctx, ops("same content"))
-			var duplicate *DuplicateError
-			if got != nil || !errors.As(err, &duplicate) || duplicate.Existing.EntityID() != first.EntityID() || ctx.Err() != nil {
-				t.Fatalf("held index lost authoritative survivor: got %v, error %v, context %v", got, err, ctx.Err())
+			if err := lock.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if got := mustDedupe(t, s, ops("same content")); got.EntityID() != first.EntityID() {
+				t.Fatal("authority serialization changed the duplicate survivor")
 			}
 		})
 	}
@@ -221,19 +215,12 @@ func TestQueryDuplicateSelectedWork(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(s.recordsCommonDir, "packed-refs"), []byte("# pack-refs with: peeled fully-peeled sorted \n"+strings.Join(packed, "\n")+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			q, err := queryMetadataIdentity(t.Context(), s, model.KindNote)
-			if err != nil {
+			if err := s.Reindex(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			fingerprint := duplicateFingerprint(selected)
 			if _, hit, err := indexedDuplicateList(t.Context(), s, model.KindNote, fingerprint, fold.Fold); err != nil || !hit {
 				t.Fatalf("prime = %t %v", hit, err)
-			}
-			if generation, _ := queryIndexGeneration(t, q); generation == "" {
-				if os.Getenv("CCN_REQUIRE_NATIVE_REF_COUNTER") == "1" {
-					t.Fatal("required native fingerprint generation is unavailable")
-				}
-				t.Skip("filesystem does not qualify recent native generations")
 			}
 			ctx := &queryWorkContext{Context: t.Context()}
 			got := mustDedupeWithContext(ctx, t, s, noteOps("fixture 0"))

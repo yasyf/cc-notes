@@ -16,6 +16,8 @@ cc-notes package install # macOS: install and activate the signed helper
 cc-notes init
 ```
 
+After upgrading CCN, run `cc-notes reindex` once in each existing store before ordinary CLI use; `cc-notes init` also imports existing Git records. Updated CLI writes stay current automatically, while writes from older binaries or direct Git ref changes require another `cc-notes reindex`. Your Git history remains unchanged.
+
 On macOS, `package install` verifies Homebrew's signed helper resource, atomically publishes it at `~/Applications/CCNotesHelper.app`, and activates its global FuseKit service. The native catalog is visible at `~/CCNotes`. `init` then provisions that repository through the already-installed service; it never installs or upgrades the helper. It also installs the `refs/cc-notes/*` refspecs and wires up whatever the repo is ready for: the Claude Code plugin and capt-hook pack when `.claude/` exists, the reconcile CI workflow when `.github/` does (`--no-ci` to skip). From then on `cc-notes status` is the board — here it is in a fresh session, everything on it served from hidden refs with zero files in the checkout:
 
 <img src="docs/assets/demo.png" alt="Terminal running 'cc-notes status' — a backlog of open tasks, an in-progress claim with a fresh lease, and note and doc counters, all served from git refs" width="700">

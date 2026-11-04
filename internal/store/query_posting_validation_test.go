@@ -8,8 +8,22 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/managed"
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
+
+func putQueryMetadataAuthority(tx *bolt.Tx, row queryMetadata) error {
+	root, err := tx.CreateBucketIfNotExists([]byte(managed.Format))
+	if err != nil {
+		return err
+	}
+	tips, err := root.CreateBucketIfNotExists([]byte("refs"))
+	if err != nil {
+		return err
+	}
+	return tips.Put([]byte(refs.For(row.Kind, row.ID)), []byte(row.Tip))
+}
 
 func TestQueryTaskRelationValidatesMatchingMetadata(t *testing.T) {
 	for _, tc := range []struct {
@@ -29,6 +43,9 @@ func TestQueryTaskRelationValidatesMatchingMetadata(t *testing.T) {
 			db := newQueryMetadataDB(t)
 			if err := db.Update(func(tx *bolt.Tx) error {
 				row := projectQueryMetadata("binding", "tip", model.Task{ID: "child", Parent: "parent", BlockedBy: []model.EntityID{"parent"}})
+				if err := putQueryMetadataAuthority(tx, row); err != nil {
+					return err
+				}
 				if err := replaceQueryMetadata(tx, row); err != nil {
 					return err
 				}

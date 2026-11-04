@@ -369,16 +369,16 @@ func TestAppendColdCacheSurfacesIncompleteHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteOpsCommit: %v", err)
 	}
-	if err := s.PublishRef(ctx, ref, stranded, note.Head); err != nil {
-		t.Fatalf("PublishRef: %v", err)
+	if err := s.PublishRef(ctx, ref, stranded, note.Head); !errors.Is(err, gitobj.ErrIncompleteChain) {
+		t.Fatalf("PublishRef = %v, want ErrIncompleteChain", err)
 	}
 	wipeCache(t, s)
 
-	if _, err := s.Append(ctx, ref, []model.Op{model.AddTag{Tag: "x"}}); !errors.Is(err, gitobj.ErrIncompleteChain) {
+	if _, err := s.PrepareAppendAt(ctx, ref, stranded, []model.Op{model.AddTag{Tag: "x"}}); !errors.Is(err, gitobj.ErrIncompleteChain) {
 		t.Fatalf("Append = %v, want ErrIncompleteChain", err)
 	}
-	if tip := refTip(t, s.Git.Dir, ref); tip != stranded {
-		t.Errorf("failed append moved %s to %s, want %s", ref, tip, stranded)
+	if tip := refTip(t, s.Git.Dir, ref); tip != note.Head {
+		t.Errorf("failed append moved %s to %s, want %s", ref, tip, note.Head)
 	}
 }
 
@@ -601,7 +601,13 @@ func TestAppendRefusesCachedForeignCheckpointKind(t *testing.T) {
 	decoy := create(t, s, noteOps("decoy")).(model.Note)
 	decoy.ID = task.ID
 	ref := refs.For(model.KindNote, task.ID)
-	checkpoint := publishCheckpoint(t, s, ref, task.Head, "", model.Checkpoint{EntityID: task.ID, State: decoy, CoversLamport: 1, CoversShas: []model.SHA{task.Head}})
+	checkpoint, err := s.Repo.WriteOpsCommit(ctx, []model.SHA{task.Head}, gitobj.Signature{Name: testName, Email: testEmail, When: time.Unix(1_700_000_002, 0)}, "cc-notes: compact", model.Pack{Lamport: 2, Ops: []model.Op{model.Checkpoint{EntityID: task.ID, State: decoy, CoversLamport: 1, CoversShas: []model.SHA{task.Head}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PublishRef(ctx, ref, checkpoint, ""); !errors.Is(err, fold.ErrKindMismatch) {
+		t.Fatalf("PublishRef = %v, want ErrKindMismatch", err)
+	}
 	chain, err := s.Repo.ReadChain(ctx, checkpoint)
 	if err != nil {
 		t.Fatalf("ReadChain: %v", err)
@@ -614,10 +620,10 @@ func TestAppendRefusesCachedForeignCheckpointKind(t *testing.T) {
 	if _, _, floor, ok := s.cache.getTop(checkpoint); !ok || floor != math.MaxUint64 {
 		t.Fatalf("cached floor for %s = %d (hit %v), want %d", checkpoint, floor, ok, uint64(math.MaxUint64))
 	}
-	if _, err := s.Append(ctx, ref, []model.Op{model.AddTag{Tag: "x"}}); !errors.Is(err, fold.ErrKindMismatch) {
+	if _, err := s.PrepareAppendAt(ctx, ref, checkpoint, []model.Op{model.AddTag{Tag: "x"}}); !errors.Is(err, fold.ErrKindMismatch) {
 		t.Fatalf("Append = %v, want Strict's ErrKindMismatch", err)
 	}
-	if tip := refTip(t, s.Git.Dir, ref); tip != checkpoint {
-		t.Errorf("refused append moved %s to %s, want %s", ref, tip, checkpoint)
+	if _, err := s.Repo.Tip(ctx, ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("refused append published %s: %v", ref, err)
 	}
 }

@@ -21,11 +21,7 @@ func TestResolveRangePreservesIDWidthsAndPinnedAuthority(t *testing.T) {
 	longRef := refs.For(model.KindNote, model.EntityID(long))
 	foreignRef := refs.Root(model.KindNote) + "abcdz"
 	nestedRef := refs.Root(model.KindNote) + "abcd/nested"
-	for ref, tip := range map[string]model.SHA{shortRef: a.Head, longRef: b.Head, foreignRef: a.Head, nestedRef: b.Head} {
-		if err := s.RecordsGit.UpdateRef(t.Context(), ref, tip, ""); err != nil {
-			t.Fatal(err)
-		}
-	}
+	s = s.Pinned(map[string]model.SHA{shortRef: a.Head, longRef: b.Head, foreignRef: a.Head, nestedRef: b.Head})
 	pinned := s.Pinned(map[string]model.SHA{shortRef: a.Head})
 	for _, tc := range []struct {
 		name   string

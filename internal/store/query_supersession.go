@@ -8,6 +8,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -54,9 +55,7 @@ func indexedMetadataQuery[T any](ctx context.Context, s *Store, kind model.Kind,
 	if err != nil {
 		return value, false, err
 	}
-	value, hit, err = readQueryMetadataIndex(ctx, source, func(tx *bolt.Tx) (T, error) {
-		return read(tx, source)
-	})
+	value, hit, err = readIndexedQuery(ctx, source, read)
 	if err != nil {
 		var empty T
 		return empty, false, err
@@ -66,7 +65,7 @@ func indexedMetadataQuery[T any](ctx context.Context, s *Store, kind model.Kind,
 
 func querySuperseders(ctx context.Context, tx *bolt.Tx, source queryMetadataSource, id model.EntityID) ([]model.EntityID, error) {
 	var incoming []model.EntityID
-	err := walkQueryMetadataSuperseders(tx, source.binding, source.kind, id, false, func(row queryMetadata) error {
+	err := source.walk(tx, queryMetadataSupersedersBucket, queryMetadataSupersedersPrefix(source.kind, id), false, func(row queryMetadata) bool { return row.Kind == source.kind && slices.Contains(row.SupersededBy, id) }, func(row queryMetadata) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -123,7 +122,10 @@ func supersessionMetadata(ctx context.Context, tx *bolt.Tx, source queryMetadata
 	if tip == "" {
 		return queryMetadata{}, false, nil
 	}
-	data := readQueryMetadata(tx, source.binding, id)
+	data, err := source.row(tx, id)
+	if err != nil {
+		return queryMetadata{}, false, err
+	}
 	row, err := decodeQueryMetadata(tx, source, data)
 	if err != nil {
 		return queryMetadata{}, false, err
@@ -170,6 +172,13 @@ func queryMetadataRowTip(tx *bolt.Tx, source queryMetadataSource, id model.Entit
 	}
 	if len(tip) < 2 || tip[0] > 1 {
 		return "", fmt.Errorf("invalid metadata tip summary for %s", id)
+	}
+	root, err := managedRoot(tx)
+	if err != nil {
+		return "", err
+	}
+	if string(root.Bucket([]byte("refs")).Get([]byte(refs.For(source.kind, id)))) != string(tip[1:]) {
+		return "", fmt.Errorf("metadata tip differs from managed %s %s", source.kind, id)
 	}
 	return model.SHA(tip[1:]), nil
 }

@@ -441,6 +441,7 @@ func TestTaskClaimSyncYield(t *testing.T) {
 	clone := func(name string) string {
 		dir := filepath.Join(root, name)
 		gittest.Git(t, root, "clone", "-q", bare, name)
+		gittest.InitializeEmpty(t, filepath.Join(root, name))
 		gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 		return dir
 	}
@@ -483,6 +484,7 @@ func TestTwoCloneStealConverges(t *testing.T) {
 	clone := func(name string) string {
 		dir := filepath.Join(root, name)
 		gittest.Git(t, root, "clone", "-q", bare, name)
+		gittest.InitializeEmpty(t, filepath.Join(root, name))
 		gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 		gittest.Git(t, dir, "config", "cc-notes.leaseTTL", "0s")
 		return dir

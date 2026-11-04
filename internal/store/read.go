@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	bolt "go.etcd.io/bbolt"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/yasyf/cc-notes/internal/fold"
@@ -34,7 +35,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if err := s.CheckRecords(); err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
-	tip, err := s.Repo.Tip(ctx, ref)
+	tip, err := s.managedTip(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
@@ -162,23 +163,33 @@ func (s *Store) foldLinear(ctx context.Context, head model.PackCommit) (model.Sn
 // LoadRootedAt folds the immutable chain ending at head and returns both its
 // snapshot and unique create commit. It never resolves a mutable ref.
 func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapshot, error) {
+	rooted, publication, err := s.loadRootedAt(ctx, head)
+	if err != nil {
+		return RootedSnapshot{}, err
+	}
+	if publication != nil {
+		s.cache.writeBatch([]cachePublication{*publication})
+	}
+	return rooted, nil
+}
+
+func (s *Store) loadRootedAt(ctx context.Context, head model.SHA) (RootedSnapshot, *cachePublication, error) {
 	if err := s.CheckRecords(); err != nil {
-		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+		return RootedSnapshot{}, nil, fmt.Errorf("load rooted at %s: %w", head, err)
 	}
 	chain, err := s.Repo.ReadChain(ctx, head)
 	if err != nil {
-		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+		return RootedSnapshot{}, nil, fmt.Errorf("load rooted at %s: %w", head, err)
 	}
 	snapshot, err := fold.Fold(chain)
 	if err != nil {
-		return RootedSnapshot{}, fmt.Errorf("load rooted at %s: %w", head, err)
+		return RootedSnapshot{}, nil, fmt.Errorf("load rooted at %s: %w", head, err)
 	}
 	root, err := uniqueRootCommit(chain)
 	if err != nil {
-		return RootedSnapshot{}, fmt.Errorf("root at %s: %w", head, err)
+		return RootedSnapshot{}, nil, fmt.Errorf("root at %s: %w", head, err)
 	}
-	s.cache.putChain(head, snapshot, chain)
-	return RootedSnapshot{Snapshot: snapshot, Root: root}, nil
+	return RootedSnapshot{Snapshot: snapshot, Root: root}, foldChainPublication(head, snapshot, chain), nil
 }
 
 // HasNotes reports whether the records repository holds any cc-notes entity:
@@ -188,11 +199,17 @@ func (s *Store) HasNotes(ctx context.Context) (bool, error) {
 	if err := s.CheckRecords(); err != nil {
 		return false, err
 	}
-	ref, err := s.RecordsGit.FirstRef(ctx, refs.Namespace)
-	if err != nil {
-		return false, err
-	}
-	return ref != "", nil
+	var present bool
+	err := s.managedView(ctx, func(tx *bolt.Tx) error {
+		root, err := managedRoot(tx)
+		if err != nil {
+			return err
+		}
+		key, _ := root.Bucket([]byte("refs")).Cursor().First()
+		present = key != nil
+		return nil
+	})
+	return present, err
 }
 
 // ListOpts are the inclusion knobs the List methods honor. A kind that does not
@@ -327,7 +344,7 @@ func (s *Store) HasSession(ctx context.Context, ref, sessionID string) (bool, er
 	if err := s.CheckRecords(); err != nil {
 		return false, err
 	}
-	tip, err := s.Repo.Tip(ctx, ref)
+	tip, err := s.managedTip(ctx, ref)
 	if err != nil {
 		return false, err
 	}
@@ -424,7 +441,7 @@ func (s *Store) PinnedKinds(ctx context.Context, kinds ...model.Kind) (*Store, e
 	for i, kind := range kinds {
 		roots[i] = refs.Root(kind)
 	}
-	tips, err := s.Repo.ListPrefixes(ctx, roots...)
+	tips, err := s.ManagedTips(ctx, roots...)
 	if err != nil {
 		return nil, err
 	}
@@ -439,13 +456,16 @@ func (s *Store) children(ctx context.Context, prefix string) ([]tipEntry, error)
 }
 
 func (s *Store) childrenInRange(ctx context.Context, namespace, selection string) ([]tipEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := s.CheckRecords(); err != nil {
 		return nil, err
 	}
 	tips := s.pins
 	if tips == nil {
 		var err error
-		if tips, err = s.Repo.ListPrefix(ctx, selection); err != nil {
+		if tips, err = s.ManagedTips(ctx, selection); err != nil {
 			return nil, err
 		}
 	}

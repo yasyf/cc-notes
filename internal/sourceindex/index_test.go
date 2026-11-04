@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,15 +18,58 @@ import (
 	"github.com/yasyf/cc-notes/internal/lfs"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/sourceindex"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
 
-func fixture(t *testing.T) (sourceindex.Index, *gitobj.Repo) {
+type managedTestGit struct {
+	source *store.Store
+	Dir    string
+}
+
+func (g managedTestGit) UpdateRef(ctx context.Context, ref string, newSHA, old model.SHA) error {
+	return g.source.PublishRef(ctx, ref, newSHA, old)
+}
+
+func (g managedTestGit) DeleteRef(ctx context.Context, ref string, old model.SHA) error {
+	return g.source.PublishRef(ctx, ref, "", old)
+}
+
+func (g managedTestGit) CommonDir(ctx context.Context) (string, error) {
+	return g.source.RecordsGit.CommonDir(ctx)
+}
+
+type fixtureIndex struct {
+	sourceindex.Index
+	Git managedTestGit
+}
+
+func fixture(t *testing.T) (*fixtureIndex, *gitobj.Repo) {
 	t.Helper()
 	dir := gittest.InitRepo(t)
-	repo := openRepo(t, dir)
-	git := gitcmd.Git{Dir: dir}
-	return sourceindex.Index{Repo: repo, Git: git, Publish: git.UpdateRefs}, repo
+	source, err := store.OpenContext(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	if err := source.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return &fixtureIndex{Index: sourceindex.Index{Backend: source}, Git: managedTestGit{source: source, Dir: dir}}, source.Repo
+}
+
+func reopenFixture(t *testing.T, index *fixtureIndex) {
+	t.Helper()
+	if err := index.Git.source.Close(); err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.OpenContext(t.Context(), index.Git.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	index.Git.source = source
+	index.Backend = source
 }
 
 func openRepo(t *testing.T, dir string) *gitobj.Repo {
@@ -61,49 +103,33 @@ func createCommit(t *testing.T, repo *gitobj.Repo, nonce string) model.SHA {
 	}}})
 }
 
-func TestRefTransactionsRouteThroughPublish(t *testing.T) {
+func TestManagedPublicationAdvancesSourceAtomically(t *testing.T) {
 	index, repo := fixture(t)
-	git := index.Git
-	var published [][]string
-	index.Publish = func(ctx context.Context, updates []gitcmd.RefUpdate) error {
-		names := make([]string, len(updates))
-		for i, update := range updates {
-			names[i] = update.Ref
-		}
-		published = append(published, names)
-		return git.UpdateRefs(ctx, updates)
+	before, err := index.Backend.SourceHead(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
 	root := createCommit(t, repo, "0123456789abcdef0123456789abcdef")
 	ref := refs.For(model.KindNote, model.EntityID(root))
-	if err := git.UpdateRef(t.Context(), ref, root, ""); err != nil {
-		t.Fatalf("create entity ref: %v", err)
+	if err := index.Git.UpdateRef(t.Context(), ref, root, ""); err != nil {
+		t.Fatal(err)
 	}
-	before, err := index.Refresh(t.Context())
+	after, err := index.Backend.SourceHead(t.Context())
 	if err != nil {
-		t.Fatalf("Refresh: %v", err)
+		t.Fatal(err)
 	}
-	revised := commit(t, repo, root, model.Pack{Lamport: 2, Ops: []model.Op{model.SetTitle{Title: "routed"}}})
-	operationID := strings.Repeat("7", 64)
-	requestDigest := sha256.Sum256([]byte("routed request"))
-	if _, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(root), requestDigest, []gitcmd.RefUpdate{{Ref: ref, New: revised, Old: root}}); err != nil {
-		t.Fatalf("CommitOperation: %v", err)
+	if after.Token == before.Token || after.EntityGeneration != before.EntityGeneration+1 {
+		t.Fatalf("source fence before=%+v after=%+v", before, after)
 	}
-	if _, err := index.SettleOperation(t.Context(), operationID, requestDigest, sha256.Sum256([]byte("routed receipt")), gitobj.SourceOperationAcknowledged); err != nil {
-		t.Fatalf("SettleOperation: %v", err)
-	}
-	operationRef := "refs/cc-notes-source-v1/operations/" + operationID
-	pinRef := "refs/heads/cc-notes-receipt-pins/" + operationID
-	want := [][]string{
-		{sourceindex.Ref},
-		{ref, sourceindex.Ref, operationRef, pinRef},
-		{operationRef, pinRef},
-	}
-	if !reflect.DeepEqual(published, want) {
-		t.Fatalf("published transactions = %v, want %v", published, want)
+	for name, want := range map[string]model.SHA{ref: root, sourceindex.Ref: after.Token, sourceindex.LiveRef: after.RetentionRoot} {
+		got, err := repo.Tip(t.Context(), name)
+		if err != nil || got != want {
+			t.Fatalf("%s=%s err=%v want %s", name, got, err, want)
+		}
 	}
 }
 
-func TestRefreshIsIdempotentAndSealsExternalChanges(t *testing.T) {
+func TestRefreshIsIdempotentAfterManagedPublication(t *testing.T) {
 	index, repo := fixture(t)
 	root := createCommit(t, repo, "0123456789abcdef0123456789abcdef")
 	ref := refs.For(model.KindNote, model.EntityID(root))
@@ -161,7 +187,7 @@ func TestCommitAtomicallyAdvancesEntityAndSourceRevision(t *testing.T) {
 	nextEntity := commit(t, repo, root, model.Pack{Lamport: 2, Session: "operation-1", Ops: []model.Op{model.SetTitle{Title: "changed"}}})
 	operationID := "1111111111111111111111111111111111111111111111111111111111111111"
 	requestDigest := sha256.Sum256([]byte("request-1"))
-	after, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(root), requestDigest, []gitcmd.RefUpdate{{Ref: ref, New: nextEntity, Old: root}})
+	after, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(root), requestDigest, []gitcmd.RefUpdate{{Ref: ref, New: nextEntity, Old: root}}, nil)
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -183,7 +209,7 @@ func TestCommitAtomicallyAdvancesEntityAndSourceRevision(t *testing.T) {
 		len(proof.Changes.Upserts) != 1 || proof.Changes.Upserts[0].Tip != nextEntity {
 		t.Fatalf("operation proof = %+v", proof)
 	}
-	if _, err := index.CommitOperation(t.Context(), after, operationID, "different", sha256.Sum256([]byte("different")), []gitcmd.RefUpdate{{Ref: ref, New: root, Old: nextEntity}}); !errors.Is(err, sourceindex.ErrOperationExists) {
+	if _, err := index.CommitOperation(t.Context(), after, operationID, "different", sha256.Sum256([]byte("different")), []gitcmd.RefUpdate{{Ref: ref, New: root, Old: nextEntity}}, nil); !errors.Is(err, sourceindex.ErrOperationExists) {
 		t.Fatalf("replayed CommitOperation = %v, want ErrOperationExists", err)
 	}
 }
@@ -208,7 +234,7 @@ func TestOperationProofRetainsAppliedViewUntilAcknowledge(t *testing.T) {
 	operationID := "5555555555555555555555555555555555555555555555555555555555555555"
 	requestDigest := sha256.Sum256([]byte("retained request"))
 	receiptDigest := sha256.Sum256([]byte("retained receipt"))
-	committed, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(first), requestDigest, []gitcmd.RefUpdate{{Ref: firstRef, New: revised, Old: first}})
+	committed, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(first), requestDigest, []gitcmd.RefUpdate{{Ref: firstRef, New: revised, Old: first}}, nil)
 	if err != nil {
 		t.Fatalf("CommitOperation: %v", err)
 	}
@@ -224,7 +250,7 @@ func TestOperationProofRetainsAppliedViewUntilAcknowledge(t *testing.T) {
 	gittest.Git(t, index.Git.Dir, "reflog", "expire", "--expire=now", "--all")
 	gittest.Git(t, index.Git.Dir, "gc", "--prune=now")
 	repo = openRepo(t, index.Git.Dir)
-	index.Repo = repo
+	reopenFixture(t, index)
 	operation, found, err := index.InspectOperation(t.Context(), operationID)
 	if err != nil || !found {
 		t.Fatalf("InspectOperation after restart = %+v found=%v err=%v", operation, found, err)
@@ -255,7 +281,7 @@ func TestOperationProofRetainsAppliedViewUntilAcknowledge(t *testing.T) {
 	gittest.Git(t, index.Git.Dir, "reflog", "expire", "--expire=now", "--all")
 	gittest.Git(t, index.Git.Dir, "gc", "--prune=now")
 	repo = openRepo(t, index.Git.Dir)
-	index.Repo = repo
+	reopenFixture(t, index)
 	if _, err := index.Snapshot(t.Context(), committed); err != nil {
 		t.Fatalf("acknowledged source manifest: %v", err)
 	}
@@ -284,13 +310,12 @@ func TestOperationProofRetainsAppliedViewUntilAcknowledge(t *testing.T) {
 	}
 	gittest.Git(t, index.Git.Dir, "reflog", "expire", "--expire=now", "--all")
 	gittest.Git(t, index.Git.Dir, "gc", "--prune=now")
-	repo = openRepo(t, index.Git.Dir)
-	index.Repo = repo
+	reopenFixture(t, index)
 	tombstone, found, err := index.InspectOperationState(t.Context(), operationID)
 	if err != nil || !found || tombstone.State != gitobj.SourceOperationForgotten || tombstone.RequestDigest != requestDigest || tombstone.ReceiptDigest != receiptDigest {
 		t.Fatalf("InspectOperationState tombstone = %+v found=%v err=%v", tombstone, found, err)
 	}
-	if _, err := index.CommitOperation(t.Context(), committed, operationID, "reused", requestDigest, []gitcmd.RefUpdate{{Ref: firstRef, New: revised}}); !errors.Is(err, sourceindex.ErrOperationExists) {
+	if _, err := index.CommitOperation(t.Context(), committed, operationID, "reused", requestDigest, []gitcmd.RefUpdate{{Ref: firstRef, New: revised}}, nil); !errors.Is(err, sourceindex.ErrOperationExists) {
 		t.Fatalf("CommitOperation reused ID = %v, want ErrOperationExists", err)
 	}
 }
@@ -327,7 +352,7 @@ func TestOperationProofPinsLFSUntilAcknowledge(t *testing.T) {
 	operationID := "6666666666666666666666666666666666666666666666666666666666666666"
 	requestDigest := sha256.Sum256([]byte("LFS request"))
 	receiptDigest := sha256.Sum256([]byte("LFS receipt"))
-	if _, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(root), requestDigest, []gitcmd.RefUpdate{{Ref: ref, New: revised, Old: attached}}); err != nil {
+	if _, err := index.CommitOperation(t.Context(), before, operationID, "entity:note:"+string(root), requestDigest, []gitcmd.RefUpdate{{Ref: ref, New: revised, Old: attached}}, nil); err != nil {
 		t.Fatalf("CommitOperation: %v", err)
 	}
 	if err := index.Git.DeleteRef(t.Context(), ref, revised); err != nil {
@@ -376,7 +401,7 @@ func TestCommitRejectsStaleSourceWithoutMovingEntity(t *testing.T) {
 		t.Fatalf("Refresh external: %v", err)
 	}
 	proposed := commit(t, repo, root, model.Pack{Lamport: 2, Ops: []model.Op{model.SetTitle{Title: "proposed"}}})
-	_, err = index.CommitOperation(t.Context(), stale, "2222222222222222222222222222222222222222222222222222222222222222", "", sha256.Sum256([]byte("stale")), []gitcmd.RefUpdate{{Ref: ref, New: proposed, Old: root}})
+	_, err = index.CommitOperation(t.Context(), stale, "2222222222222222222222222222222222222222222222222222222222222222", "", sha256.Sum256([]byte("stale")), []gitcmd.RefUpdate{{Ref: ref, New: proposed, Old: root}}, nil)
 	if !errors.Is(err, gitcmd.ErrCASMismatch) {
 		t.Fatalf("stale Commit = %v, want ErrCASMismatch", err)
 	}

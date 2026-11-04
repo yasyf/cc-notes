@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	bolt "go.etcd.io/bbolt"
 
@@ -43,7 +43,11 @@ func queryIndexGeneration(t *testing.T, q queryMetadataSource) (string, int) {
 	var generation string
 	var id int
 	if err := db.View(func(tx *bolt.Tx) error {
-		generation = string(queryMetadataBinding(tx, q.binding).Get(queryMetadataGenerationKey))
+		root, err := managedRoot(tx)
+		if err != nil {
+			return err
+		}
+		generation = strconv.FormatUint(root.Sequence(), 10)
 		id = tx.ID()
 		return nil
 	}); err != nil {
@@ -52,27 +56,8 @@ func queryIndexGeneration(t *testing.T, q queryMetadataSource) (string, int) {
 	return generation, id
 }
 
-func unqualifyQueryGeneration(t *testing.T, q queryMetadataSource) {
-	t.Helper()
-	db, err := bolt.Open(q.indexPath(), 0o600, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
-	if err := db.Update(func(tx *bolt.Tx) error {
-		return queryMetadataBinding(tx, q.binding).Delete(queryMetadataGenerationKey)
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func settleSupersession(t *testing.T, s *Store, id model.EntityID) queryMetadataSource {
 	t.Helper()
-	time.Sleep(2100 * time.Millisecond)
 	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, id); err != nil || !hit {
 		t.Fatalf("settled = %v %v", hit, err)
 	}
@@ -81,7 +66,7 @@ func settleSupersession(t *testing.T, s *Store, id model.EntityID) queryMetadata
 		t.Fatal(err)
 	}
 	if generation, _ := queryIndexGeneration(t, q); generation == "" {
-		t.Fatal("settled complete source did not publish generation")
+		t.Fatal("managed source has no logical generation")
 	}
 	return q
 }
@@ -149,74 +134,71 @@ func TestQueryGenerationRecentUpdatesAndPackRefs(t *testing.T) {
 	if _, heads, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || !slices.Equal(heads, []model.EntityID{b}) {
 		t.Fatalf("recent update = %v %v %v", heads, hit, err)
 	}
-	taken := time.Now()
-	current, err := s.Repo.RefGeneration(t.Context(), refs.Root(model.KindDoc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var want string
-	if current.SettledAt(taken) {
-		want = current.Key()
-	}
-	if generation, _ := queryIndexGeneration(t, q); generation != want {
-		t.Fatalf("recent source generation %q, want %q", generation, want)
-	}
-	settleSupersession(t, s, a)
-	updated, _ := queryIndexGeneration(t, q)
+	updated, transaction := queryIndexGeneration(t, q)
 	if updated == initial {
-		t.Fatalf("updated generation equals initial %q", initial)
+		t.Fatalf("managed update did not change logical generation %q", initial)
 	}
 	gittest.Git(t, s.Git.Dir, "pack-refs", "--all", "--prune")
 	if _, heads, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || !slices.Equal(heads, []model.EntityID{b}) {
 		t.Fatalf("packed = %v %v %v", heads, hit, err)
 	}
-	settleSupersession(t, s, a)
-	if packed, _ := queryIndexGeneration(t, q); packed == updated {
-		t.Fatalf("packed generation equals loose %q", updated)
+	if generation, after := queryIndexGeneration(t, q); generation != updated || after != transaction {
+		t.Fatalf("packing changed managed authority from %s/%d to %s/%d", updated, transaction, generation, after)
 	}
 }
 
-func TestQueryGenerationPromotionPreservesReadOnlyHit(t *testing.T) {
+func TestQueryGenerationPreservesReadOnlyHit(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, docOps("a")).EntityID()
 	b := create(t, s, docOps("b")).EntityID()
 	appendOps(t, s, refs.For(model.KindDoc, a), model.AddSupersededBy{ID: b})
-	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit {
-		t.Fatalf("prime = %v %v", hit, err)
-	}
-	q, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	unqualifyQueryGeneration(t, q)
-	if generation, _ := queryIndexGeneration(t, q); generation != "" {
-		t.Fatalf("recent source unexpectedly qualified %q", generation)
-	}
-	time.Sleep(2100 * time.Millisecond)
+	q := settleSupersession(t, s, a)
+	generation, transaction := queryIndexGeneration(t, q)
 	if err := os.Chmod(q.indexPath(), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(q.indexPath(), 0o600) })
 	if _, heads, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || !slices.Equal(heads, []model.EntityID{b}) {
-		t.Fatalf("readonly promotion = %v %v %v", heads, hit, err)
+		t.Fatalf("readonly managed query = %v %v %v", heads, hit, err)
+	}
+	if afterGeneration, afterTransaction := queryIndexGeneration(t, q); afterGeneration != generation || afterTransaction != transaction {
+		t.Fatalf("readonly query changed authority from %s/%d to %s/%d", generation, transaction, afterGeneration, afterTransaction)
 	}
 }
 
-func TestQueryGenerationRechecksAfterRead(t *testing.T) {
+func TestQueryGenerationRetainsOneViewWhileWriterWaits(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, docOps("a")).EntityID()
 	b := create(t, s, docOps("b")).EntityID()
 	settleSupersession(t, s, a)
+	entered, ready := make(chan struct{}), make(chan struct{})
+	written := make(chan error, 1)
+	go func() {
+		select {
+		case <-entered:
+		case <-t.Context().Done():
+			written <- t.Context().Err()
+			return
+		}
+		close(ready)
+		_, err := s.Append(t.Context(), refs.For(model.KindDoc, a), []model.Op{model.AddSupersededBy{ID: b}})
+		written <- err
+	}()
 	calls := 0
 	heads, hit, err := indexedMetadataQuery(t.Context(), s, model.KindDoc, func(tx *bolt.Tx, q queryMetadataSource) ([]model.EntityID, error) {
 		calls++
-		if calls == 1 {
-			appendOps(t, s, refs.For(model.KindDoc, a), model.AddSupersededBy{ID: b})
-		}
+		close(entered)
+		<-ready
 		return querySupersedeHeads(t.Context(), tx, q, a)
 	})
-	if err != nil || !hit || calls != 2 || !slices.Equal(heads, []model.EntityID{b}) {
-		t.Fatalf("concurrent update = %v %v %v calls=%d", heads, hit, err, calls)
+	if err != nil || !hit || calls != 1 || heads != nil {
+		t.Fatalf("captured read = %v %v %v calls=%d", heads, hit, err, calls)
+	}
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+	if _, heads, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || !slices.Equal(heads, []model.EntityID{b}) {
+		t.Fatalf("following read = %v %v %v", heads, hit, err)
 	}
 }
 
@@ -272,29 +254,25 @@ func TestSettledQueryGenerationRechecksRecordsAuthority(t *testing.T) {
 	}
 }
 
-func TestPartialQueryMetadataNeverPublishesGeneration(t *testing.T) {
+func TestPartialQueryMetadataPreservesManagedGeneration(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, answerOps("a")).(model.Answer)
-	tip, err := s.Repo.Tip(t.Context(), answerRef(a.ID))
-	if err != nil {
-		t.Fatal(err)
-	}
 	sig, _, err := s.signature(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	partial, err := s.Repo.WriteOpsCommit(t.Context(), []model.SHA{tip}, sig, "partial", model.Pack{Lamport: 2, Ops: []model.Op{model.SetStatus{Status: model.StatusDone}}})
+	partial, err := s.Repo.WriteOpsCommit(t.Context(), []model.SHA{a.Head}, sig, "partial", model.Pack{Lamport: 2, Ops: []model.Op{model.SetStatus{Status: model.StatusDone}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordsGit.UpdateRef(t.Context(), answerRef(a.ID), partial, tip); err != nil {
+	if err := s.PublishRef(t.Context(), answerRef(a.ID), partial, a.Head); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2100 * time.Millisecond)
 	q, err := queryMetadataIdentity(t.Context(), s, model.KindAnswer)
 	if err != nil {
 		t.Fatal(err)
 	}
+	generation, transaction := queryIndexGeneration(t, q)
 	for range 2 {
 		skipped, hit, err := readQueryMetadataIndex(t.Context(), q, func(tx *bolt.Tx) (int, error) {
 			var row queryMetadata
@@ -304,36 +282,31 @@ func TestPartialQueryMetadataNeverPublishesGeneration(t *testing.T) {
 		if err != nil || !hit || skipped != 1 {
 			t.Fatalf("partial = %d %v %v", skipped, hit, err)
 		}
-		if generation, _ := queryIndexGeneration(t, q); generation != "" {
-			t.Fatalf("partial source published generation %q", generation)
+		if afterGeneration, after := queryIndexGeneration(t, q); afterGeneration != generation || after != transaction {
+			t.Fatalf("partial query mutated managed authority from %s/%d to %s/%d", generation, transaction, afterGeneration, after)
 		}
 	}
 }
 
-func TestQueryGenerationPromotionTransactionFailurePreservesReadOnlyHit(t *testing.T) {
+func TestQueryGenerationReadFailurePreservesAuthority(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, docOps("a")).EntityID()
-	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit {
-		t.Fatalf("prime = %v %v", hit, err)
-	}
-	q, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	unqualifyQueryGeneration(t, q)
-	time.Sleep(2100 * time.Millisecond)
-	calls := 0
+	q := settleSupersession(t, s, a)
+	generation, transaction := queryIndexGeneration(t, q)
+	failed := errors.New("requested read failure")
 	value, hit, err := readQueryMetadataIndex(t.Context(), q, func(tx *bolt.Tx) ([]model.EntityID, error) {
-		calls++
 		if tx.Writable() {
-			return nil, errors.New("derived transaction failure")
+			t.Error("ordinary managed query opened a writable transaction")
 		}
-		return []model.EntityID{a}, nil
+		return []model.EntityID{a}, failed
 	})
-	if err != nil || !hit || !slices.Equal(value, []model.EntityID{a}) || calls != 2 {
-		t.Fatalf("failed promotion = %v %v %v calls=%d", value, hit, err, calls)
+	if !errors.Is(err, failed) || hit || value != nil {
+		t.Fatalf("failed read = %v %v %v", value, hit, err)
 	}
-	if generation, _ := queryIndexGeneration(t, q); generation != "" {
-		t.Fatalf("failed promotion committed generation %q", generation)
+	if afterGeneration, after := queryIndexGeneration(t, q); afterGeneration != generation || after != transaction {
+		t.Fatalf("failed read mutated authority from %s/%d to %s/%d", generation, transaction, afterGeneration, after)
+	}
+	if _, heads, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, a); err != nil || !hit || heads != nil {
+		t.Fatalf("read after failure = %v %v %v", heads, hit, err)
 	}
 }

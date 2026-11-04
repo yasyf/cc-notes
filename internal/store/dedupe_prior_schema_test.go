@@ -3,6 +3,7 @@ package store
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -56,6 +59,9 @@ func TestIndexedDuplicatePriorSchemaAndWriter(t *testing.T) {
 		if old.Metadata.Binding == q.binding || old.Metadata.Path == q.indexPath() || old.Metadata.Count != uint64(i+1) {
 			t.Fatalf("prior32 did not prime a separate complete metadata binding: %+v", old)
 		}
+		if _, err := s.managedTip(t.Context(), refs.For(model.KindDoc, old.ID)); !errors.Is(err, gitobj.ErrRefNotFound) {
+			t.Fatalf("old writer became managed without reindex: %v", err)
+		}
 		before, err := os.ReadFile(old.Metadata.Path)
 		if err != nil {
 			t.Fatal(err)
@@ -83,6 +89,9 @@ func TestIndexedDuplicatePriorSchemaAndWriter(t *testing.T) {
 				t.Fatal(err)
 			}
 		}()
+		if err := s.Reindex(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 		if got := mustDedupe(t, s, docOps(title)); got.EntityID() != old.ID {
 			t.Fatalf("prior32 duplicate survivor changed: got %s want %s", got.EntityID(), old.ID)
 		}
@@ -111,6 +120,12 @@ func TestIndexedDuplicatePriorSchemaAndWriter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}()
+	if _, err := s.Create(t.Context(), docOps("prior32 primed")); !errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("incomplete authority did not require reindex: %v", err)
+	}
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if got := mustDedupe(t, s, docOps("prior32 primed")); got.EntityID() != first {
 		t.Fatal("missing fingerprint bucket was treated as authoritative absence")
 	}

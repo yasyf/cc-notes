@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/sourceindex"
@@ -386,6 +387,27 @@ func TestPublishRefRechecksBinding(t *testing.T) {
 	}
 }
 
+func TestManagedPruneReportsBindingChangeAfterDeletion(t *testing.T) {
+	f := newSharedFixture(t)
+	s, err := Open(f.thin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	note := create(t, s, append(noteOps("prune binding race"), model.DeleteNote{}))
+	ref := refs.For(model.KindNote, note.EntityID())
+	shimGit(t, `*"update-ref --stdin"*`, "config", "--file", f.config(), bindingKey, bindingFor(t, f.sourceCommon).String())
+	var tally pruneTally
+	err = s.prune(t.Context(), "origin", ref, note.Meta().Head, &tally)
+	_ = assertBindingError(t, err, ErrBindingChanged, f.config(), "")
+	if !strings.Contains(err.Error(), ref) || tally.failed != 0 || tally.pruned != 0 {
+		t.Fatalf("post-deletion binding error=%v tally=%+v", err, tally)
+	}
+	if _, err := s.Repo.Tip(t.Context(), ref); !errors.Is(err, gitobj.ErrRefNotFound) {
+		t.Fatalf("published deletion tip=%v", err)
+	}
+}
+
 // TestSourceIndexPublishRechecksBinding pins S5(c) for the source index: a
 // binding published while an index transaction was being written fails the
 // commit visibly, naming every written ref, instead of leaving the records in
@@ -398,7 +420,10 @@ func TestSourceIndexPublishRechecksBinding(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	index := sourceindex.Index{Repo: s.Repo, Git: s.RecordsGit, Publish: s.PublishRefs}
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	index := sourceindex.Index{Backend: s}
 	head, err := index.Refresh(t.Context())
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
@@ -411,7 +436,7 @@ func TestSourceIndexPublishRechecksBinding(t *testing.T) {
 	shimGit(t, `*"update-ref --stdin"*`, "config", "--file", f.config(), bindingKey, other.String())
 
 	operationID := strings.Repeat("1", 64)
-	_, err = index.CommitOperation(t.Context(), head, operationID, "created", sha256.Sum256([]byte("request")), []gitcmd.RefUpdate{prepared.RefUpdate()})
+	_, err = index.CommitOperation(t.Context(), head, operationID, "created", sha256.Sum256([]byte("request")), []gitcmd.RefUpdate{prepared.RefUpdate()}, nil)
 	_ = assertBindingError(t, err, ErrBindingChanged, f.config(), f.sourceCommon)
 	for _, ref := range []string{prepared.Ref, sourceindex.Ref, "refs/cc-notes-source-v1/operations/" + operationID} {
 		if !strings.Contains(err.Error(), ref) {

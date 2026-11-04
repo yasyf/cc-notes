@@ -15,7 +15,7 @@ import (
 // A derived-cache miss leaves authoritative listing to the caller.
 func (s *Store) IndexedTasksBlocking(ctx context.Context, id model.EntityID) ([]model.EntityID, bool, error) {
 	return indexedMetadataQuery(ctx, s, model.KindTask, func(tx *bolt.Tx, source queryMetadataSource) ([]model.EntityID, error) {
-		return queryTaskRelationIDs(ctx, tx, source, id, walkQueryMetadataBlockedBy)
+		return queryTaskRelationIDsAt(ctx, tx, source, id, queryMetadataBlockedByBucket, func(row queryMetadata) bool { return slices.Contains(row.BlockedBy, id) })
 	})
 }
 
@@ -44,7 +44,7 @@ func queryTasksBlockingFor(ctx context.Context, tx *bolt.Tx, source queryMetadat
 		if _, found := blocks[id]; found {
 			continue
 		}
-		values, err := queryTaskRelationIDs(ctx, tx, source, id, walkQueryMetadataBlockedBy)
+		values, err := queryTaskRelationIDsAt(ctx, tx, source, id, queryMetadataBlockedByBucket, func(row queryMetadata) bool { return slices.Contains(row.BlockedBy, id) })
 		if err != nil {
 			return nil, err
 		}
@@ -57,7 +57,13 @@ func queryTasksBlockingFor(ctx context.Context, tx *bolt.Tx, source queryMetadat
 // A derived-cache miss leaves authoritative listing to the caller.
 func (s *Store) IndexedTaskChildren(ctx context.Context, id model.EntityID) ([]model.EntityID, bool, error) {
 	return indexedMetadataQuery(ctx, s, model.KindTask, func(tx *bolt.Tx, source queryMetadataSource) ([]model.EntityID, error) {
-		return queryTaskRelationIDs(ctx, tx, source, id, walkQueryMetadataTaskChildren)
+		return queryTaskRelationIDsAt(ctx, tx, source, id, queryMetadataParentsBucket, func(row queryMetadata) bool { return row.Parent == id })
+	})
+}
+
+func queryTaskRelationIDsAt(ctx context.Context, tx *bolt.Tx, source queryMetadataSource, id model.EntityID, index []byte, matches func(queryMetadata) bool) ([]model.EntityID, error) {
+	return queryTaskRelationIDs(ctx, tx, source, id, func(tx *bolt.Tx, _ string, _ model.EntityID, visit func(queryMetadata) error) error {
+		return source.walk(tx, index, queryMetadataSupersedersPrefix(model.KindTask, id), false, func(row queryMetadata) bool { return row.Kind == model.KindTask && matches(row) }, visit)
 	})
 }
 
@@ -90,7 +96,9 @@ func (s *Store) IndexedTaskRunbooks(ctx context.Context, id model.EntityID) (run
 	}()
 	entries, hit, err := indexedMetadataQuery(ctx, s, model.KindRunbook, func(tx *bolt.Tx, source queryMetadataSource) ([]tipEntry, error) {
 		var entries []tipEntry
-		err := walkQueryMetadataRunTasks(tx, source.binding, id, func(row queryMetadata) error {
+		err := source.walk(tx, queryMetadataRunTasksBucket, queryMetadataSupersedersPrefix(model.KindRunbook, id), false, func(row queryMetadata) bool {
+			return row.Kind == model.KindRunbook && slices.Contains(row.RunTasks, id)
+		}, func(row queryMetadata) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}

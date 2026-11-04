@@ -26,6 +26,7 @@ func driftRepoInit(t *testing.T, dir string) {
 	driftRepoGit(t, dir, "init", "-q", "-b", "main")
 	driftRepoGit(t, dir, "config", "user.name", "Test User")
 	driftRepoGit(t, dir, "config", "user.email", "test@example.com")
+	gittest.InitializeEmpty(t, dir)
 }
 
 // driftRepoGit runs git in dir, failing the test on error.

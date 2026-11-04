@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
-	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
@@ -277,7 +277,7 @@ func TestEditApplyParseErrorKeepsBuffer(t *testing.T) {
 	path := mustCheckout(t, dir, "doc", "edit", added.ID, "--checkout")
 	writeBuf(t, path, "not a valid doc file: no frontmatter delimiter\n")
 	_, _, err := runCLI(t, dir, "doc", "edit", added.ID, "--apply")
-	if !errors.Is(err, fusefs.ErrParse) {
+	if !errors.Is(err, sourceview.ErrParse) {
 		t.Fatalf("apply of garbage err = %v, want ErrParse", err)
 	}
 	if !bufExists(path) {
@@ -297,7 +297,7 @@ func TestEditApplyImmutableFieldKeepsBuffer(t *testing.T) {
 	// actor email is the immutable author field.
 	replaceInBuf(t, path, "a@example.com", "evil@example.com")
 	_, _, err := runCLI(t, dir, "doc", "edit", added.ID, "--apply")
-	if !errors.Is(err, fusefs.ErrImmutableField) {
+	if !errors.Is(err, sourceview.ErrImmutableField) {
 		t.Fatalf("apply with a changed immutable field err = %v, want ErrImmutableField", err)
 	}
 	if !bufExists(path) {

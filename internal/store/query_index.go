@@ -1,142 +1,34 @@
 package store
 
 import (
+	"bytes"
 	"context"
-	"errors"
-	"os"
-	"path/filepath"
-	"time"
+	"fmt"
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/yasyf/cc-notes/model"
+	"github.com/yasyf/cc-notes/internal/managed"
+	"github.com/yasyf/cc-notes/internal/refs"
 )
-
-const queryMetadataOpenTimeout = 5 * time.Second
-
-var queryMetadataGenerationKey = []byte("generation")
 
 const queryIndexSubdir = "cc-notes-query"
 
 func (q queryMetadataSource) indexPath() string {
-	return filepath.Join(q.store.recordsCommonDir, queryIndexSubdir, q.binding+".db")
+	return managed.Path(q.store.recordsCommonDir)
 }
 
 func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, read func(*bolt.Tx) (T, error)) (value T, hit bool, err error) {
-	return readQueryMetadataIndexWithTimeout(ctx, q, queryMetadataOpenTimeout, read)
-}
-
-func readQueryMetadataIndexWithoutWait[T any](ctx context.Context, q queryMetadataSource, read func(*bolt.Tx) (T, error)) (value T, hit bool, err error) {
-	return readQueryMetadataIndexWithTimeout(ctx, q, time.Nanosecond, read)
-}
-
-func readQueryMetadataIndexWithTimeout[T any](ctx context.Context, q queryMetadataSource, openTimeout time.Duration, read func(*bolt.Tx) (T, error)) (value T, hit bool, err error) {
-	if err := ctx.Err(); err != nil {
-		return value, false, err
-	}
-	if err := q.store.CheckRecords(); err != nil {
-		return value, false, err
-	}
-	defer func() {
-		if finalErr := q.store.CheckRecords(); finalErr != nil {
-			err = finalErr
-			hit = false
+	err = q.store.managedView(ctx, func(tx *bolt.Tx) error {
+		if err := validateQueryMetadataBinding(tx, q); err != nil {
+			return err
 		}
-		if finalErr := ctx.Err(); finalErr != nil {
-			err = finalErr
-			hit = false
-		}
-	}()
-	var authorityErr error
-	lazy := !q.pinned && q.tips == nil
-	if lazy {
-		q.generation, err = q.currentGeneration(ctx)
-		if err != nil {
-			return value, false, err
-		}
-	}
-	refresh := false
-	capture := func() error {
 		if q.tips != nil {
-			return nil
-		}
-		var err error
-		q, err = q.capture(ctx)
-		if err != nil {
-			authorityErr = err
-		}
-		return err
-	}
-	operation := func(tx *bolt.Tx) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := q.store.CheckRecords(); err != nil {
-			authorityErr = err
-			return err
-		}
-		binding := queryMetadataBinding(tx, q.binding)
-		if binding != nil && !queryMetadataBucketsComplete(binding) {
-			return errors.New("incomplete query metadata buckets")
-		}
-		generationHit := !q.pinned && q.tips == nil && q.generation != "" && binding != nil && string(binding.Get(queryMetadataGenerationKey)) == q.generation
-		if !tx.Writable() {
-			if binding == nil {
-				refresh = !q.pinned
-				return nil
-			}
-			if !generationHit {
-				if err := capture(); err != nil {
-					return err
-				}
-				diff, err := diffQueryMetadata(ctx, tx, q.binding, q.kind, q.tips)
-				if err != nil {
-					return err
-				}
-				if len(diff.Changed) != 0 || len(diff.Removed) != 0 {
-					refresh = !q.pinned
-					return nil
-				}
-				refresh = lazy && q.generation != "" && string(binding.Get(queryMetadataGenerationKey)) != q.generation
-			}
-		} else {
-			if err := capture(); err != nil {
-				return err
-			}
-			binding, err := ensureQueryMetadataBinding(tx, q.binding)
+			diff, err := diffQueryMetadata(ctx, tx, q.binding, q.kind, q.tips)
 			if err != nil {
 				return err
 			}
-			if err := binding.Delete(queryMetadataGenerationKey); err != nil {
-				return err
-			}
-			complete := true
-			batch := newFoldPublicationBatch(ctx, q.store.cache)
-			defer batch.discard()
-			if err := applyQueryMetadataDelta(ctx, tx, q.binding, q.kind, q.tips, func(ctx context.Context, id model.EntityID, tip model.SHA) (queryMetadata, error) {
-				row, publication, err := q.load(ctx, id, tip)
-				complete = complete && row.SkippedOps == 0
-				if err != nil {
-					authorityErr = err
-					return row, err
-				}
-				batch.add(publication)
-				return row, nil
-			}); err != nil {
-				return err
-			}
-			batch.flush()
-			if q.generation != "" && complete {
-				generation, err := q.currentGeneration(ctx)
-				if err != nil {
-					authorityErr = err
-					return err
-				}
-				if generation == q.generation {
-					if err := binding.Put(queryMetadataGenerationKey, []byte(generation)); err != nil {
-						return err
-					}
-				}
+			if len(diff.Changed) != 0 || len(diff.Removed) != 0 {
+				return nil
 			}
 		}
 		var err error
@@ -144,93 +36,37 @@ func readQueryMetadataIndexWithTimeout[T any](ctx context.Context, q queryMetada
 		if err != nil {
 			return err
 		}
-		if err := q.store.CheckRecords(); err != nil {
-			authorityErr = err
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if generationHit {
-			generation, err := q.currentGeneration(ctx)
-			if err != nil {
-				authorityErr = err
-				return err
-			}
-			if generation != q.generation {
-				q.generation = ""
-				refresh = true
-				return nil
-			}
-		}
 		hit = true
 		return nil
-	}
-	var cacheErr error
-	var cacheOpenErr error
-	access := func(readOnly bool) bool {
-		if err := ctx.Err(); err != nil {
-			cacheOpenErr = err
-			return false
-		}
-		timeout := openTimeout
-		if deadline, ok := ctx.Deadline(); ok {
-			timeout = min(timeout, time.Until(deadline))
-			if timeout <= 0 {
-				cacheOpenErr = context.DeadlineExceeded
-				return false
-			}
-		}
-		db, openErr := bolt.Open(q.indexPath(), 0o600, &bolt.Options{ReadOnly: readOnly, Timeout: timeout})
-		if openErr != nil {
-			cacheOpenErr = openErr
-			return false
-		}
-		if readOnly {
-			cacheErr = db.View(operation)
-		} else {
-			cacheErr = db.Update(operation)
-		}
-		if closeErr := db.Close(); cacheErr == nil {
-			cacheErr = closeErr
-		}
-		return true
-	}
-	available := access(true)
-	if authorityErr != nil {
-		return value, false, authorityErr
-	}
-	if available && cacheErr != nil {
-		return value, false, nil
-	}
-	if hit && refresh {
-		validated := value
-		defer func() {
-			if err == nil && !hit {
-				value, hit = validated, true
-			}
-		}()
-	}
-	if !q.pinned && ((!available && errors.Is(cacheOpenErr, os.ErrNotExist)) || refresh) {
-		if err := os.MkdirAll(filepath.Dir(q.indexPath()), 0o750); err != nil {
-			return value, hit, nil
-		}
-		if !access(false) {
-			return value, hit, nil
-		}
-	}
-
-	if authorityErr != nil {
-		return value, false, authorityErr
-	}
-	if cacheErr != nil {
-		return value, false, nil
+	})
+	if err != nil {
+		var empty T
+		return empty, false, err
 	}
 	return value, hit, nil
 }
 
+func validateQueryMetadataBinding(tx *bolt.Tx, q queryMetadataSource) error {
+	binding := queryMetadataBinding(tx, q.binding)
+	if binding != nil && queryMetadataBucketsComplete(binding) {
+		return nil
+	}
+	if binding == nil {
+		prefix := []byte(refs.Root(q.kind))
+		root, err := managedRoot(tx)
+		if err != nil {
+			return err
+		}
+		key, _ := root.Bucket([]byte("refs")).Cursor().Seek(prefix)
+		if !bytes.HasPrefix(key, prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: incomplete query metadata for %s", managed.ErrReindex, q.kind)
+}
+
 func queryMetadataBucketsComplete(binding *bolt.Bucket) bool {
-	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket} {
+	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataTipsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket} {
 		if binding.Bucket(name) == nil {
 			return false
 		}

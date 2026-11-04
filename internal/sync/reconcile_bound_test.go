@@ -1,12 +1,15 @@
 package sync_test
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
+	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -45,6 +48,12 @@ func TestReconcileBoundMovesRecordsByCheckoutAncestry(t *testing.T) {
 	gittest.Git(t, source, "remote", "add", "up", "https://example.com/x.git")
 	gittest.Git(t, source, "update-ref", "refs/cc-notes-sync/up/tasks/"+string(staged.ID), stagedTip)
 	gittest.Git(t, source, "update-ref", "-d", stagedRef)
+	if _, err := ccsync.Reconcile(t.Context(), s, "main", nil, false, false); !errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("Reconcile after external ref deletion = %v, want ErrReindex", err)
+	}
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatalf("Reindex after external ref deletion: %v", err)
+	}
 
 	report := reconcile(t, s, "main", nil, false, false)
 

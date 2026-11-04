@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -230,7 +231,7 @@ func TestLRUDirFoldAllPublishesTailAfterWait(t *testing.T) {
 	}
 }
 
-func TestLRUDirQueryRefreshPublishesUnselectedTail(t *testing.T) {
+func TestLRUDirExplicitReindexPublishesUnselectedTail(t *testing.T) {
 	s := initStore(t)
 	heads := make([]model.SHA, 0, 3)
 	for i := range 3 {
@@ -242,6 +243,13 @@ func TestLRUDirQueryRefreshPublishesUnselectedTail(t *testing.T) {
 		heads = append(heads, task.Head)
 	}
 	s = reopenColdPublicationStore(t, s)
+	ctx, work := gitobj.WithReadWork(t.Context())
+	if err := s.Reindex(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, decodes := work.Snapshot(); decodes > int64(len(heads)) {
+		t.Fatalf("bootstrap decoded %d packs for %d one-commit entities", decodes, len(heads))
+	}
 	tasks, hit, err := s.IndexedTasks(t.Context(), []string{"target"})
 	if err != nil || !hit || len(tasks) != 1 {
 		t.Fatalf("cold query = %d, %v, %v", len(tasks), hit, err)
@@ -250,6 +258,34 @@ func TestLRUDirQueryRefreshPublishesUnselectedTail(t *testing.T) {
 		if _, ok := s.cache.get(head); !ok {
 			t.Fatalf("query source tail was not published: %s", head)
 		}
+	}
+}
+
+func TestLRUDirManagedQueryPublishesSelectedTailOnly(t *testing.T) {
+	s := initStore(t)
+	heads := make([]model.SHA, 0, 3)
+	for i := range 3 {
+		label := "other"
+		if i == 0 {
+			label = "target"
+		}
+		task := create(t, s, []model.Op{model.CreateTask{Nonce: model.NewNonce(), Title: fmt.Sprintf("selected tail %d", i), Type: model.TypeTask, Labels: []string{label}}}).(model.Task)
+		heads = append(heads, task.Head)
+	}
+	s = reopenColdPublicationStore(t, s)
+	ctx, work := gitobj.WithReadWork(t.Context())
+	tasks, hit, err := s.IndexedTasks(ctx, []string{"target"})
+	if err != nil || !hit || len(tasks) != 1 || tasks[0].Head != heads[0] {
+		t.Fatalf("selected query=%v hit=%t: %v", tasks, hit, err)
+	}
+	for index, head := range heads {
+		_, cached := s.cache.get(head)
+		if cached != (index == 0) {
+			t.Fatalf("query head %s cached=%t selected=%t", head, cached, index == 0)
+		}
+	}
+	if listings, entries, decodes := work.Snapshot(); listings != 0 || entries != 0 || decodes > 1 {
+		t.Fatalf("selected query work listings=%d entries=%d decodes=%d", listings, entries, decodes)
 	}
 }
 

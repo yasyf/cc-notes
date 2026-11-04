@@ -1,14 +1,4 @@
-// Golden corpus: freezes the current rendered byte format of every entity kind
-// so the descriptor-driven render/parse/diff rewrite cannot silently change the
-// on-disk contract. Rendered file bytes are the contract — TestGoldenRender pins
-// them against committed fixtures, TestGoldenRoundTrip pins render->parse->diff
-// == no ops for every writable kind, and TestGoldenEdits pins the exact op
-// sequence a targeted byte edit produces. Regenerate the committed fixtures with
-//
-//	go test ./internal/fusefs -run Golden -update
-//
-// After this lands, any refactor that dirties testdata/golden is a format break.
-package fusefs_test
+package sourceview_test
 
 import (
 	"flag"
@@ -18,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yasyf/cc-notes/internal/fusefs"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -160,15 +150,15 @@ func TestNoteBodyWithoutTrailingNewline(t *testing.T) {
 		"updated: \"2025-12-12T02:54:56Z\"\n" +
 		"---\n" +
 		"---\nfirst\n---\nlast, no trailing newline"
-	got := fusefs.RenderNote(n)
+	got := sourceview.RenderNote(n)
 	if string(got) != want {
 		t.Errorf("RenderNote:\n got %q\nwant %q", got, want)
 	}
-	p, err := fusefs.ParseNote(got)
+	p, err := sourceview.ParseNote(got)
 	if err != nil {
 		t.Fatalf("ParseNote: %v", err)
 	}
-	ops, err := fusefs.DiffNote(n, p)
+	ops, err := sourceview.DiffNote(n, p)
 	if err != nil {
 		t.Fatalf("DiffNote: %v", err)
 	}
@@ -850,25 +840,25 @@ func answerCorpus() []corpusEntry {
 func renderSnapshot(snap model.Snapshot) []byte {
 	switch v := snap.(type) {
 	case model.Note:
-		return fusefs.RenderNote(v)
+		return sourceview.RenderNote(v)
 	case model.Doc:
-		return fusefs.RenderDoc(v)
+		return sourceview.RenderDoc(v)
 	case model.Log:
-		return fusefs.RenderLog(v)
+		return sourceview.RenderLog(v)
 	case model.Task:
-		return fusefs.RenderTask(v)
+		return sourceview.RenderTask(v)
 	case model.Sprint:
-		return fusefs.RenderSprint(v)
+		return sourceview.RenderSprint(v)
 	case model.Project:
-		return fusefs.RenderProject(v)
+		return sourceview.RenderProject(v)
 	case model.Runbook:
-		return fusefs.RenderRunbook(v)
+		return sourceview.RenderRunbook(v)
 	case model.Investigation:
-		return fusefs.RenderInvestigation(v)
+		return sourceview.RenderInvestigation(v)
 	case model.Plan:
-		return fusefs.RenderPlan(v)
+		return sourceview.RenderPlan(v)
 	case model.Answer:
-		return fusefs.RenderAnswer(v)
+		return sourceview.RenderAnswer(v)
 	}
 	panic("golden corpus: unknown snapshot kind")
 }
@@ -894,71 +884,71 @@ func diffSnapshot(t *testing.T, snap model.Snapshot, edited []byte) (ops []model
 	t.Helper()
 	switch v := snap.(type) {
 	case model.Note:
-		p, err := fusefs.ParseNote(edited)
+		p, err := sourceview.ParseNote(edited)
 		if err != nil {
 			t.Fatalf("ParseNote: %v", err)
 		}
-		ops, err = fusefs.DiffNote(v, p)
+		ops, err = sourceview.DiffNote(v, p)
 		if err != nil {
 			t.Fatalf("DiffNote: %v", err)
 		}
 		return ops, true
 	case model.Doc:
-		p, err := fusefs.ParseDoc(edited)
+		p, err := sourceview.ParseDoc(edited)
 		if err != nil {
 			t.Fatalf("ParseDoc: %v", err)
 		}
-		ops, err = fusefs.DiffDoc(v, p)
+		ops, err = sourceview.DiffDoc(v, p)
 		if err != nil {
 			t.Fatalf("DiffDoc: %v", err)
 		}
 		return ops, true
 	case model.Log:
-		p, err := fusefs.ParseLog(edited)
+		p, err := sourceview.ParseLog(edited)
 		if err != nil {
 			t.Fatalf("ParseLog: %v", err)
 		}
-		ops, err = fusefs.DiffLog(v, p)
+		ops, err = sourceview.DiffLog(v, p)
 		if err != nil {
 			t.Fatalf("DiffLog: %v", err)
 		}
 		return ops, true
 	case model.Task:
-		p, err := fusefs.ParseTask(edited)
+		p, err := sourceview.ParseTask(edited)
 		if err != nil {
 			t.Fatalf("ParseTask: %v", err)
 		}
-		ops, err = fusefs.DiffTask(v, p)
+		ops, err = sourceview.DiffTask(v, p)
 		if err != nil {
 			t.Fatalf("DiffTask: %v", err)
 		}
 		return ops, true
 	case model.Sprint:
-		p, err := fusefs.ParseSprint(edited)
+		p, err := sourceview.ParseSprint(edited)
 		if err != nil {
 			t.Fatalf("ParseSprint: %v", err)
 		}
-		ops, err = fusefs.DiffSprint(v, p)
+		ops, err = sourceview.DiffSprint(v, p)
 		if err != nil {
 			t.Fatalf("DiffSprint: %v", err)
 		}
 		return ops, true
 	case model.Project:
-		p, err := fusefs.ParseProject(edited)
+		p, err := sourceview.ParseProject(edited)
 		if err != nil {
 			t.Fatalf("ParseProject: %v", err)
 		}
-		ops, err = fusefs.DiffProject(v, p)
+		ops, err = sourceview.DiffProject(v, p)
 		if err != nil {
 			t.Fatalf("DiffProject: %v", err)
 		}
 		return ops, true
 	case model.Answer:
-		p, err := fusefs.ParseAnswer(edited)
+		p, err := sourceview.ParseAnswer(edited)
 		if err != nil {
 			t.Fatalf("ParseAnswer: %v", err)
 		}
-		ops, err = fusefs.DiffAnswer(v, p)
+		ops, err = sourceview.DiffAnswer(v, p)
 		if err != nil {
 			t.Fatalf("DiffAnswer: %v", err)
 		}

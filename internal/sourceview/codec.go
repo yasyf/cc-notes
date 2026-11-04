@@ -1,13 +1,13 @@
-package fusefs
+package sourceview
 
 import "github.com/yasyf/cc-notes/model"
 
-// entityCodec is the product-owned render/diff/create policy that translates
+// EntityCodec is the product-owned render/diff/create policy that translates
 // one Git entity to and from its authoritative catalog bytes.
-type entityCodec interface {
+type EntityCodec interface {
 	Kind() model.Kind
 	// ReadOnly reports whether the kind's flat files reject writes (runbooks,
-	// investigations, and plans).
+	// investigations, plans, and ledgers).
 	ReadOnly() bool
 	// Browsable reports whether the kind's directory also nests a browse tree
 	// under each entity's short id (sprints and projects).
@@ -17,8 +17,6 @@ type entityCodec interface {
 	New(data []byte) ([]model.Op, error)
 }
 
-// codec adapts a kind's typed render/parse/diff/create funcs to entityCodec:
-// S is the snapshot type, P the parsed document DTO.
 type codec[S model.Snapshot, P any] struct {
 	kind      model.Kind
 	readOnly  bool
@@ -52,7 +50,7 @@ func (c codec[S, P]) New(data []byte) ([]model.Op, error) {
 
 // codecs maps every entity kind to its codec. Read-only codecs wire only
 // render, so no mutation path reaches their parse/diff/create hooks.
-var codecs = map[model.Kind]entityCodec{
+var codecs = map[model.Kind]EntityCodec{
 	model.KindNote:          codec[model.Note, ParsedDoc]{kind: model.KindNote, render: RenderNote, parse: ParseNote, diff: DiffNote, create: NewNote},
 	model.KindDoc:           codec[model.Doc, ParsedDoc]{kind: model.KindDoc, render: RenderDoc, parse: ParseDoc, diff: DiffDoc, create: NewDoc},
 	model.KindLog:           codec[model.Log, ParsedLog]{kind: model.KindLog, render: RenderLog, parse: ParseLog, diff: DiffLog, create: NewLog},
@@ -66,8 +64,8 @@ var codecs = map[model.Kind]entityCodec{
 	model.KindLedger:        codec[model.Ledger, struct{}]{kind: model.KindLedger, readOnly: true, render: RenderLedger},
 }
 
-// codecOf returns the codec for kind, panicking on an unregistered kind.
-func codecOf(kind model.Kind) entityCodec {
+// CodecOf returns the codec for kind, panicking on an unregistered kind.
+func CodecOf(kind model.Kind) EntityCodec {
 	c, ok := codecs[kind]
 	if !ok {
 		panic("fusefs: no codec for kind " + string(kind))
@@ -78,4 +76,10 @@ func codecOf(kind model.Kind) entityCodec {
 // newTaskOps creates a task, seeding its branch from the parsed document.
 func newTaskOps(p ParsedTask) ([]model.Op, error) {
 	return NewTask(p, model.Branch(stringValue(p.Branch)))
+}
+
+// LookupCodec distinguishes unsupported input kinds from registered file policies.
+func LookupCodec(kind model.Kind) (EntityCodec, bool) {
+	c, ok := codecs[kind]
+	return c, ok
 }

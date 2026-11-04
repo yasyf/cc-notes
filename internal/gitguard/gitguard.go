@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -50,10 +52,59 @@ func Command(ctx context.Context, lease, stdout, stderr, status *os.File, env, a
 	}
 	//nolint:gosec // G204: re-executes this binary as the git guardian; argv is an internal git subcommand, not user-shell input.
 	cmd := exec.CommandContext(ctx, exe, append([]string{childArg, "--"}, argv...)...)
-	cmd.Env = env
+	cmd.Env = guardianEnvironment(env)
 	cmd.ExtraFiles = []*os.File{lease, stdout, stderr, status}
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	return cmd, nil
+}
+
+const parentRaceEnvironment = "CC_NOTES_GITGUARD_PARENT_GORACE"
+
+func withoutRaceEnvironment(env []string) []string {
+	return slices.DeleteFunc(slices.Clone(env), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return name == "GORACE" || name == parentRaceEnvironment
+	})
+}
+
+func guardianEnvironment(env []string) []string {
+	if env == nil {
+		env = os.Environ()
+	}
+	original := "0"
+	options := ""
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "GORACE="); ok {
+			original, options = "1"+value, value
+		}
+	}
+	return append(withoutRaceEnvironment(env), parentRaceEnvironment+"="+original, "GORACE="+options+" atexit_sleep_ms=0")
+}
+
+func gitEnvironment(env []string) []string {
+	for _, entry := range env {
+		if original, ok := strings.CutPrefix(entry, parentRaceEnvironment+"="); ok {
+			out := withoutRaceEnvironment(env)
+			if original[0] == '1' {
+				out = append(out, "GORACE="+original[1:])
+			}
+			return out
+		}
+	}
+	panic("git guardian missing parent race environment")
+}
+
+func joinDrains(drains []*pipeDrain) error {
+	var errs []error
+	for _, d := range drains {
+		if err := d.r.SetReadDeadline(time.Now()); err != nil {
+			errs = append(errs, err, d.r.Close())
+		}
+	}
+	for _, d := range drains {
+		errs = append(errs, <-d.done)
+	}
+	return errors.Join(errs...)
 }
 
 func serve(argv []string) int {
@@ -87,6 +138,8 @@ func serve(argv []string) int {
 	}
 	//nolint:gosec // G204: git is a fixed argv[0]; argv is the caller's internal git subcommand.
 	git := exec.CommandContext(ctx, "git", argv...)
+	git.Env = gitEnvironment(os.Environ())
+	git.Stdin = os.Stdin
 	git.Stdout, git.Stderr = outWrite, errWrite
 	if err := git.Start(); err != nil {
 		return fail(err)
@@ -96,20 +149,14 @@ func serve(argv []string) int {
 	}
 	var exited atomic.Bool
 	out, errOut := startDrain(outRead, &exited), startDrain(errRead, &exited)
-	if err := git.Wait(); git.ProcessState == nil {
-		return fail(err)
-	}
+	waitErr := git.Wait()
 	exited.Store(true)
 	drains := []*pipeDrain{out, errOut}
-	for _, d := range drains {
-		if err := d.r.SetReadDeadline(time.Now()); err != nil {
-			return fail(err)
-		}
+	if err := joinDrains(drains); err != nil {
+		return fail(err)
 	}
-	for _, d := range drains {
-		if err := <-d.done; err != nil {
-			return fail(err)
-		}
+	if git.ProcessState == nil {
+		return fail(waitErr)
 	}
 	for _, d := range drains {
 		if err := d.readQueued(); err != nil {

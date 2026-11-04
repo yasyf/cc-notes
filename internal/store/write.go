@@ -70,7 +70,7 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 	if err := s.track(ctx, ref, snapshot, nil); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
-	if err := s.PublishRef(ctx, ref, sha, ""); err != nil {
+	if err := s.publishSnapshot(ctx, ref, sha, "", snapshot); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	s.cache.putChain(sha, snapshot, []model.PackCommit{root})
@@ -116,7 +116,7 @@ func (s *Store) appendBuilt(ctx context.Context, ref string, build func(context.
 				return nil, fmt.Errorf("append to %s: %w", ref, err)
 			}
 		}
-		tip, err := s.Repo.Tip(ctx, ref)
+		tip, err := s.managedTip(ctx, ref)
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
@@ -153,7 +153,7 @@ func (s *Store) appendBuilt(ctx context.Context, ref string, build func(context.
 		if err := s.track(ctx, ref, snapshot, addedAttachments(ops)); err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
-		switch err := s.PublishRef(ctx, ref, sha, tip); {
+		switch err := s.publishSnapshot(ctx, ref, sha, tip, snapshot); {
 		case err == nil:
 			s.cache.put(sha, snapshot, max(top, pack.Lamport), floor, tip)
 			return snapshot, nil
@@ -185,7 +185,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 				return nil, fmt.Errorf("compact %s: %w", ref, err)
 			}
 		}
-		tip, err := s.Repo.Tip(ctx, ref)
+		tip, err := s.managedTip(ctx, ref)
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
@@ -221,7 +221,7 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 		if err != nil {
 			return nil, fmt.Errorf("compact %s: %w", ref, err)
 		}
-		switch err := s.PublishRef(ctx, ref, sha, tip); {
+		switch err := s.publishSnapshot(ctx, ref, sha, tip, snapshot); {
 		case err == nil:
 			s.cache.putChain(sha, snapshot, append(chain, commit), tip)
 			return snapshot, nil
@@ -274,7 +274,7 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	if err := s.PublishRef(ctx, ref, sha, ours); err != nil {
+	if err := s.publishSnapshot(ctx, ref, sha, ours, merged); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
 	s.cache.putChain(sha, merged, append(combined, merge), ours, theirs)

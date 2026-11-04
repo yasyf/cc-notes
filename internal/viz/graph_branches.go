@@ -64,7 +64,7 @@ func (b *Builder) enumerate(ctx context.Context, trunkName string) (map[string]*
 	}
 	states := make(map[string]*branchState, len(tips))
 	for _, rt := range tips {
-		if !strings.HasPrefix(rt.Ref, headsPrefix) {
+		if !strings.HasPrefix(rt.Ref, headsPrefix) || !isBranchRef(rt.Ref) {
 			continue
 		}
 		short := strings.TrimPrefix(rt.Ref, headsPrefix)

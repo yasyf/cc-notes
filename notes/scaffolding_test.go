@@ -169,15 +169,11 @@ func TestResolveEntityScopesGitRefQuery(t *testing.T) {
 		t.Fatalf("ResolveEntity = %s/%s, want note/%s", kind, id, note.ID)
 	}
 	data, err := os.ReadFile(trace)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("read git trace: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("git invocations = %d, want 1: %q", len(lines), data)
-	}
-	if !strings.Contains(lines[0], "\x1ffor-each-ref\x1f") || !strings.Contains(lines[0], "\x1frefs/cc-notes/\x1f") {
-		t.Fatalf("git invocation is not one scoped for-each-ref: %q", lines[0])
+	if len(data) != 0 {
+		t.Fatalf("managed resolution spawned Git: %q", data)
 	}
 }
 

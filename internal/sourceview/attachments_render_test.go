@@ -1,13 +1,13 @@
 // Attachment render invariant: rendered documents carry no attachments
 // frontmatter, so checked-out content cannot corrupt an attachment reference.
-package fusefs_test
+package sourceview_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
-	"github.com/yasyf/cc-notes/internal/fusefs"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -27,9 +27,9 @@ func TestRenderIgnoresAttachments(t *testing.T) {
 		name          string
 		bare, carried []byte
 	}{
-		{"note", fusefs.RenderNote(note), fusefs.RenderNote(withNote)},
-		{"doc", fusefs.RenderDoc(doc), fusefs.RenderDoc(withDoc)},
-		{"log", fusefs.RenderLog(log), fusefs.RenderLog(withLog)},
+		{"note", sourceview.RenderNote(note), sourceview.RenderNote(withNote)},
+		{"doc", sourceview.RenderDoc(doc), sourceview.RenderDoc(withDoc)},
+		{"log", sourceview.RenderLog(log), sourceview.RenderLog(withLog)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if !bytes.Equal(tc.bare, tc.carried) {

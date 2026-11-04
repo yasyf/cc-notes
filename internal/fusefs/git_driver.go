@@ -3,7 +3,6 @@
 package fusefs
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -27,6 +26,7 @@ import (
 	"github.com/yasyf/fusekit/sourcedriver"
 
 	"github.com/yasyf/cc-notes/internal/sourceindex"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -42,33 +42,15 @@ type GitDriver struct {
 	targetMu   sync.Mutex
 	targetSets map[sourcedriver.TargetSetID]*declaredTargetSet
 
-	cacheMu        sync.Mutex
-	snapshots      map[sourcedriver.RevisionToken]*cachedAuthoritySnapshot
-	snapshotOrder  []sourcedriver.RevisionToken
-	deltas         map[authorityDeltaKey]*cachedAuthorityDelta
-	deltaOrder     []authorityDeltaKey
-	snapshotBytes  int64
-	deltaBytes     int64
-	snapshotBuilds atomic.Uint64
+	snapshotRanges atomic.Uint64
+	contentOpens   atomic.Uint64
 	continuations  atomic.Uint64
 }
 
-const (
-	maxGitDriverSnapshotEntries = 4
-	maxGitDriverDeltaEntries    = 4
-	maxGitDriverSnapshotBytes   = 48 << 20
-	maxGitDriverDeltaBytes      = 16 << 20
-)
-
-type cachedAuthoritySnapshot struct {
-	objects []authorityObject
-	byID    map[string]authorityObject
-	weight  int64
-}
-
-type authorityDeltaKey struct {
-	from sourcedriver.RevisionToken
-	to   sourcedriver.RevisionToken
+type authoritySnapshotIndex struct {
+	count        int
+	rangeObjects func(uint64, int) ([]authorityObject, error)
+	rank         func(string) (uint64, bool, error)
 }
 
 type authorityDeltaValue struct {
@@ -76,9 +58,8 @@ type authorityDeltaValue struct {
 	object *authorityObject
 }
 
-type cachedAuthorityDelta struct {
+type authorityChanges struct {
 	values []authorityDeltaValue
-	weight int64
 }
 
 type pageBoundary struct {
@@ -118,8 +99,6 @@ func NewGitDriver(
 		authority: authority, authorityGeneration: authorityGeneration,
 		declarationDigest: declarationDigest, repoRoot: repoRoot,
 		targetSets: make(map[sourcedriver.TargetSetID]*declaredTargetSet),
-		snapshots:  make(map[sourcedriver.RevisionToken]*cachedAuthoritySnapshot),
-		deltas:     make(map[authorityDeltaKey]*cachedAuthorityDelta),
 	}, nil
 }
 
@@ -190,7 +169,7 @@ func (d *GitDriver) DeclareTargetSet(
 	return next, nil
 }
 
-// Refresh seals the current entity-ref manifest as one immutable revision.
+// Refresh reads the current managed immutable source revision.
 func (d *GitDriver) Refresh(ctx context.Context, authority causal.SourceAuthorityID) (sourcedriver.Head, error) {
 	source, index, err := d.open(ctx, authority)
 	if err != nil {
@@ -222,12 +201,12 @@ func (d *GitDriver) Snapshot(
 	if err != nil {
 		return sourcedriver.SnapshotPage{}, err
 	}
-	source, index, err := d.open(ctx, authority)
+	source, _, err := d.open(ctx, authority)
 	if err != nil {
 		return sourcedriver.SnapshotPage{}, err
 	}
 	defer func() { _ = source.Close() }()
-	snapshot, err := d.loadSnapshot(ctx, source, index, request.Revision)
+	snapshot, err := d.loadSnapshot(ctx, source, request.Revision)
 	if err != nil {
 		return sourcedriver.SnapshotPage{}, err
 	}
@@ -259,7 +238,7 @@ func (d *GitDriver) ChangesSince(
 	if err != nil {
 		return sourcedriver.ChangePage{}, err
 	}
-	source, index, err := d.open(ctx, authority)
+	source, _, err := d.open(ctx, authority)
 	if err != nil {
 		return sourcedriver.ChangePage{}, err
 	}
@@ -272,14 +251,11 @@ func (d *GitDriver) ChangesSince(
 	if err != nil {
 		return sourcedriver.ChangePage{}, err
 	}
-	if _, err := index.ChangesSince(ctx, from, to); err != nil {
+	delta, err := d.loadDelta(ctx, source, from, to)
+	if err != nil {
 		if errors.Is(err, sourceindex.ErrNotAncestor) {
 			return sourcedriver.ChangePage{}, &sourcedriver.SnapshotRequiredError{From: request.From, Head: request.To}
 		}
-		return sourcedriver.ChangePage{}, err
-	}
-	delta, err := d.loadDelta(ctx, source, index, request.From, request.To)
-	if err != nil {
 		return sourcedriver.ChangePage{}, err
 	}
 	start, err := d.changeStart(request, delta, tenants)
@@ -310,7 +286,7 @@ func (d *GitDriver) OpenContent(
 	if err != nil {
 		return nil, err
 	}
-	source, index, err := d.open(ctx, authority)
+	source, _, err := d.open(ctx, authority)
 	if err != nil {
 		return nil, err
 	}
@@ -318,23 +294,26 @@ func (d *GitDriver) OpenContent(
 	if ref.Tenant != tenant.ID || ref.Generation != causal.Generation(tenant.Generation) {
 		return nil, sourcedriver.ErrNotFound
 	}
-	snapshot, err := d.loadSnapshot(ctx, source, index, ref.Revision)
+	token, err := sourceSHA(ref.Revision)
 	if err != nil {
 		return nil, err
 	}
-	object, found := snapshot.byID[string(ref.Object)]
-	if !found || object.kind != catalog.KindFile || object.size != ref.Size || object.hash != ref.Hash {
-		return nil, sourcedriver.ErrNotFound
-	}
-	if object.attachment == "" {
-		return newVerifiedSource(io.NopCloser(bytes.NewReader(object.content)), ref.Size, ref.Hash), nil
-	}
-	lfs := source.LFS()
-	file, err := lfs.Open(object.attachment)
+	descriptor, reader, err := source.OpenSourceContent(ctx, token, string(ref.Object))
 	if err != nil {
-		return nil, fmt.Errorf("cc-notes source: open attachment %s: %w", object.attachment, err)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, sourcedriver.ErrNotFound
+		}
+		return nil, err
 	}
-	return newVerifiedSource(file, ref.Size, ref.Hash), nil
+	object, err := indexedAuthorityObject(descriptor)
+	if err != nil {
+		return nil, errors.Join(err, reader.Close())
+	}
+	if object.kind != catalog.KindFile || object.size != ref.Size || object.hash != ref.Hash {
+		return nil, errors.Join(sourcedriver.ErrNotFound, reader.Close())
+	}
+	d.contentOpens.Add(1)
+	return newVerifiedSource(reader, ref.Size, ref.Hash), nil
 }
 
 func (d *GitDriver) open(
@@ -348,7 +327,7 @@ func (d *GitDriver) open(
 	if err != nil {
 		return nil, sourceindex.Index{}, fmt.Errorf("cc-notes source: open repository: %w", err)
 	}
-	return source, sourceindex.Index{Repo: source.Repo, Git: source.RecordsGit, Publish: source.PublishRefs}, nil
+	return source, sourceindex.Index{Backend: source}, nil
 }
 
 func (d *GitDriver) requestTargets(
@@ -435,156 +414,89 @@ func (d *GitDriver) validateTargetSetRef(authority causal.SourceAuthorityID, ref
 func (d *GitDriver) loadSnapshot(
 	ctx context.Context,
 	source *store.Store,
-	index sourceindex.Index,
 	revision sourcedriver.RevisionToken,
-) (*cachedAuthoritySnapshot, error) {
-	if _, err := sourceSHA(revision); err != nil {
-		return nil, err
-	}
-	d.cacheMu.Lock()
-	if cached := d.snapshots[revision]; cached != nil {
-		d.cacheMu.Unlock()
-		return cached, nil
-	}
-	d.cacheMu.Unlock()
-
-	sha, _ := sourceSHA(revision)
-	manifest, err := index.Snapshot(ctx, sha)
+) (*authoritySnapshotIndex, error) {
+	token, err := sourceSHA(revision)
 	if err != nil {
 		return nil, err
 	}
-	d.snapshotBuilds.Add(1)
-	snapshot, err := BuildAuthoritySnapshotAt(ctx, source, manifest)
+	_, total, err := source.SourceObjectRange(ctx, token, 0, 0)
 	if err != nil {
 		return nil, err
 	}
-	objects := slices.Clone(snapshot.objects)
-	slices.SortFunc(objects, func(a, b authorityObject) int { return strings.Compare(a.key, b.key) })
-	byID := make(map[string]authorityObject, len(objects))
-	weight := int64(0)
-	for _, object := range objects {
-		byID[object.key] = object
-		weight = saturatingAdd(weight, authorityObjectWeight(object))
+	if total > uint64(^uint(0)>>1) {
+		return nil, fmt.Errorf("%w: projected source cardinality overflows", sourcedriver.ErrInvalidValue)
 	}
-	cached := &cachedAuthoritySnapshot{objects: objects, byID: byID, weight: weight}
-	return d.cacheSnapshot(revision, cached), nil
+	return &authoritySnapshotIndex{
+		count: int(total),
+		rangeObjects: func(start uint64, limit int) ([]authorityObject, error) {
+			values, count, err := source.SourceObjectRange(ctx, token, start, limit)
+			if err != nil {
+				return nil, err
+			}
+			if count != total || len(values) != limit {
+				return nil, fmt.Errorf("%w: indexed source range differs", sourcedriver.ErrIntegrity)
+			}
+			objects := make([]authorityObject, len(values))
+			for index, value := range values {
+				objects[index], err = indexedAuthorityObject(value)
+				if err != nil {
+					return nil, err
+				}
+			}
+			d.snapshotRanges.Add(1)
+			return objects, nil
+		},
+		rank: func(key string) (uint64, bool, error) {
+			rank, found, err := source.SourceObjectRank(ctx, token, key)
+			if err != nil {
+				return 0, false, err
+			}
+			if rank > total {
+				return 0, false, fmt.Errorf("%w: indexed source rank exceeds count", sourcedriver.ErrIntegrity)
+			}
+			return rank, found, nil
+		},
+	}, nil
 }
 
-func (d *GitDriver) loadDelta(
-	ctx context.Context,
-	source *store.Store,
-	index sourceindex.Index,
-	from, to sourcedriver.RevisionToken,
-) (*cachedAuthorityDelta, error) {
-	key := authorityDeltaKey{from: from, to: to}
-	d.cacheMu.Lock()
-	if cached := d.deltas[key]; cached != nil {
-		d.cacheMu.Unlock()
-		return cached, nil
-	}
-	d.cacheMu.Unlock()
-	before, err := d.loadSnapshot(ctx, source, index, from)
+func (d *GitDriver) loadDelta(ctx context.Context, source *store.Store, from, to model.SHA) (*authorityChanges, error) {
+	objects, deletes, err := source.SourceObjectChanges(ctx, from, to)
 	if err != nil {
 		return nil, err
 	}
-	after, err := d.loadSnapshot(ctx, source, index, to)
-	if err != nil {
-		return nil, err
+	values := make([]authorityDeltaValue, 0, len(objects)+len(deletes))
+	for _, descriptor := range objects {
+		object, err := indexedAuthorityObject(descriptor)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, authorityDeltaValue{id: sourcedriver.LogicalID(object.key), object: &object})
 	}
-	delta := diffCachedSnapshots(before, after)
-	values := make([]authorityDeltaValue, 0, delta.Len())
-	weight := int64(0)
-	for _, object := range delta.objects {
-		value := object
-		value.content = nil
-		values = append(values, authorityDeltaValue{id: sourcedriver.LogicalID(value.key), object: &value})
-		weight = saturatingAdd(weight, authorityObjectWeight(value))
-	}
-	for _, id := range delta.deletes {
-		values = append(values, authorityDeltaValue{id: id})
-		weight = saturatingAdd(weight, int64(len(id))+32)
+	for _, key := range deletes {
+		values = append(values, authorityDeltaValue{id: sourcedriver.LogicalID(key)})
 	}
 	slices.SortFunc(values, func(a, b authorityDeltaValue) int { return stringCompare(a.id, b.id) })
-	cached := &cachedAuthorityDelta{values: values, weight: weight}
-	return d.cacheDelta(key, cached), nil
+	return &authorityChanges{values: values}, nil
 }
 
-func diffCachedSnapshots(previous, next *cachedAuthoritySnapshot) AuthorityDelta {
-	result := AuthorityDelta{}
-	for _, object := range next.objects {
-		if old, found := previous.byID[object.key]; !found || !sameAuthorityObject(old, object) {
-			result.objects = append(result.objects, object)
-		}
+func indexedAuthorityObject(value sourceview.Object) (authorityObject, error) {
+	var kind catalog.Kind
+	switch value.Kind {
+	case sourceview.Directory:
+		kind = catalog.KindDirectory
+	case sourceview.File:
+		kind = catalog.KindFile
+	case sourceview.Symlink:
+		kind = catalog.KindSymlink
+	default:
+		return authorityObject{}, fmt.Errorf("%w: unknown indexed source kind %d", sourcedriver.ErrIntegrity, value.Kind)
 	}
-	for key := range previous.byID {
-		if _, found := next.byID[key]; !found {
-			result.deletes = append(result.deletes, sourcedriver.LogicalID(key))
-		}
-	}
-	return result
-}
-
-func (d *GitDriver) cacheSnapshot(
-	revision sourcedriver.RevisionToken,
-	candidate *cachedAuthoritySnapshot,
-) *cachedAuthoritySnapshot {
-	d.cacheMu.Lock()
-	defer d.cacheMu.Unlock()
-	if cached := d.snapshots[revision]; cached != nil {
-		return cached
-	}
-	if candidate.weight > maxGitDriverSnapshotBytes {
-		return candidate
-	}
-	for len(d.snapshotOrder) >= maxGitDriverSnapshotEntries ||
-		d.snapshotBytes+candidate.weight > maxGitDriverSnapshotBytes {
-		oldest := d.snapshotOrder[0]
-		d.snapshotOrder = d.snapshotOrder[1:]
-		d.snapshotBytes -= d.snapshots[oldest].weight
-		delete(d.snapshots, oldest)
-	}
-	d.snapshots[revision] = candidate
-	d.snapshotOrder = append(d.snapshotOrder, revision)
-	d.snapshotBytes += candidate.weight
-	return candidate
-}
-
-func (d *GitDriver) cacheDelta(key authorityDeltaKey, candidate *cachedAuthorityDelta) *cachedAuthorityDelta {
-	d.cacheMu.Lock()
-	defer d.cacheMu.Unlock()
-	if cached := d.deltas[key]; cached != nil {
-		return cached
-	}
-	if candidate.weight > maxGitDriverDeltaBytes {
-		return candidate
-	}
-	for len(d.deltaOrder) >= maxGitDriverDeltaEntries || d.deltaBytes+candidate.weight > maxGitDriverDeltaBytes {
-		oldest := d.deltaOrder[0]
-		d.deltaOrder = d.deltaOrder[1:]
-		d.deltaBytes -= d.deltas[oldest].weight
-		delete(d.deltas, oldest)
-	}
-	d.deltas[key] = candidate
-	d.deltaOrder = append(d.deltaOrder, key)
-	d.deltaBytes += candidate.weight
-	return candidate
-}
-
-func authorityObjectWeight(object authorityObject) int64 {
-	weight := int64(256)
-	for _, value := range []string{
-		object.key, object.parent, object.name, object.attachment, object.linkTarget,
-	} {
-		weight = saturatingAdd(weight, int64(len(value)))
-	}
-	return saturatingAdd(weight, int64(len(object.content)))
-}
-
-func saturatingAdd(left, right int64) int64 {
-	if right < 0 || left > maxGitDriverSnapshotBytes-right {
-		return maxGitDriverSnapshotBytes + 1
-	}
-	return left + right
+	return authorityObject{
+		key: value.Key, parent: value.Parent, name: value.Name, kind: kind,
+		mode: value.Mode, attachment: value.Attachment, size: value.Size,
+		hash: catalog.ContentHash(value.Hash), linkTarget: value.LinkTarget,
+	}, nil
 }
 
 func (o authorityObject) projection(tenant Tenant, revision sourcedriver.RevisionToken) sourcedriver.Projection {
@@ -628,7 +540,7 @@ func compareChange(a, b sourcedriver.Change) int {
 
 func snapshotPage(
 	request sourcedriver.SnapshotRequest,
-	snapshot *cachedAuthoritySnapshot,
+	snapshot *authoritySnapshotIndex,
 	tenants []Tenant,
 	start int,
 ) (sourcedriver.SnapshotPage, error) {
@@ -637,7 +549,7 @@ func snapshotPage(
 		return sourcedriver.SnapshotPage{}, err
 	}
 	page := sourcedriver.SnapshotPage{Revision: request.Revision, Objects: objects, Digest: digest}
-	total, err := tupleCount(len(snapshot.objects), len(tenants))
+	total, err := tupleCount(snapshot.count, len(tenants))
 	if err != nil {
 		return sourcedriver.SnapshotPage{}, err
 	}
@@ -659,7 +571,7 @@ func snapshotPage(
 
 func changePage(
 	request sourcedriver.ChangesRequest,
-	delta *cachedAuthorityDelta,
+	delta *authorityChanges,
 	tenants []Tenant,
 	start int,
 ) (sourcedriver.ChangePage, error) {
@@ -692,23 +604,23 @@ func changePage(
 
 func fitSnapshotPage(
 	revision sourcedriver.RevisionToken,
-	snapshot *cachedAuthoritySnapshot,
+	snapshot *authoritySnapshotIndex,
 	tenants []Tenant,
 	start, limit int,
 ) ([]sourcedriver.Projection, int, [sha256.Size]byte, error) {
-	total, err := tupleCount(len(snapshot.objects), len(tenants))
+	total, err := tupleCount(snapshot.count, len(tenants))
 	if err != nil {
 		return nil, 0, [sha256.Size]byte{}, err
 	}
 	end := min(start+limit, total)
+	objects, err := snapshotValues(snapshot, tenants, revision, start, end)
+	if err != nil {
+		return nil, 0, [sha256.Size]byte{}, err
+	}
 	for end > start {
-		objects, err := snapshotValues(snapshot, tenants, revision, start, end)
-		if err != nil {
-			return nil, 0, [sha256.Size]byte{}, err
-		}
-		digest, digestErr := sourcedriver.SnapshotPageDigest(revision, objects)
+		digest, digestErr := sourcedriver.SnapshotPageDigest(revision, objects[:end-start])
 		if digestErr == nil {
-			return objects, end, digest, nil
+			return objects[:end-start], end, digest, nil
 		}
 		end--
 	}
@@ -721,7 +633,7 @@ func fitSnapshotPage(
 
 func fitChangePage(
 	from, to sourcedriver.RevisionToken,
-	delta *cachedAuthorityDelta,
+	delta *authorityChanges,
 	tenants []Tenant,
 	start, limit int,
 ) ([]sourcedriver.Change, int, [sha256.Size]byte, error) {
@@ -749,18 +661,42 @@ func fitChangePage(
 }
 
 func snapshotValues(
-	snapshot *cachedAuthoritySnapshot,
+	snapshot *authoritySnapshotIndex,
 	tenants []Tenant,
 	revision sourcedriver.RevisionToken,
 	start, end int,
 ) ([]sourcedriver.Projection, error) {
-	if start < 0 || end < start || len(snapshot.objects) == 0 && end != 0 {
+	if start < 0 || end < start || snapshot.count == 0 && end != 0 {
 		return nil, fmt.Errorf("%w: snapshot page range is invalid", sourcedriver.ErrInvalidValue)
 	}
 	result := make([]sourcedriver.Projection, 0, end-start)
-	for index := start; index < end; index++ {
-		tenant := tenants[index/len(snapshot.objects)]
-		object := snapshot.objects[index%len(snapshot.objects)]
+	if start == end {
+		return result, nil
+	}
+	base := start % snapshot.count
+	rangeStart, rangeLimit := base, min(end-start, snapshot.count-base)
+	repeated := end-start >= snapshot.count
+	if repeated {
+		rangeStart, rangeLimit = 0, snapshot.count
+	}
+	objects, err := snapshot.rangeObjects(uint64(rangeStart), rangeLimit)
+	if err != nil {
+		return nil, err
+	}
+	if !repeated && rangeLimit < end-start {
+		remaining, err := snapshot.rangeObjects(0, end-start-rangeLimit)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, remaining...)
+	}
+	for position := start; position < end; position++ {
+		tenant := tenants[position/snapshot.count]
+		index := position - start
+		if repeated {
+			index = position % snapshot.count
+		}
+		object := objects[index]
 		projection := object.projection(tenant, revision)
 		if err := sourcedriver.ValidateProjection(projection); err != nil {
 			return nil, fmt.Errorf("cc-notes source: projection %s: %w", object.key, err)
@@ -771,7 +707,7 @@ func snapshotValues(
 }
 
 func changeValues(
-	delta *cachedAuthorityDelta,
+	delta *authorityChanges,
 	tenants []Tenant,
 	revision sourcedriver.RevisionToken,
 	start, end int,
@@ -816,19 +752,28 @@ func tupleCount(values, tenants int) (int, error) {
 
 func (d *GitDriver) projectionStart(
 	request sourcedriver.SnapshotRequest,
-	snapshot *cachedAuthoritySnapshot,
+	snapshot *authoritySnapshotIndex,
 	tenants []Tenant,
 ) (int, error) {
 	if request.Cursor == nil {
 		return 0, nil
 	}
-	total, err := tupleCount(len(snapshot.objects), len(tenants))
+	total, err := tupleCount(snapshot.count, len(tenants))
 	if err != nil {
 		return 0, err
 	}
 	boundary, err := cursorBoundary(request.Cursor, total, request.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("cc-notes source: snapshot cursor: %w", err)
+	}
+	tenantIndex := (boundary.end - 1) / snapshot.count
+	tenant := tenants[tenantIndex]
+	rank, found, err := snapshot.rank(string(request.Cursor.After))
+	if err != nil {
+		return 0, err
+	}
+	if !found || tenant.ID != request.Cursor.AfterTenant || causal.Generation(tenant.Generation) != request.Cursor.AfterGeneration || rank != uint64((boundary.end-1)%snapshot.count) {
+		return 0, errors.New("cc-notes source: snapshot cursor does not match indexed position")
 	}
 	objects, end, digest, err := fitSnapshotPage(
 		request.Revision, snapshot, tenants, boundary.start, request.Limit,
@@ -858,7 +803,7 @@ func (d *GitDriver) projectionStart(
 
 func (d *GitDriver) changeStart(
 	request sourcedriver.ChangesRequest,
-	delta *cachedAuthorityDelta,
+	delta *authorityChanges,
 	tenants []Tenant,
 ) (int, error) {
 	if request.Cursor == nil {

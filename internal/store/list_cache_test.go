@@ -72,7 +72,7 @@ func removeRef(t *testing.T, s *Store, ref string) {
 	if err != nil {
 		t.Fatalf("Refs: %v", err)
 	}
-	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: tips[ref]}}); err != nil {
+	if err := s.PublishRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: tips[ref]}}); err != nil {
 		t.Fatalf("delete %s: %v", ref, err)
 	}
 }
@@ -209,7 +209,7 @@ func TestCachedListNeverStoresPartialFolds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteOpsCommit: %v", err)
 	}
-	if err := s.RecordsGit.UpdateRef(ctx, ref, sha, tip); err != nil {
+	if err := s.PublishRef(ctx, ref, sha, tip); err != nil {
 		t.Fatalf("UpdateRef: %v", err)
 	}
 

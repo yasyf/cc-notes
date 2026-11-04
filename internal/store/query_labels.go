@@ -97,9 +97,11 @@ func indexedFilteredList[T model.Snapshot](ctx context.Context, s *Store, kind m
 		}
 		var err error
 		if len(labels) > 0 {
-			err = walkQueryMetadataLabel(tx, source.binding, source.kind, labels[0], opts.IncludeDeleted, visit)
+			err = source.walk(tx, queryMetadataLabelsBucket, queryMetadataLabelPrefix(source.kind, labels[0]), opts.IncludeDeleted, func(row queryMetadata) bool { return row.Kind == source.kind && slices.Contains(row.Labels, labels[0]) }, visit)
 		} else {
-			err = walkQueryMetadataAnchor(tx, source.binding, source.kind, anchors[0], opts.IncludeDeleted, visit)
+			err = source.walk(tx, queryMetadataAnchorsBucket, queryMetadataAnchorPrefix(source.kind, anchors[0]), opts.IncludeDeleted, func(row queryMetadata) bool {
+				return row.Kind == source.kind && slices.Contains(row.Anchors, anchors[0])
+			}, visit)
 		}
 		return entries, err
 	})

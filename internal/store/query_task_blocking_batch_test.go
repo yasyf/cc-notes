@@ -14,9 +14,11 @@ func TestQueryTaskBlockingBatchWork(t *testing.T) {
 	for _, count := range []int{32, 10000} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			db := newQueryMetadataDB(t)
+			source := queryMetadataSource{binding: "binding", kind: model.KindTask, tips: make(map[model.EntityID]model.SHA, count+4)}
 			if err := db.Update(func(tx *bolt.Tx) error {
 				for i := range count {
 					task := model.Task{ID: model.EntityID(fmt.Sprintf("other-%05d", i)), Labels: []string{"other"}}
+					source.tips[task.ID] = "tip"
 					if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", task)); err != nil {
 						return err
 					}
@@ -27,6 +29,7 @@ func TestQueryTaskBlockingBatchWork(t *testing.T) {
 					{ID: "b-other", BlockedBy: []model.EntityID{"second"}},
 					{ID: "deleted", Deleted: true, BlockedBy: []model.EntityID{"target"}},
 				} {
+					source.tips[task.ID] = "tip"
 					if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", task)); err != nil {
 						return err
 					}
@@ -37,7 +40,7 @@ func TestQueryTaskBlockingBatchWork(t *testing.T) {
 			}
 			ctx := &queryCardinalityWorkContext{Context: t.Context()}
 			if err := db.View(func(tx *bolt.Tx) error {
-				got, err := queryTasksBlockingFor(ctx, tx, queryMetadataSource{binding: "binding", kind: model.KindTask}, []model.EntityID{"target", "second", "target", "unknown"})
+				got, err := queryTasksBlockingFor(ctx, tx, source, []model.EntityID{"target", "second", "target", "unknown"})
 				want := map[model.EntityID][]model.EntityID{"target": {"a-cancelled", "z-done"}, "second": {"b-other"}, "unknown": nil}
 				if err == nil && !reflect.DeepEqual(got, want) {
 					t.Fatalf("selected blocking map = %#v, want %#v", got, want)

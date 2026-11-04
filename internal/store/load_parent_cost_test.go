@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,8 +13,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/fold"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/homeguard"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -96,11 +99,23 @@ func TestLoadParentFreshProcessCost(t *testing.T) {
 				ref := refs.For(model.KindLedger, base.ID)
 				parent := base.Head
 				for i := 1; i < count; i++ {
-					snapshot, err := s.Append(t.Context(), ref, []model.Op{model.UpsertRow{Key: "only-row", Fields: map[string]string{"state": strconv.Itoa(i % 2)}}})
+					signature := gitobj.Signature{Name: "Fixture", Email: "fixture@example.com", When: time.Unix(1_700_000_000+int64(i), 0).UTC()}
+					next, err := s.Repo.WriteOpsCommit(t.Context(), []model.SHA{parent}, signature, "fixed-state history", model.Pack{Lamport: model.Lamport(i + 1), Ops: []model.Op{model.UpsertRow{Key: "only-row", Fields: map[string]string{"state": strconv.Itoa(i % 2)}}}})
 					if err != nil {
 						t.Fatal(err)
 					}
-					parent = snapshot.Meta().Head
+					parent = next
+				}
+				if err := s.RecordsGit.UpdateRef(t.Context(), ref, parent, base.Head); err != nil {
+					t.Fatal(err)
+				}
+				if importer, ok := any(s).(interface{ Reindex(context.Context) error }); ok {
+					if err := importer.Reindex(t.Context()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := s.LoadAt(t.Context(), parent); err != nil {
+					t.Fatal(err)
 				}
 				prepared, err := s.PrepareAppendAt(t.Context(), ref, parent, []model.Op{model.UpsertRow{Key: "only-row", Fields: map[string]string{"state": "final"}}})
 				if err != nil {

@@ -165,7 +165,8 @@ jobs:
           baseline="$RUNNER_TEMP/ccn-query-executable-negative"
           git fetch --no-tags --depth=1 origin f7a3371d7d2318a591cc38a8b39df79c92e6f910
           git worktree add --detach "$baseline" f7a3371d7d2318a591cc38a8b39df79c92e6f910
-          cp internal/store/query_identity_test.go "$baseline/internal/store/"
+          git fetch --no-tags --depth=1 origin 829c70ebde41858cf3e55347c94fcee7e4e9e54c
+          git show 829c70ebde41858cf3e55347c94fcee7e4e9e54c:internal/store/query_identity_test.go > "$baseline/internal/store/query_identity_test.go"
           set +e
           (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestQueryMetadataExecutableIndependentReuse$' ./internal/store) > "$RUNNER_TEMP/ccn-query-executable-negative.log" 2>&1
           result=$?
@@ -241,6 +242,9 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Guardian protocol, delayed drains, and active race detection
+        run: ./scripts/test.sh -race -count=1 -v ./internal/gitguard
+
       - name: Test (race, via the process-cap harness)
         run: ./scripts/test.sh -race -count=1 ./...
 
@@ -268,6 +272,8 @@ jobs:
       # file is invisible to the ubuntu test job.
       - name: Home-discipline contract over the darwin file set
         run: ./scripts/test.sh -race -count=1 ./internal/homeguard
+      - name: Guardian protocol, delayed drains, and active race detection
+        run: ./scripts/test.sh -race -count=1 -v ./internal/gitguard
       - name: Native reference generations and rapid query authority
         env:
           CCN_REQUIRE_NATIVE_REF_COUNTER: "1"

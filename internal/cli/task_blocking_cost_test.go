@@ -76,6 +76,7 @@ func TestTaskBlockingFreshCLICost(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(gitDir, "packed-refs"), []byte(strings.Join(packed, "\n")+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			mustBin(t, dir, actorA, "reindex")
 			mustBin(t, dir, actorA, "task", "list", "--backlog", "--label", "target")
 			time.Sleep(2100 * time.Millisecond)
 			mustBin(t, dir, actorA, "task", "list", "--backlog", "--label", "target")

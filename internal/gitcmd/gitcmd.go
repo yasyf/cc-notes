@@ -84,6 +84,11 @@ func (g Git) Holding(f *os.File) Held {
 	return Held{git: g}
 }
 
+// UpdateRefs retains the authority lease until the exact ref transaction exits.
+func (h Held) UpdateRefs(ctx context.Context, updates []RefUpdate) error {
+	return h.git.UpdateRefs(ctx, updates)
+}
+
 // Fetch is Git.Fetch holding the lease.
 func (h Held) Fetch(ctx context.Context, remote string, refspecs ...string) error {
 	return h.git.Fetch(ctx, remote, refspecs...)
@@ -225,7 +230,7 @@ func (g Git) transfer(ctx context.Context, stdin string, args ...string) (string
 
 func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
 	if g.held != nil {
-		return g.runHeld(ctx, env, args...)
+		return g.runHeld(ctx, env, stdin, args...)
 	}
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
 	cmd := exec.CommandContext(ctx, "git", g.argv(args...)...)
@@ -241,7 +246,7 @@ func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...str
 	return stdout.String(), nil
 }
 
-func (g Git) runHeld(ctx context.Context, env []string, args ...string) (string, error) {
+func (g Git) runHeld(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
 	captures := make([]*os.File, 0, 3)
 	defer func() {
 		for _, f := range captures {
@@ -262,6 +267,9 @@ func (g Git) runHeld(ctx context.Context, env []string, args ...string) (string,
 	}
 	var guard bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &guard, &guard
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	runErr := cmd.Run()
 	if cmd.ProcessState == nil {
 		return "", &commandError{args: args, err: runErr}

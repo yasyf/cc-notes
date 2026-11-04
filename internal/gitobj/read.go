@@ -235,6 +235,7 @@ func (r *Repo) ListPrefixes(ctx context.Context, prefixes ...string) (map[string
 		name := string(ref.Name())
 		tips[name] = model.SHA(ref.Hash().String())
 	}
+	recordRefListing(ctx, len(tips))
 	return tips, nil
 }
 
@@ -295,6 +296,7 @@ func (r *Repo) packCommit(commit *object.Commit) (model.PackCommit, error) {
 	if err != nil {
 		return model.PackCommit{}, fmt.Errorf("read ops blob of commit %s: %w", commit.Hash, err)
 	}
+	recordPackDecode(r.storage.scope.ctx)
 	pack, err := model.DecodePack(data)
 	if err != nil {
 		return model.PackCommit{}, fmt.Errorf("commit %s: %w", commit.Hash, err)

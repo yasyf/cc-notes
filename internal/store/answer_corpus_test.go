@@ -88,7 +88,7 @@ func TestAnswerCorpusPreopenedWriterAndDirectRefLifecycle(t *testing.T) {
 	first := openCorpus(t, s, cache)
 	appendOps(t, writer, answerRef(a.ID), model.SetBody{Body: "new"})
 	changed := openCorpus(t, s, cache)
-	if changed.Generation == first.Generation || changed.work.metadataLoads.Load() != 1 || changed.work.canonicalRefreshes.Load() != 1 || changed.work.payloadWrites.Load() != 1 {
+	if changed.Generation == first.Generation || changed.work.metadataLoads.Load() != 0 || changed.work.canonicalRefreshes.Load() != 1 || changed.work.payloadWrites.Load() != 1 {
 		t.Fatalf("changed work = metadata %d, canonical %d, payload %d", changed.work.metadataLoads.Load(), changed.work.canonicalRefreshes.Load(), changed.work.payloadWrites.Load())
 	}
 	appendOps(t, writer, answerRef(a.ID), model.RemoveTag{Tag: "program:test"})
@@ -107,13 +107,13 @@ func TestAnswerCorpusPreopenedWriterAndDirectRefLifecycle(t *testing.T) {
 	appendOps(t, writer, answerRef(a.ID), model.RemoveSupersededBy{ID: model.EntityID(strings.Repeat("f", 40))})
 	restored := openCorpus(t, s, cache)
 	tip := restored.Records[0].Tip
-	if err := writer.RecordsGit.UpdateRef(t.Context(), answerRef(a.ID), "", tip); err != nil {
+	if err := writer.PublishRef(t.Context(), answerRef(a.ID), "", tip); err != nil {
 		t.Fatal(err)
 	}
 	if got := openCorpus(t, s, cache); len(got.Records) != 0 {
 		t.Fatal("deleted ref selected")
 	}
-	if err := writer.RecordsGit.UpdateRef(t.Context(), answerRef(a.ID), tip, ""); err != nil {
+	if err := writer.PublishRef(t.Context(), answerRef(a.ID), tip, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := openCorpus(t, s, cache); got.Generation != restored.Generation || len(got.Records) != 1 {
@@ -136,7 +136,7 @@ func TestAnswerCorpusLazyPayloadSurvivesSourcePruneAndReplacement(t *testing.T) 
 	if cut.work.payloadReads.Load() != 0 {
 		t.Fatal("open hydrated a payload")
 	}
-	if err := s.RecordsGit.UpdateRef(t.Context(), answerRef(a.ID), "", a.Head); err != nil {
+	if err := s.PublishRef(t.Context(), answerRef(a.ID), "", a.Head); err != nil {
 		t.Fatal(err)
 	}
 	gittest.Git(t, s.Git.Dir, "reflog", "expire", "--expire=now", "--all")
@@ -162,6 +162,7 @@ func TestAnswerCorpusLazyPayloadSurvivesSourcePruneAndReplacement(t *testing.T) 
 		t.Fatal("next cut ignored deleted source")
 	}
 	replaceRepo(t, s.Git.Dir)
+	gittest.InitializeEmpty(t, s.Git.Dir)
 	replacement, err := Open(s.Git.Dir)
 	if err != nil {
 		t.Fatal(err)
@@ -268,12 +269,12 @@ func TestAnswerCorpusWarmAndChangedPayloadWork(t *testing.T) {
 			id := warm.Records[0].ID
 			appendOps(t, s, answerRef(id), model.SetBody{Body: "one changed answer"})
 			changed := openCorpus(t, s, cache)
-			if changed.Generation == warm.Generation || changed.work.metadataLoads.Load() != 1 || changed.work.canonicalRefreshes.Load() != 1 || changed.work.payloadWrites.Load() != 1 || changed.work.payloadReads.Load() != 0 {
+			if changed.Generation == warm.Generation || changed.work.metadataLoads.Load() != 0 || changed.work.canonicalRefreshes.Load() != 1 || changed.work.payloadWrites.Load() != 1 || changed.work.payloadReads.Load() != 0 {
 				t.Fatalf("one change work = metadata %d canonical %d writes %d reads %d", changed.work.metadataLoads.Load(), changed.work.canonicalRefreshes.Load(), changed.work.payloadWrites.Load(), changed.work.payloadReads.Load())
 			}
 			appendOps(t, s, answerRef(id), model.AddTag{Tag: "unrelated-metadata"})
 			metadata := openCorpus(t, s, cache)
-			if metadata.Generation == changed.Generation || metadata.work.metadataLoads.Load() != 1 || metadata.work.canonicalRefreshes.Load() != 1 || metadata.work.payloadWrites.Load() != 0 || metadata.work.payloadReads.Load() != 0 {
+			if metadata.Generation == changed.Generation || metadata.work.metadataLoads.Load() != 0 || metadata.work.canonicalRefreshes.Load() != 1 || metadata.work.payloadWrites.Load() != 0 || metadata.work.payloadReads.Load() != 0 {
 				t.Fatal("metadata-only change rewrote or read payloads")
 			}
 			if got, err := metadata.Pick(t.Context(), []string{id.Short()}); err != nil || len(got) != 1 || got[0].Body != "one changed answer" || !slices.Contains(got[0].Tags, "unrelated-metadata") {

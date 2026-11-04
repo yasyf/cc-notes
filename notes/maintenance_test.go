@@ -242,6 +242,14 @@ func TestSyncThatMovesRefsTidiesTheCache(t *testing.T) {
 func orphanRef(t *testing.T, dir, ref string, tip model.SHA) {
 	t.Helper()
 	gittest.Git(t, dir, "update-ref", ref, string(tip))
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatalf("Reindex after external rollback: %v", err)
+	}
 }
 
 func TestGCPruneRemoteDeletesTombstone(t *testing.T) {

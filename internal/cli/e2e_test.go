@@ -519,6 +519,7 @@ func TestEditBranchInvalidDestUsage(t *testing.T) {
 	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 	dir := filepath.Join(root, "work")
 	gittest.Git(t, root, "clone", "-q", bare, "work")
+	gittest.InitializeEmpty(t, filepath.Join(root, "work"))
 	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 	mustBin(t, dir, actorA, "init")
 	task := addTaskBin(t, dir, "Survivor")
@@ -777,6 +778,7 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 	dir := filepath.Join(root, "work")
 	gittest.Git(t, root, "clone", "-q", bare, "work")
+	gittest.InitializeEmpty(t, filepath.Join(root, "work"))
 	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 
 	res, err := execBin(dir, actorA, "task", "add", "First write", "--no-validation-criteria")
@@ -811,6 +813,7 @@ func TestAutoInstallAnnouncesDroppedRefspec(t *testing.T) {
 	gittest.Git(t, root, "init", "-q", "--bare", "-b", "main", "remote.git")
 	dir := filepath.Join(root, "work")
 	gittest.Git(t, root, "clone", "-q", bare, "work")
+	gittest.InitializeEmpty(t, filepath.Join(root, "work"))
 	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 	gittest.Git(t, dir, "config", "--add", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes/*")
 	gittest.Git(t, dir, "config", "--add", "remote.origin.fetch", "+refs/cc-notes/*:refs/cc-notes-sync/origin/*")
@@ -849,6 +852,7 @@ func TestTwoCloneSyncRoundTrip(t *testing.T) {
 	clone := func(name string) string {
 		dir := filepath.Join(root, name)
 		gittest.Git(t, root, "clone", "-q", bare, name)
+		gittest.InitializeEmpty(t, filepath.Join(root, name))
 		gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 		return dir
 	}
@@ -991,6 +995,7 @@ func TestPlanSyncsAcrossClones(t *testing.T) {
 	clone := func(name string) string {
 		dir := filepath.Join(root, name)
 		gittest.Git(t, root, "clone", "-q", bare, name)
+		gittest.InitializeEmpty(t, filepath.Join(root, name))
 		gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/main")
 		return dir
 	}

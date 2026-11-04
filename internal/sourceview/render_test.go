@@ -1,7 +1,7 @@
 // Render/parse/diff tests: golden bytes pin the rendered formats, a
 // round-trip property pins diff(state, parse(render(state))) == no ops, and
 // the CLI cross-check pins RenderTask to `task show --json` byte for byte.
-package fusefs_test
+package sourceview_test
 
 import (
 	"bytes"
@@ -13,9 +13,9 @@ import (
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/cli"
-	"github.com/yasyf/cc-notes/internal/fusefs"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceview"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -328,49 +328,49 @@ func richProject() model.Project {
 	}
 }
 
-func set[T any](v T) fusefs.Field[T] { return fusefs.Field[T]{Set: true, Value: v} }
+func set[T any](v T) sourceview.Field[T] { return sourceview.Field[T]{Set: true, Value: v} }
 
-func null[T any]() fusefs.Field[T] { return fusefs.Field[T]{Set: true, Null: true} }
+func null[T any]() sourceview.Field[T] { return sourceview.Field[T]{Set: true, Null: true} }
 
-func mustParseNote(t *testing.T, data []byte) fusefs.ParsedDoc {
+func mustParseNote(t *testing.T, data []byte) sourceview.ParsedDoc {
 	t.Helper()
-	p, err := fusefs.ParseNote(data)
+	p, err := sourceview.ParseNote(data)
 	if err != nil {
 		t.Fatalf("ParseNote(%q): %v", data, err)
 	}
 	return p
 }
 
-func mustParseDoc(t *testing.T, data []byte) fusefs.ParsedDoc {
+func mustParseDoc(t *testing.T, data []byte) sourceview.ParsedDoc {
 	t.Helper()
-	p, err := fusefs.ParseDoc(data)
+	p, err := sourceview.ParseDoc(data)
 	if err != nil {
 		t.Fatalf("ParseDoc(%q): %v", data, err)
 	}
 	return p
 }
 
-func mustParseTask(t *testing.T, data []byte) fusefs.ParsedTask {
+func mustParseTask(t *testing.T, data []byte) sourceview.ParsedTask {
 	t.Helper()
-	p, err := fusefs.ParseTask(data)
+	p, err := sourceview.ParseTask(data)
 	if err != nil {
 		t.Fatalf("ParseTask(%q): %v", data, err)
 	}
 	return p
 }
 
-func mustParseSprint(t *testing.T, data []byte) fusefs.ParsedSprint {
+func mustParseSprint(t *testing.T, data []byte) sourceview.ParsedSprint {
 	t.Helper()
-	p, err := fusefs.ParseSprint(data)
+	p, err := sourceview.ParseSprint(data)
 	if err != nil {
 		t.Fatalf("ParseSprint(%q): %v", data, err)
 	}
 	return p
 }
 
-func mustParseProject(t *testing.T, data []byte) fusefs.ParsedProject {
+func mustParseProject(t *testing.T, data []byte) sourceview.ParsedProject {
 	t.Helper()
-	p, err := fusefs.ParseProject(data)
+	p, err := sourceview.ParseProject(data)
 	if err != nil {
 		t.Fatalf("ParseProject(%q): %v", data, err)
 	}
@@ -378,7 +378,7 @@ func mustParseProject(t *testing.T, data []byte) fusefs.ParsedProject {
 }
 
 func TestRenderNoteGolden(t *testing.T) {
-	if got := string(fusefs.RenderNote(richNote())); got != goldenNote {
+	if got := string(sourceview.RenderNote(richNote())); got != goldenNote {
 		t.Errorf("rich note render:\n got %q\nwant %q", got, goldenNote)
 	}
 	minimal := model.Note{
@@ -386,13 +386,13 @@ func TestRenderNoteGolden(t *testing.T) {
 		Title:  "07",
 		Author: "A <a@x>",
 	}
-	if got := string(fusefs.RenderNote(minimal)); got != goldenMinimalNote {
+	if got := string(sourceview.RenderNote(minimal)); got != goldenMinimalNote {
 		t.Errorf("minimal note render:\n got %q\nwant %q", got, goldenMinimalNote)
 	}
 }
 
 func TestRenderDocGolden(t *testing.T) {
-	if got := string(fusefs.RenderDoc(richDoc())); got != goldenDoc {
+	if got := string(sourceview.RenderDoc(richDoc())); got != goldenDoc {
 		t.Errorf("rich doc render:\n got %q\nwant %q", got, goldenDoc)
 	}
 	minimal := model.Doc{
@@ -400,14 +400,14 @@ func TestRenderDocGolden(t *testing.T) {
 		Title:  "07",
 		Author: "A <a@x>",
 	}
-	if got := string(fusefs.RenderDoc(minimal)); got != goldenMinimalDoc {
+	if got := string(sourceview.RenderDoc(minimal)); got != goldenMinimalDoc {
 		t.Errorf("minimal doc render:\n got %q\nwant %q", got, goldenMinimalDoc)
 	}
 }
 
 func TestDiffDocWhenEdit(t *testing.T) {
 	base := richDoc()
-	noop, err := fusefs.DiffDoc(base, mustParseDoc(t, fusefs.RenderDoc(base)))
+	noop, err := sourceview.DiffDoc(base, mustParseDoc(t, sourceview.RenderDoc(base)))
 	if err != nil {
 		t.Fatalf("DiffDoc round trip: %v", err)
 	}
@@ -415,9 +415,9 @@ func TestDiffDocWhenEdit(t *testing.T) {
 		t.Errorf("unchanged doc round trip produced ops %#v, want none", noop)
 	}
 
-	p := mustParseDoc(t, fusefs.RenderDoc(base))
+	p := mustParseDoc(t, sourceview.RenderDoc(base))
 	p.When = set("after the migration lands")
-	ops, err := fusefs.DiffDoc(base, p)
+	ops, err := sourceview.DiffDoc(base, p)
 	if err != nil {
 		t.Fatalf("DiffDoc: %v", err)
 	}
@@ -433,10 +433,10 @@ func TestNewTemplateGolden(t *testing.T) {
 		docTemplate  = "---\ntitle: \"\"\nwhen: \"\"\ntags: []\n---\n"
 		noteTemplate = "---\ntitle: \"\"\ntags: []\n---\n"
 	)
-	if got := string(fusefs.NewDocTemplate("", "", nil, nil)); got != docTemplate {
+	if got := string(sourceview.NewDocTemplate("", "", nil, nil)); got != docTemplate {
 		t.Errorf("NewDocTemplate zero value:\n got %q\nwant %q", got, docTemplate)
 	}
-	if got := string(fusefs.NewNoteTemplate("", nil, nil)); got != noteTemplate {
+	if got := string(sourceview.NewNoteTemplate("", nil, nil)); got != noteTemplate {
 		t.Errorf("NewNoteTemplate zero value:\n got %q\nwant %q", got, noteTemplate)
 	}
 }
@@ -447,10 +447,10 @@ func TestNewDocTemplateRoundTrip(t *testing.T) {
 		{Kind: model.AnchorPath, Value: "internal/cli/output.go"},
 		{Kind: model.AnchorBranch, Value: "main"},
 	}
-	tmpl := fusefs.NewDocTemplate("Prefilled", "before the cutover", []string{"handoff", "auth"}, anchors)
+	tmpl := sourceview.NewDocTemplate("Prefilled", "before the cutover", []string{"handoff", "auth"}, anchors)
 	tmpl = append(tmpl, []byte("Body goes here.\n")...)
 
-	ops, err := fusefs.NewDoc(mustParseDoc(t, tmpl))
+	ops, err := sourceview.NewDoc(mustParseDoc(t, tmpl))
 	if err != nil {
 		t.Fatalf("NewDoc: %v", err)
 	}
@@ -480,10 +480,10 @@ func TestNewNoteTemplateRoundTrip(t *testing.T) {
 		{Kind: model.AnchorDir, Value: "internal/auth"},
 		{Kind: model.AnchorCommit, Value: "ffff111"},
 	}
-	tmpl := fusefs.NewNoteTemplate("Fact", []string{"design"}, anchors)
+	tmpl := sourceview.NewNoteTemplate("Fact", []string{"design"}, anchors)
 	tmpl = append(tmpl, []byte("The captured fact.\n")...)
 
-	ops, err := fusefs.NewNote(mustParseNote(t, tmpl))
+	ops, err := sourceview.NewNote(mustParseNote(t, tmpl))
 	if err != nil {
 		t.Fatalf("NewNote: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestNewNoteTemplateRoundTrip(t *testing.T) {
 }
 
 func TestRenderTaskGolden(t *testing.T) {
-	if got := string(fusefs.RenderTask(richTask())); got != goldenTask {
+	if got := string(sourceview.RenderTask(richTask())); got != goldenTask {
 		t.Errorf("rich task render:\n got %q\nwant %q", got, goldenTask)
 	}
 }
@@ -551,7 +551,7 @@ func TestNoteRoundTrip(t *testing.T) {
 	}
 	for name, n := range cases {
 		t.Run(name, func(t *testing.T) {
-			ops, err := fusefs.DiffNote(n, mustParseNote(t, fusefs.RenderNote(n)))
+			ops, err := sourceview.DiffNote(n, mustParseNote(t, sourceview.RenderNote(n)))
 			if err != nil {
 				t.Fatalf("DiffNote: %v", err)
 			}
@@ -582,7 +582,7 @@ func TestTaskRoundTrip(t *testing.T) {
 	}
 	for name, task := range cases {
 		t.Run(name, func(t *testing.T) {
-			ops, err := fusefs.DiffTask(task, mustParseTask(t, fusefs.RenderTask(task)))
+			ops, err := sourceview.DiffTask(task, mustParseTask(t, sourceview.RenderTask(task)))
 			if err != nil {
 				t.Fatalf("DiffTask: %v", err)
 			}
@@ -597,31 +597,31 @@ func TestDiffNoteEditable(t *testing.T) {
 	base := richNote()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedDoc)
+		mutate func(*sourceview.ParsedDoc)
 		want   []model.Op
 	}{
 		{
-			"title", func(p *fusefs.ParsedDoc) { p.Title = set("New title") },
+			"title", func(p *sourceview.ParsedDoc) { p.Title = set("New title") },
 			[]model.Op{model.SetTitle{Title: "New title"}},
 		},
 		{
-			"title removed entirely is untouched", func(p *fusefs.ParsedDoc) { p.Title = fusefs.Field[string]{} },
+			"title removed entirely is untouched", func(p *sourceview.ParsedDoc) { p.Title = sourceview.Field[string]{} },
 			nil,
 		},
 		{
-			"body", func(p *fusefs.ParsedDoc) { p.Body = "rewritten\n" },
+			"body", func(p *sourceview.ParsedDoc) { p.Body = "rewritten\n" },
 			[]model.Op{model.SetBody{Body: "rewritten\n"}},
 		},
 		{
-			"add tag", func(p *fusefs.ParsedDoc) { p.Tags.Value = append(p.Tags.Value, "urgent") },
+			"add tag", func(p *sourceview.ParsedDoc) { p.Tags.Value = append(p.Tags.Value, "urgent") },
 			[]model.Op{model.AddTag{Tag: "urgent"}},
 		},
 		{
-			"remove tag", func(p *fusefs.ParsedDoc) { p.Tags = set([]string{"parser"}) },
+			"remove tag", func(p *sourceview.ParsedDoc) { p.Tags = set([]string{"parser"}) },
 			[]model.Op{model.RemoveTag{Tag: "bug"}},
 		},
 		{
-			"swap tags adds before removes", func(p *fusefs.ParsedDoc) { p.Tags = set([]string{"bb", "aa"}) },
+			"swap tags adds before removes", func(p *sourceview.ParsedDoc) { p.Tags = set([]string{"bb", "aa"}) },
 			[]model.Op{
 				model.AddTag{Tag: "aa"},
 				model.AddTag{Tag: "bb"},
@@ -630,19 +630,19 @@ func TestDiffNoteEditable(t *testing.T) {
 			},
 		},
 		{
-			"tags null clears all", func(p *fusefs.ParsedDoc) { p.Tags = null[[]string]() },
+			"tags null clears all", func(p *sourceview.ParsedDoc) { p.Tags = null[[]string]() },
 			[]model.Op{model.RemoveTag{Tag: "bug"}, model.RemoveTag{Tag: "parser"}},
 		},
 		{
-			"add commit anchor", func(p *fusefs.ParsedDoc) { p.Commits.Value = append(p.Commits.Value, "0099aab") },
+			"add commit anchor", func(p *sourceview.ParsedDoc) { p.Commits.Value = append(p.Commits.Value, "0099aab") },
 			[]model.Op{model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorCommit, Value: "0099aab"}}},
 		},
 		{
-			"remove path anchor", func(p *fusefs.ParsedDoc) { p.Paths = set([]string{}) },
+			"remove path anchor", func(p *sourceview.ParsedDoc) { p.Paths = set([]string{}) },
 			[]model.Op{model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "internal/cli/output.go"}}},
 		},
 		{
-			"replace branch anchor", func(p *fusefs.ParsedDoc) { p.Branches = set([]string{"main"}) },
+			"replace branch anchor", func(p *sourceview.ParsedDoc) { p.Branches = set([]string{"main"}) },
 			[]model.Op{
 				model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "main"}},
 				model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "feature/login"}},
@@ -651,9 +651,9 @@ func TestDiffNoteEditable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseNote(t, fusefs.RenderNote(base))
+			p := mustParseNote(t, sourceview.RenderNote(base))
 			tc.mutate(&p)
-			ops, err := fusefs.DiffNote(base, p)
+			ops, err := sourceview.DiffNote(base, p)
 			if err != nil {
 				t.Fatalf("DiffNote: %v", err)
 			}
@@ -668,27 +668,27 @@ func TestDiffNoteImmutable(t *testing.T) {
 	base := richNote()
 	cases := []struct {
 		field  string
-		mutate func(*fusefs.ParsedDoc)
+		mutate func(*sourceview.ParsedDoc)
 	}{
-		{"id", func(p *fusefs.ParsedDoc) { p.ID = set("0000000000000000000000000000000000000000") }},
-		{"author", func(p *fusefs.ParsedDoc) { p.Author = set("Mallory <m@example.com>") }},
-		{"created", func(p *fusefs.ParsedDoc) { p.Created = set("2020-01-01T00:00:00Z") }},
-		{"verified_at", func(p *fusefs.ParsedDoc) { p.VerifiedAt = set("2020-01-01T00:00:00Z") }},
-		{"verified_by", func(p *fusefs.ParsedDoc) { p.VerifiedBy = set("Mallory <m@example.com>") }},
-		{"verified_commit", func(p *fusefs.ParsedDoc) { p.VerifiedCommit = set("0000000000000000000000000000000000000000") }},
-		{"superseded_by", func(p *fusefs.ParsedDoc) {
+		{"id", func(p *sourceview.ParsedDoc) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"author", func(p *sourceview.ParsedDoc) { p.Author = set("Mallory <m@example.com>") }},
+		{"created", func(p *sourceview.ParsedDoc) { p.Created = set("2020-01-01T00:00:00Z") }},
+		{"verified_at", func(p *sourceview.ParsedDoc) { p.VerifiedAt = set("2020-01-01T00:00:00Z") }},
+		{"verified_by", func(p *sourceview.ParsedDoc) { p.VerifiedBy = set("Mallory <m@example.com>") }},
+		{"verified_commit", func(p *sourceview.ParsedDoc) { p.VerifiedCommit = set("0000000000000000000000000000000000000000") }},
+		{"superseded_by", func(p *sourceview.ParsedDoc) {
 			p.SupersededBy.Value = append(p.SupersededBy.Value, "eeee3333eeee3333eeee3333eeee3333eeee3333")
 		}},
-		{"superseded_by", func(p *fusefs.ParsedDoc) { p.SupersededBy = set([]string{}) }},
-		{"witness", func(p *fusefs.ParsedDoc) { p.Witness.Value[0].OID = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }},
-		{"witness", func(p *fusefs.ParsedDoc) { p.Witness = set([]fusefs.ParsedWitness{}) }},
+		{"superseded_by", func(p *sourceview.ParsedDoc) { p.SupersededBy = set([]string{}) }},
+		{"witness", func(p *sourceview.ParsedDoc) { p.Witness.Value[0].OID = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }},
+		{"witness", func(p *sourceview.ParsedDoc) { p.Witness = set([]sourceview.ParsedWitness{}) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
-			p := mustParseNote(t, fusefs.RenderNote(base))
+			p := mustParseNote(t, sourceview.RenderNote(base))
 			tc.mutate(&p)
-			_, err := fusefs.DiffNote(base, p)
-			if !errors.Is(err, fusefs.ErrImmutableField) {
+			_, err := sourceview.DiffNote(base, p)
+			if !errors.Is(err, sourceview.ErrImmutableField) {
 				t.Fatalf("err %v, want ErrImmutableField", err)
 			}
 			if !strings.Contains(err.Error(), tc.field) {
@@ -700,7 +700,7 @@ func TestDiffNoteImmutable(t *testing.T) {
 
 func TestDiffNoteVerifiedSurvivesRoundTrip(t *testing.T) {
 	base := richNote()
-	p := mustParseNote(t, fusefs.RenderNote(base))
+	p := mustParseNote(t, sourceview.RenderNote(base))
 	if got, want := p.VerifiedAt.Value, "2025-12-14T02:54:56Z"; !p.VerifiedAt.Set || got != want {
 		t.Errorf("verified_at = %q (set %v), want %q set", got, p.VerifiedAt.Set, want)
 	}
@@ -710,7 +710,7 @@ func TestDiffNoteVerifiedSurvivesRoundTrip(t *testing.T) {
 	if got, want := p.VerifiedCommit.Value, "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"; !p.VerifiedCommit.Set || got != want {
 		t.Errorf("verified_commit = %q (set %v), want %q set", got, p.VerifiedCommit.Set, want)
 	}
-	wantWitness := []fusefs.ParsedWitness{
+	wantWitness := []sourceview.ParsedWitness{
 		{Kind: "path", Value: "internal/cli/output.go", OID: "1234567890abcdef1234567890abcdef12345678"},
 		{Kind: "commit", Value: "abc1234", OID: "abcd1234abcd1234abcd1234abcd1234abcd1234"},
 	}
@@ -724,7 +724,7 @@ func TestDiffNoteVerifiedSurvivesRoundTrip(t *testing.T) {
 	if !p.SupersededBy.Set || !reflect.DeepEqual(p.SupersededBy.Value, wantSuperseded) {
 		t.Errorf("superseded_by = %#v (set %v), want %#v", p.SupersededBy.Value, p.SupersededBy.Set, wantSuperseded)
 	}
-	ops, err := fusefs.DiffNote(base, p)
+	ops, err := sourceview.DiffNote(base, p)
 	if err != nil {
 		t.Fatalf("DiffNote: %v", err)
 	}
@@ -735,9 +735,9 @@ func TestDiffNoteVerifiedSurvivesRoundTrip(t *testing.T) {
 
 func TestDiffNoteUpdatedIsInformational(t *testing.T) {
 	base := richNote()
-	p := mustParseNote(t, fusefs.RenderNote(base))
+	p := mustParseNote(t, sourceview.RenderNote(base))
 	p.Updated = set("1999-12-31T23:59:59Z")
-	ops, err := fusefs.DiffNote(base, p)
+	ops, err := sourceview.DiffNote(base, p)
 	if err != nil {
 		t.Fatalf("DiffNote: %v", err)
 	}
@@ -750,40 +750,40 @@ func TestDiffTaskEditable(t *testing.T) {
 	base := richTask()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedTask)
+		mutate func(*sourceview.ParsedTask)
 		want   []model.Op
 	}{
 		{
-			"title", func(p *fusefs.ParsedTask) { p.Title = set("Retitled") },
+			"title", func(p *sourceview.ParsedTask) { p.Title = set("Retitled") },
 			[]model.Op{model.SetTitle{Title: "Retitled"}},
 		},
 		{
-			"description", func(p *fusefs.ParsedTask) { p.Description = set("New body") },
+			"description", func(p *sourceview.ParsedTask) { p.Description = set("New body") },
 			[]model.Op{model.SetDescription{Description: "New body"}},
 		},
 		{
-			"status", func(p *fusefs.ParsedTask) { p.Status = set("done") },
+			"status", func(p *sourceview.ParsedTask) { p.Status = set("done") },
 			[]model.Op{model.SetStatus{Status: model.StatusDone}},
 		},
 		{
-			"priority", func(p *fusefs.ParsedTask) { p.Priority = set(0) },
+			"priority", func(p *sourceview.ParsedTask) { p.Priority = set(0) },
 			[]model.Op{model.SetPriority{Priority: 0}},
 		},
 		{
-			"add label", func(p *fusefs.ParsedTask) { p.Labels.Value = append(p.Labels.Value, "alpha") },
+			"add label", func(p *sourceview.ParsedTask) { p.Labels.Value = append(p.Labels.Value, "alpha") },
 			[]model.Op{model.AddLabel{Label: "alpha"}},
 		},
 		{
-			"remove label", func(p *fusefs.ParsedTask) { p.Labels = set([]string{"render"}) },
+			"remove label", func(p *sourceview.ParsedTask) { p.Labels = set([]string{"render"}) },
 			[]model.Op{model.RemoveLabel{Label: "fs"}},
 		},
 		{
-			"labels null clears all", func(p *fusefs.ParsedTask) { p.Labels = null[[]string]() },
+			"labels null clears all", func(p *sourceview.ParsedTask) { p.Labels = null[[]string]() },
 			[]model.Op{model.RemoveLabel{Label: "fs"}, model.RemoveLabel{Label: "render"}},
 		},
 		{
 			"several fields in fixed order",
-			func(p *fusefs.ParsedTask) {
+			func(p *sourceview.ParsedTask) {
 				p.Title = set("Retitled")
 				p.Status = set("done")
 				p.Priority = set(3)
@@ -800,9 +800,9 @@ func TestDiffTaskEditable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseTask(t, fusefs.RenderTask(base))
+			p := mustParseTask(t, sourceview.RenderTask(base))
 			tc.mutate(&p)
-			ops, err := fusefs.DiffTask(base, p)
+			ops, err := sourceview.DiffTask(base, p)
 			if err != nil {
 				t.Fatalf("DiffTask: %v", err)
 			}
@@ -817,19 +817,19 @@ func TestDiffTaskInvalidValues(t *testing.T) {
 	base := richTask()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedTask)
+		mutate func(*sourceview.ParsedTask)
 	}{
-		{"bogus status", func(p *fusefs.ParsedTask) { p.Status = set("paused") }},
-		{"null status", func(p *fusefs.ParsedTask) { p.Status = null[string]() }},
-		{"priority above range", func(p *fusefs.ParsedTask) { p.Priority = set(4) }},
-		{"priority below range", func(p *fusefs.ParsedTask) { p.Priority = set(-1) }},
-		{"null priority", func(p *fusefs.ParsedTask) { p.Priority = null[int]() }},
+		{"bogus status", func(p *sourceview.ParsedTask) { p.Status = set("paused") }},
+		{"null status", func(p *sourceview.ParsedTask) { p.Status = null[string]() }},
+		{"priority above range", func(p *sourceview.ParsedTask) { p.Priority = set(4) }},
+		{"priority below range", func(p *sourceview.ParsedTask) { p.Priority = set(-1) }},
+		{"null priority", func(p *sourceview.ParsedTask) { p.Priority = null[int]() }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseTask(t, fusefs.RenderTask(base))
+			p := mustParseTask(t, sourceview.RenderTask(base))
 			tc.mutate(&p)
-			if _, err := fusefs.DiffTask(base, p); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.DiffTask(base, p); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
@@ -840,32 +840,32 @@ func TestDiffTaskImmutable(t *testing.T) {
 	base := richTask()
 	cases := []struct {
 		field  string
-		mutate func(*fusefs.ParsedTask)
+		mutate func(*sourceview.ParsedTask)
 	}{
-		{"id", func(p *fusefs.ParsedTask) { p.ID = set("0000000000000000000000000000000000000000") }},
-		{"branch", func(p *fusefs.ParsedTask) { p.Branch = set("main") }},
-		{"type", func(p *fusefs.ParsedTask) { p.Type = set("epic") }},
-		{"assignee", func(p *fusefs.ParsedTask) { p.Assignee = set("Agent B <b@example.com>") }},
-		{"assignee", func(p *fusefs.ParsedTask) { p.Assignee = null[string]() }},
-		{"blocked_by", func(p *fusefs.ParsedTask) { p.BlockedBy.Value = append(p.BlockedBy.Value, "1111") }},
-		{"blocked_by", func(p *fusefs.ParsedTask) { p.BlockedBy = set([]string{}) }},
-		{"blocks", func(p *fusefs.ParsedTask) { p.Blocks = set([]string{"1111"}) }},
-		{"parent", func(p *fusefs.ParsedTask) { p.Parent = null[string]() }},
-		{"comments", func(p *fusefs.ParsedTask) { p.Comments.Value[0].Body = "edited" }},
-		{"comments", func(p *fusefs.ParsedTask) { p.Comments = set([]fusefs.ParsedComment{}) }},
-		{"created_at", func(p *fusefs.ParsedTask) { p.CreatedAt = set("2020-01-01T00:00:00Z") }},
-		{"updated_at", func(p *fusefs.ParsedTask) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
-		{"started_at", func(p *fusefs.ParsedTask) { p.StartedAt = null[string]() }},
-		{"closed_at", func(p *fusefs.ParsedTask) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
-		{"sprint", func(p *fusefs.ParsedTask) { p.Sprint = set("0000000000000000000000000000000000000000") }},
-		{"project", func(p *fusefs.ParsedTask) { p.Project = set("0000000000000000000000000000000000000000") }},
+		{"id", func(p *sourceview.ParsedTask) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"branch", func(p *sourceview.ParsedTask) { p.Branch = set("main") }},
+		{"type", func(p *sourceview.ParsedTask) { p.Type = set("epic") }},
+		{"assignee", func(p *sourceview.ParsedTask) { p.Assignee = set("Agent B <b@example.com>") }},
+		{"assignee", func(p *sourceview.ParsedTask) { p.Assignee = null[string]() }},
+		{"blocked_by", func(p *sourceview.ParsedTask) { p.BlockedBy.Value = append(p.BlockedBy.Value, "1111") }},
+		{"blocked_by", func(p *sourceview.ParsedTask) { p.BlockedBy = set([]string{}) }},
+		{"blocks", func(p *sourceview.ParsedTask) { p.Blocks = set([]string{"1111"}) }},
+		{"parent", func(p *sourceview.ParsedTask) { p.Parent = null[string]() }},
+		{"comments", func(p *sourceview.ParsedTask) { p.Comments.Value[0].Body = "edited" }},
+		{"comments", func(p *sourceview.ParsedTask) { p.Comments = set([]sourceview.ParsedComment{}) }},
+		{"created_at", func(p *sourceview.ParsedTask) { p.CreatedAt = set("2020-01-01T00:00:00Z") }},
+		{"updated_at", func(p *sourceview.ParsedTask) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
+		{"started_at", func(p *sourceview.ParsedTask) { p.StartedAt = null[string]() }},
+		{"closed_at", func(p *sourceview.ParsedTask) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
+		{"sprint", func(p *sourceview.ParsedTask) { p.Sprint = set("0000000000000000000000000000000000000000") }},
+		{"project", func(p *sourceview.ParsedTask) { p.Project = set("0000000000000000000000000000000000000000") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
-			p := mustParseTask(t, fusefs.RenderTask(base))
+			p := mustParseTask(t, sourceview.RenderTask(base))
 			tc.mutate(&p)
-			_, err := fusefs.DiffTask(base, p)
-			if !errors.Is(err, fusefs.ErrImmutableField) {
+			_, err := sourceview.DiffTask(base, p)
+			if !errors.Is(err, sourceview.ErrImmutableField) {
 				t.Fatalf("err %v, want ErrImmutableField", err)
 			}
 			if !strings.Contains(err.Error(), tc.field) {
@@ -884,24 +884,24 @@ func TestDiffTaskCriteriaEditable(t *testing.T) {
 	base := richTask()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedTask)
+		mutate func(*sourceview.ParsedTask)
 		want   []model.Op
 	}{
 		{
-			"edit text", func(p *fusefs.ParsedTask) { p.Criteria.Value[0].Text = "Builds clean" },
+			"edit text", func(p *sourceview.ParsedTask) { p.Criteria.Value[0].Text = "Builds clean" },
 			[]model.Op{model.SetCriterionText{ID: critA, Text: "Builds clean"}},
 		},
 		{
-			"edit status", func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Status = "met" },
+			"edit status", func(p *sourceview.ParsedTask) { p.Criteria.Value[1].Status = "met" },
 			[]model.Op{model.SetCriterionStatus{ID: critB, Status: model.CriterionMet}},
 		},
 		{
-			"edit script", func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Script = "go test ./..." },
+			"edit script", func(p *sourceview.ParsedTask) { p.Criteria.Value[1].Script = "go test ./..." },
 			[]model.Op{model.SetCriterionScript{ID: critB, Script: "go test ./..."}},
 		},
 		{
 			"text status script in order for one id",
-			func(p *fusefs.ParsedTask) {
+			func(p *sourceview.ParsedTask) {
 				p.Criteria.Value[0].Text = "Builds"
 				p.Criteria.Value[0].Status = "failed"
 				p.Criteria.Value[0].Script = "make"
@@ -914,17 +914,17 @@ func TestDiffTaskCriteriaEditable(t *testing.T) {
 		},
 		{
 			"remove omitted criterion",
-			func(p *fusefs.ParsedTask) { p.Criteria.Value = p.Criteria.Value[:1] },
+			func(p *sourceview.ParsedTask) { p.Criteria.Value = p.Criteria.Value[:1] },
 			[]model.Op{model.RemoveCriterion{ID: critB}},
 		},
 		{
 			"null clears all, removes sorted by id",
-			func(p *fusefs.ParsedTask) { p.Criteria = null[[]fusefs.ParsedCriterion]() },
+			func(p *sourceview.ParsedTask) { p.Criteria = null[[]sourceview.ParsedCriterion]() },
 			[]model.Op{model.RemoveCriterion{ID: critA}, model.RemoveCriterion{ID: critB}},
 		},
 		{
 			"removes precede field updates",
-			func(p *fusefs.ParsedTask) {
+			func(p *sourceview.ParsedTask) {
 				p.Criteria.Value[1].Text = "Tests still pass"
 				p.Criteria.Value = p.Criteria.Value[1:]
 			},
@@ -936,9 +936,9 @@ func TestDiffTaskCriteriaEditable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseTask(t, fusefs.RenderTask(base))
+			p := mustParseTask(t, sourceview.RenderTask(base))
 			tc.mutate(&p)
-			ops, err := fusefs.DiffTask(base, p)
+			ops, err := sourceview.DiffTask(base, p)
 			if err != nil {
 				t.Fatalf("DiffTask: %v", err)
 			}
@@ -952,9 +952,9 @@ func TestDiffTaskCriteriaEditable(t *testing.T) {
 func TestDiffTaskCriteriaAdd(t *testing.T) {
 	base := richTask()
 	t.Run("empty id appends with a nonce, pending start emits no status", func(t *testing.T) {
-		p := mustParseTask(t, fusefs.RenderTask(base))
-		p.Criteria.Value = append(p.Criteria.Value, fusefs.ParsedCriterion{Text: "New crit", Script: "scripty"})
-		ops, err := fusefs.DiffTask(base, p)
+		p := mustParseTask(t, sourceview.RenderTask(base))
+		p.Criteria.Value = append(p.Criteria.Value, sourceview.ParsedCriterion{Text: "New crit", Script: "scripty"})
+		ops, err := sourceview.DiffTask(base, p)
 		if err != nil {
 			t.Fatalf("DiffTask: %v", err)
 		}
@@ -971,9 +971,9 @@ func TestDiffTaskCriteriaAdd(t *testing.T) {
 		}
 	})
 	t.Run("non-pending new criterion emits a status op on the same nonce", func(t *testing.T) {
-		p := mustParseTask(t, fusefs.RenderTask(base))
-		p.Criteria.Value = append(p.Criteria.Value, fusefs.ParsedCriterion{Text: "Pre-met", Status: "met"})
-		ops, err := fusefs.DiffTask(base, p)
+		p := mustParseTask(t, sourceview.RenderTask(base))
+		p.Criteria.Value = append(p.Criteria.Value, sourceview.ParsedCriterion{Text: "Pre-met", Status: "met"})
+		ops, err := sourceview.DiffTask(base, p)
 		if err != nil {
 			t.Fatalf("DiffTask: %v", err)
 		}
@@ -996,30 +996,30 @@ func TestDiffTaskCriteriaNote(t *testing.T) {
 	base.Criteria[1].Note = "log: 12 passed"
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedTask)
+		mutate func(*sourceview.ParsedTask)
 		want   []model.Op
 	}{
 		{
 			"status change preserves the untouched note",
-			func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Status = "met" },
+			func(p *sourceview.ParsedTask) { p.Criteria.Value[1].Status = "met" },
 			[]model.Op{model.SetCriterionStatus{ID: critB, Status: model.CriterionMet, Note: "log: 12 passed"}},
 		},
 		{
 			"note edit emits a status op carrying the new note",
-			func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Note = "log: 15 passed" },
+			func(p *sourceview.ParsedTask) { p.Criteria.Value[1].Note = "log: 15 passed" },
 			[]model.Op{model.SetCriterionStatus{ID: critB, Status: model.CriterionPending, Note: "log: 15 passed"}},
 		},
 		{
 			"clearing the note emits an empty-note status op",
-			func(p *fusefs.ParsedTask) { p.Criteria.Value[1].Note = "" },
+			func(p *sourceview.ParsedTask) { p.Criteria.Value[1].Note = "" },
 			[]model.Op{model.SetCriterionStatus{ID: critB, Status: model.CriterionPending}},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseTask(t, fusefs.RenderTask(base))
+			p := mustParseTask(t, sourceview.RenderTask(base))
 			tc.mutate(&p)
-			ops, err := fusefs.DiffTask(base, p)
+			ops, err := sourceview.DiffTask(base, p)
 			if err != nil {
 				t.Fatalf("DiffTask: %v", err)
 			}
@@ -1033,7 +1033,7 @@ func TestDiffTaskCriteriaNote(t *testing.T) {
 func TestRenderTaskRendersCriterionNote(t *testing.T) {
 	base := richTask()
 	base.Criteria[1].Note = "log: 12 passed"
-	out := fusefs.RenderTask(base)
+	out := sourceview.RenderTask(base)
 	if !bytes.Contains(out, []byte(`"note": "log: 12 passed"`)) {
 		t.Errorf("RenderTask output missing criterion note:\n%s", out)
 	}
@@ -1047,19 +1047,19 @@ func TestDiffTaskCriteriaErrors(t *testing.T) {
 	base := richTask()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedTask)
+		mutate func(*sourceview.ParsedTask)
 	}{
-		{"invented id", func(p *fusefs.ParsedTask) { p.Criteria.Value[0].ID = "deadbeefdeadbeefdeadbeefdeadbeef" }},
-		{"bad status on existing", func(p *fusefs.ParsedTask) { p.Criteria.Value[0].Status = "explode" }},
-		{"bad status on new", func(p *fusefs.ParsedTask) {
-			p.Criteria.Value = append(p.Criteria.Value, fusefs.ParsedCriterion{Text: "x", Status: "explode"})
+		{"invented id", func(p *sourceview.ParsedTask) { p.Criteria.Value[0].ID = "deadbeefdeadbeefdeadbeefdeadbeef" }},
+		{"bad status on existing", func(p *sourceview.ParsedTask) { p.Criteria.Value[0].Status = "explode" }},
+		{"bad status on new", func(p *sourceview.ParsedTask) {
+			p.Criteria.Value = append(p.Criteria.Value, sourceview.ParsedCriterion{Text: "x", Status: "explode"})
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseTask(t, fusefs.RenderTask(base))
+			p := mustParseTask(t, sourceview.RenderTask(base))
 			tc.mutate(&p)
-			if _, err := fusefs.DiffTask(base, p); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.DiffTask(base, p); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
@@ -1068,9 +1068,9 @@ func TestDiffTaskCriteriaErrors(t *testing.T) {
 
 func TestDiffTaskClosedForcedIgnored(t *testing.T) {
 	base := richTask()
-	p := mustParseTask(t, fusefs.RenderTask(base))
+	p := mustParseTask(t, sourceview.RenderTask(base))
 	p.ClosedForced = set(true)
-	ops, err := fusefs.DiffTask(base, p)
+	ops, err := sourceview.DiffTask(base, p)
 	if err != nil {
 		t.Fatalf("DiffTask: %v", err)
 	}
@@ -1092,7 +1092,7 @@ func TestParseNoteErrors(t *testing.T) {
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := fusefs.ParseNote([]byte(doc)); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.ParseNote([]byte(doc)); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
@@ -1123,7 +1123,7 @@ func TestParseTaskErrors(t *testing.T) {
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := fusefs.ParseTask([]byte(doc)); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.ParseTask([]byte(doc)); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
@@ -1133,7 +1133,7 @@ func TestParseTaskErrors(t *testing.T) {
 func TestNewNote(t *testing.T) {
 	t.Run("frontmatter title", func(t *testing.T) {
 		doc := "---\ntitle: Brand new\ntags: [b, a, b]\ncommits: [ffff111]\n---\nBody here.\n"
-		ops, err := fusefs.NewNote(mustParseNote(t, []byte(doc)))
+		ops, err := sourceview.NewNote(mustParseNote(t, []byte(doc)))
 		if err != nil {
 			t.Fatalf("NewNote: %v", err)
 		}
@@ -1153,7 +1153,7 @@ func TestNewNote(t *testing.T) {
 		}
 	})
 	t.Run("heading fallback", func(t *testing.T) {
-		ops, err := fusefs.NewNote(mustParseNote(t, []byte("---\n---\n# Heading title\nrest\n")))
+		ops, err := sourceview.NewNote(mustParseNote(t, []byte("---\n---\n# Heading title\nrest\n")))
 		if err != nil {
 			t.Fatalf("NewNote: %v", err)
 		}
@@ -1162,13 +1162,13 @@ func TestNewNote(t *testing.T) {
 		}
 	})
 	t.Run("no title anywhere", func(t *testing.T) {
-		if _, err := fusefs.NewNote(mustParseNote(t, []byte("---\n---\nplain text\n"))); !errors.Is(err, fusefs.ErrParse) {
+		if _, err := sourceview.NewNote(mustParseNote(t, []byte("---\n---\nplain text\n"))); !errors.Is(err, sourceview.ErrParse) {
 			t.Fatalf("err %v, want ErrParse", err)
 		}
 	})
 	t.Run("id on a new note", func(t *testing.T) {
 		doc := "---\nid: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0\ntitle: Copied\n---\n"
-		if _, err := fusefs.NewNote(mustParseNote(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+		if _, err := sourceview.NewNote(mustParseNote(t, []byte(doc))); !errors.Is(err, sourceview.ErrParse) {
 			t.Fatalf("err %v, want ErrParse", err)
 		}
 	})
@@ -1176,7 +1176,7 @@ func TestNewNote(t *testing.T) {
 
 func TestNewTask(t *testing.T) {
 	t.Run("minimal defaults", func(t *testing.T) {
-		ops, err := fusefs.NewTask(mustParseTask(t, []byte(`{"title": "New task"}`)), "main")
+		ops, err := sourceview.NewTask(mustParseTask(t, []byte(`{"title": "New task"}`)), "main")
 		if err != nil {
 			t.Fatalf("NewTask: %v", err)
 		}
@@ -1193,7 +1193,7 @@ func TestNewTask(t *testing.T) {
 	t.Run("explicit fields", func(t *testing.T) {
 		doc := `{"title": "Bug hunt", "description": "repro", "type": "bug", "priority": 0,
 			"status": "open", "labels": ["z", "a", "z"], "branch": "main"}`
-		ops, err := fusefs.NewTask(mustParseTask(t, []byte(doc)), "main")
+		ops, err := sourceview.NewTask(mustParseTask(t, []byte(doc)), "main")
 		if err != nil {
 			t.Fatalf("NewTask: %v", err)
 		}
@@ -1226,7 +1226,7 @@ func TestNewTask(t *testing.T) {
 	}
 	for name, doc := range errorCases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := fusefs.NewTask(mustParseTask(t, []byte(doc)), "main"); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.NewTask(mustParseTask(t, []byte(doc)), "main"); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
@@ -1235,7 +1235,7 @@ func TestNewTask(t *testing.T) {
 		doc := `{"title": "x", "created_at": "2020-01-01T00:00:00Z", "updated_at": "2020-01-01T00:00:00Z",
 			"started_at": null, "closed_at": null, "assignee": null, "parent": null,
 			"blocked_by": [], "blocks": [], "comments": []}`
-		if _, err := fusefs.NewTask(mustParseTask(t, []byte(doc)), "main"); err != nil {
+		if _, err := sourceview.NewTask(mustParseTask(t, []byte(doc)), "main"); err != nil {
 			t.Fatalf("NewTask: %v", err)
 		}
 	})
@@ -1243,10 +1243,10 @@ func TestNewTask(t *testing.T) {
 
 func TestNoteTextEditEndToEnd(t *testing.T) {
 	base := richNote()
-	text := string(fusefs.RenderNote(base))
+	text := string(sourceview.RenderNote(base))
 	text = strings.Replace(text, "title: \"Fix the parser: edge-cases & \\U0001F984\"", "title: Retitled by hand", 1)
 	text += "Appended line.\n"
-	ops, err := fusefs.DiffNote(base, mustParseNote(t, []byte(text)))
+	ops, err := sourceview.DiffNote(base, mustParseNote(t, []byte(text)))
 	if err != nil {
 		t.Fatalf("DiffNote: %v", err)
 	}
@@ -1260,13 +1260,13 @@ func TestNoteTextEditEndToEnd(t *testing.T) {
 }
 
 func TestRenderSprintGolden(t *testing.T) {
-	if got := string(fusefs.RenderSprint(richSprint())); got != goldenSprint {
+	if got := string(sourceview.RenderSprint(richSprint())); got != goldenSprint {
 		t.Errorf("rich sprint render:\n got %q\nwant %q", got, goldenSprint)
 	}
 }
 
 func TestRenderProjectGolden(t *testing.T) {
-	if got := string(fusefs.RenderProject(richProject())); got != goldenProject {
+	if got := string(sourceview.RenderProject(richProject())); got != goldenProject {
 		t.Errorf("rich project render:\n got %q\nwant %q", got, goldenProject)
 	}
 }
@@ -1286,7 +1286,7 @@ func TestSprintRoundTrip(t *testing.T) {
 	}
 	for name, s := range cases {
 		t.Run(name, func(t *testing.T) {
-			ops, err := fusefs.DiffSprint(s, mustParseSprint(t, fusefs.RenderSprint(s)))
+			ops, err := sourceview.DiffSprint(s, mustParseSprint(t, sourceview.RenderSprint(s)))
 			if err != nil {
 				t.Fatalf("DiffSprint: %v", err)
 			}
@@ -1301,23 +1301,23 @@ func TestDiffSprintEditable(t *testing.T) {
 	base := richSprint()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedSprint)
+		mutate func(*sourceview.ParsedSprint)
 		want   []model.Op
 	}{
-		{"title", func(p *fusefs.ParsedSprint) { p.Title = set("Renamed") }, []model.Op{model.SetTitle{Title: "Renamed"}}},
-		{"description", func(p *fusefs.ParsedSprint) { p.Description = set("New body") }, []model.Op{model.SetDescription{Description: "New body"}}},
-		{"status", func(p *fusefs.ParsedSprint) { p.Status = set("completed") }, []model.Op{model.SetSprintStatus{Status: model.SprintCompleted}}},
-		{"start_date change", func(p *fusefs.ParsedSprint) { p.StartDate = set("2025-12-13T02:54:56Z") }, []model.Op{model.SetStartDate{Date: 1765594496}}},
-		{"start_date clear via null", func(p *fusefs.ParsedSprint) { p.StartDate = null[string]() }, []model.Op{model.SetStartDate{Date: 0}}},
-		{"end_date clear via empty", func(p *fusefs.ParsedSprint) { p.EndDate = set("") }, []model.Op{model.SetEndDate{Date: 0}}},
-		{"add label", func(p *fusefs.ParsedSprint) { p.Labels.Value = append(p.Labels.Value, "urgent") }, []model.Op{model.AddLabel{Label: "urgent"}}},
-		{"remove label", func(p *fusefs.ParsedSprint) { p.Labels = set([]string{"fs"}) }, []model.Op{model.RemoveLabel{Label: "core"}}},
+		{"title", func(p *sourceview.ParsedSprint) { p.Title = set("Renamed") }, []model.Op{model.SetTitle{Title: "Renamed"}}},
+		{"description", func(p *sourceview.ParsedSprint) { p.Description = set("New body") }, []model.Op{model.SetDescription{Description: "New body"}}},
+		{"status", func(p *sourceview.ParsedSprint) { p.Status = set("completed") }, []model.Op{model.SetSprintStatus{Status: model.SprintCompleted}}},
+		{"start_date change", func(p *sourceview.ParsedSprint) { p.StartDate = set("2025-12-13T02:54:56Z") }, []model.Op{model.SetStartDate{Date: 1765594496}}},
+		{"start_date clear via null", func(p *sourceview.ParsedSprint) { p.StartDate = null[string]() }, []model.Op{model.SetStartDate{Date: 0}}},
+		{"end_date clear via empty", func(p *sourceview.ParsedSprint) { p.EndDate = set("") }, []model.Op{model.SetEndDate{Date: 0}}},
+		{"add label", func(p *sourceview.ParsedSprint) { p.Labels.Value = append(p.Labels.Value, "urgent") }, []model.Op{model.AddLabel{Label: "urgent"}}},
+		{"remove label", func(p *sourceview.ParsedSprint) { p.Labels = set([]string{"fs"}) }, []model.Op{model.RemoveLabel{Label: "core"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseSprint(t, fusefs.RenderSprint(base))
+			p := mustParseSprint(t, sourceview.RenderSprint(base))
 			tc.mutate(&p)
-			ops, err := fusefs.DiffSprint(base, p)
+			ops, err := sourceview.DiffSprint(base, p)
 			if err != nil {
 				t.Fatalf("DiffSprint: %v", err)
 			}
@@ -1332,18 +1332,18 @@ func TestDiffSprintInvalidValues(t *testing.T) {
 	base := richSprint()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedSprint)
+		mutate func(*sourceview.ParsedSprint)
 	}{
-		{"bogus status", func(p *fusefs.ParsedSprint) { p.Status = set("paused") }},
-		{"null status", func(p *fusefs.ParsedSprint) { p.Status = null[string]() }},
-		{"bad start_date", func(p *fusefs.ParsedSprint) { p.StartDate = set("not-a-date") }},
-		{"bad end_date", func(p *fusefs.ParsedSprint) { p.EndDate = set("12/19/2025") }},
+		{"bogus status", func(p *sourceview.ParsedSprint) { p.Status = set("paused") }},
+		{"null status", func(p *sourceview.ParsedSprint) { p.Status = null[string]() }},
+		{"bad start_date", func(p *sourceview.ParsedSprint) { p.StartDate = set("not-a-date") }},
+		{"bad end_date", func(p *sourceview.ParsedSprint) { p.EndDate = set("12/19/2025") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseSprint(t, fusefs.RenderSprint(base))
+			p := mustParseSprint(t, sourceview.RenderSprint(base))
 			tc.mutate(&p)
-			if _, err := fusefs.DiffSprint(base, p); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.DiffSprint(base, p); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
@@ -1354,26 +1354,26 @@ func TestDiffSprintImmutable(t *testing.T) {
 	base := richSprint()
 	cases := []struct {
 		field  string
-		mutate func(*fusefs.ParsedSprint)
+		mutate func(*sourceview.ParsedSprint)
 	}{
-		{"id", func(p *fusefs.ParsedSprint) { p.ID = set("0000000000000000000000000000000000000000") }},
-		{"project", func(p *fusefs.ParsedSprint) { p.Project = set("0000000000000000000000000000000000000000") }},
-		{"project", func(p *fusefs.ParsedSprint) { p.Project = null[string]() }},
-		{"commits", func(p *fusefs.ParsedSprint) { p.Commits = set([]string{}) }},
-		{"comments", func(p *fusefs.ParsedSprint) { p.Comments.Value[0].Body = "edited" }},
-		{"author", func(p *fusefs.ParsedSprint) { p.Author = set("Mallory m@example.com") }},
-		{"created_at", func(p *fusefs.ParsedSprint) { p.CreatedAt = set("2020-01-01T00:00:00Z") }},
-		{"updated_at", func(p *fusefs.ParsedSprint) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
-		{"started_at", func(p *fusefs.ParsedSprint) { p.StartedAt = null[string]() }},
-		{"closed_at", func(p *fusefs.ParsedSprint) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
-		{"tasks", func(p *fusefs.ParsedSprint) { p.Tasks = set([]string{"1111"}) }},
+		{"id", func(p *sourceview.ParsedSprint) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"project", func(p *sourceview.ParsedSprint) { p.Project = set("0000000000000000000000000000000000000000") }},
+		{"project", func(p *sourceview.ParsedSprint) { p.Project = null[string]() }},
+		{"commits", func(p *sourceview.ParsedSprint) { p.Commits = set([]string{}) }},
+		{"comments", func(p *sourceview.ParsedSprint) { p.Comments.Value[0].Body = "edited" }},
+		{"author", func(p *sourceview.ParsedSprint) { p.Author = set("Mallory m@example.com") }},
+		{"created_at", func(p *sourceview.ParsedSprint) { p.CreatedAt = set("2020-01-01T00:00:00Z") }},
+		{"updated_at", func(p *sourceview.ParsedSprint) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
+		{"started_at", func(p *sourceview.ParsedSprint) { p.StartedAt = null[string]() }},
+		{"closed_at", func(p *sourceview.ParsedSprint) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
+		{"tasks", func(p *sourceview.ParsedSprint) { p.Tasks = set([]string{"1111"}) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
-			p := mustParseSprint(t, fusefs.RenderSprint(base))
+			p := mustParseSprint(t, sourceview.RenderSprint(base))
 			tc.mutate(&p)
-			_, err := fusefs.DiffSprint(base, p)
-			if !errors.Is(err, fusefs.ErrImmutableField) {
+			_, err := sourceview.DiffSprint(base, p)
+			if !errors.Is(err, sourceview.ErrImmutableField) {
 				t.Fatalf("err %v, want ErrImmutableField", err)
 			}
 			if !strings.Contains(err.Error(), tc.field) {
@@ -1385,7 +1385,7 @@ func TestDiffSprintImmutable(t *testing.T) {
 
 func TestNewSprint(t *testing.T) {
 	t.Run("minimal", func(t *testing.T) {
-		ops, err := fusefs.NewSprint(mustParseSprint(t, []byte(`{"title": "New sprint"}`)))
+		ops, err := sourceview.NewSprint(mustParseSprint(t, []byte(`{"title": "New sprint"}`)))
 		if err != nil {
 			t.Fatalf("NewSprint: %v", err)
 		}
@@ -1400,7 +1400,7 @@ func TestNewSprint(t *testing.T) {
 	})
 	t.Run("description and labels", func(t *testing.T) {
 		doc := `{"title": "Planned", "description": "scope", "labels": ["z", "a", "z"]}`
-		ops, err := fusefs.NewSprint(mustParseSprint(t, []byte(doc)))
+		ops, err := sourceview.NewSprint(mustParseSprint(t, []byte(doc)))
 		if err != nil {
 			t.Fatalf("NewSprint: %v", err)
 		}
@@ -1422,21 +1422,21 @@ func TestNewSprint(t *testing.T) {
 	}
 	for name, doc := range errorCases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := fusefs.NewSprint(mustParseSprint(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.NewSprint(mustParseSprint(t, []byte(doc))); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
 	}
 	t.Run("default status accepted", func(t *testing.T) {
-		p := fusefs.ParsedSprint{Title: set("x"), Status: set("planned")}
-		if _, err := fusefs.NewSprint(p); err != nil {
+		p := sourceview.ParsedSprint{Title: set("x"), Status: set("planned")}
+		if _, err := sourceview.NewSprint(p); err != nil {
 			t.Fatalf("NewSprint with planned status: %v", err)
 		}
 	})
 	t.Run("timestamps ignored", func(t *testing.T) {
 		doc := `{"title": "x", "created_at": "2020-01-01T00:00:00Z", "updated_at": "2020-01-01T00:00:00Z",
 			"started_at": null, "closed_at": null, "start_date": null, "end_date": null}`
-		if _, err := fusefs.NewSprint(mustParseSprint(t, []byte(doc))); err != nil {
+		if _, err := sourceview.NewSprint(mustParseSprint(t, []byte(doc))); err != nil {
 			t.Fatalf("NewSprint: %v", err)
 		}
 	})
@@ -1457,7 +1457,7 @@ func TestProjectRoundTrip(t *testing.T) {
 	}
 	for name, pr := range cases {
 		t.Run(name, func(t *testing.T) {
-			ops, err := fusefs.DiffProject(pr, mustParseProject(t, fusefs.RenderProject(pr)))
+			ops, err := sourceview.DiffProject(pr, mustParseProject(t, sourceview.RenderProject(pr)))
 			if err != nil {
 				t.Fatalf("DiffProject: %v", err)
 			}
@@ -1472,20 +1472,20 @@ func TestDiffProjectEditable(t *testing.T) {
 	base := richProject()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedProject)
+		mutate func(*sourceview.ParsedProject)
 		want   []model.Op
 	}{
-		{"title", func(p *fusefs.ParsedProject) { p.Title = set("Renamed") }, []model.Op{model.SetTitle{Title: "Renamed"}}},
-		{"description", func(p *fusefs.ParsedProject) { p.Description = set("New body") }, []model.Op{model.SetDescription{Description: "New body"}}},
-		{"status", func(p *fusefs.ParsedProject) { p.Status = set("archived") }, []model.Op{model.SetProjectStatus{Status: model.ProjectArchived}}},
-		{"add label", func(p *fusefs.ParsedProject) { p.Labels.Value = append(p.Labels.Value, "urgent") }, []model.Op{model.AddLabel{Label: "urgent"}}},
-		{"remove label", func(p *fusefs.ParsedProject) { p.Labels = set([]string{"core"}) }, []model.Op{model.RemoveLabel{Label: "platform"}}},
+		{"title", func(p *sourceview.ParsedProject) { p.Title = set("Renamed") }, []model.Op{model.SetTitle{Title: "Renamed"}}},
+		{"description", func(p *sourceview.ParsedProject) { p.Description = set("New body") }, []model.Op{model.SetDescription{Description: "New body"}}},
+		{"status", func(p *sourceview.ParsedProject) { p.Status = set("archived") }, []model.Op{model.SetProjectStatus{Status: model.ProjectArchived}}},
+		{"add label", func(p *sourceview.ParsedProject) { p.Labels.Value = append(p.Labels.Value, "urgent") }, []model.Op{model.AddLabel{Label: "urgent"}}},
+		{"remove label", func(p *sourceview.ParsedProject) { p.Labels = set([]string{"core"}) }, []model.Op{model.RemoveLabel{Label: "platform"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseProject(t, fusefs.RenderProject(base))
+			p := mustParseProject(t, sourceview.RenderProject(base))
 			tc.mutate(&p)
-			ops, err := fusefs.DiffProject(base, p)
+			ops, err := sourceview.DiffProject(base, p)
 			if err != nil {
 				t.Fatalf("DiffProject: %v", err)
 			}
@@ -1500,16 +1500,16 @@ func TestDiffProjectInvalidValues(t *testing.T) {
 	base := richProject()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedProject)
+		mutate func(*sourceview.ParsedProject)
 	}{
-		{"bogus status", func(p *fusefs.ParsedProject) { p.Status = set("paused") }},
-		{"null status", func(p *fusefs.ParsedProject) { p.Status = null[string]() }},
+		{"bogus status", func(p *sourceview.ParsedProject) { p.Status = set("paused") }},
+		{"null status", func(p *sourceview.ParsedProject) { p.Status = null[string]() }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseProject(t, fusefs.RenderProject(base))
+			p := mustParseProject(t, sourceview.RenderProject(base))
 			tc.mutate(&p)
-			if _, err := fusefs.DiffProject(base, p); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.DiffProject(base, p); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
@@ -1520,24 +1520,24 @@ func TestDiffProjectImmutable(t *testing.T) {
 	base := richProject()
 	cases := []struct {
 		field  string
-		mutate func(*fusefs.ParsedProject)
+		mutate func(*sourceview.ParsedProject)
 	}{
-		{"id", func(p *fusefs.ParsedProject) { p.ID = set("0000000000000000000000000000000000000000") }},
-		{"commits", func(p *fusefs.ParsedProject) { p.Commits = set([]string{}) }},
-		{"comments", func(p *fusefs.ParsedProject) { p.Comments.Value[0].Body = "edited" }},
-		{"author", func(p *fusefs.ParsedProject) { p.Author = set("Mallory m@example.com") }},
-		{"created_at", func(p *fusefs.ParsedProject) { p.CreatedAt = set("2020-01-01T00:00:00Z") }},
-		{"updated_at", func(p *fusefs.ParsedProject) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
-		{"closed_at", func(p *fusefs.ParsedProject) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
-		{"sprints", func(p *fusefs.ParsedProject) { p.Sprints = set([]string{"1111"}) }},
-		{"tasks", func(p *fusefs.ParsedProject) { p.Tasks = set([]string{"1111"}) }},
+		{"id", func(p *sourceview.ParsedProject) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"commits", func(p *sourceview.ParsedProject) { p.Commits = set([]string{}) }},
+		{"comments", func(p *sourceview.ParsedProject) { p.Comments.Value[0].Body = "edited" }},
+		{"author", func(p *sourceview.ParsedProject) { p.Author = set("Mallory m@example.com") }},
+		{"created_at", func(p *sourceview.ParsedProject) { p.CreatedAt = set("2020-01-01T00:00:00Z") }},
+		{"updated_at", func(p *sourceview.ParsedProject) { p.UpdatedAt = set("2020-01-01T00:00:00Z") }},
+		{"closed_at", func(p *sourceview.ParsedProject) { p.ClosedAt = set("2026-01-01T00:00:00Z") }},
+		{"sprints", func(p *sourceview.ParsedProject) { p.Sprints = set([]string{"1111"}) }},
+		{"tasks", func(p *sourceview.ParsedProject) { p.Tasks = set([]string{"1111"}) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
-			p := mustParseProject(t, fusefs.RenderProject(base))
+			p := mustParseProject(t, sourceview.RenderProject(base))
 			tc.mutate(&p)
-			_, err := fusefs.DiffProject(base, p)
-			if !errors.Is(err, fusefs.ErrImmutableField) {
+			_, err := sourceview.DiffProject(base, p)
+			if !errors.Is(err, sourceview.ErrImmutableField) {
 				t.Fatalf("err %v, want ErrImmutableField", err)
 			}
 			if !strings.Contains(err.Error(), tc.field) {
@@ -1549,7 +1549,7 @@ func TestDiffProjectImmutable(t *testing.T) {
 
 func TestNewProject(t *testing.T) {
 	t.Run("minimal", func(t *testing.T) {
-		ops, err := fusefs.NewProject(mustParseProject(t, []byte(`{"title": "New project"}`)))
+		ops, err := sourceview.NewProject(mustParseProject(t, []byte(`{"title": "New project"}`)))
 		if err != nil {
 			t.Fatalf("NewProject: %v", err)
 		}
@@ -1564,7 +1564,7 @@ func TestNewProject(t *testing.T) {
 	})
 	t.Run("description and labels", func(t *testing.T) {
 		doc := `{"title": "Platform", "description": "scope", "labels": ["z", "a", "z"]}`
-		ops, err := fusefs.NewProject(mustParseProject(t, []byte(doc)))
+		ops, err := sourceview.NewProject(mustParseProject(t, []byte(doc)))
 		if err != nil {
 			t.Fatalf("NewProject: %v", err)
 		}
@@ -1586,20 +1586,20 @@ func TestNewProject(t *testing.T) {
 	}
 	for name, doc := range errorCases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := fusefs.NewProject(mustParseProject(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+			if _, err := sourceview.NewProject(mustParseProject(t, []byte(doc))); !errors.Is(err, sourceview.ErrParse) {
 				t.Fatalf("err %v, want ErrParse", err)
 			}
 		})
 	}
 	t.Run("default status accepted", func(t *testing.T) {
-		p := fusefs.ParsedProject{Title: set("x"), Status: set("active")}
-		if _, err := fusefs.NewProject(p); err != nil {
+		p := sourceview.ParsedProject{Title: set("x"), Status: set("active")}
+		if _, err := sourceview.NewProject(p); err != nil {
 			t.Fatalf("NewProject with active status: %v", err)
 		}
 	})
 	t.Run("timestamps ignored", func(t *testing.T) {
 		doc := `{"title": "x", "created_at": "2020-01-01T00:00:00Z", "updated_at": "2020-01-01T00:00:00Z", "closed_at": null}`
-		if _, err := fusefs.NewProject(mustParseProject(t, []byte(doc))); err != nil {
+		if _, err := sourceview.NewProject(mustParseProject(t, []byte(doc))); err != nil {
 			t.Fatalf("NewProject: %v", err)
 		}
 	})
@@ -1670,7 +1670,7 @@ func TestRenderTaskMatchesCLIJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load task: %v", err)
 	}
-	if got := fusefs.RenderTask(snapshot.(model.Task)); !bytes.Equal(got, want.Bytes()) {
+	if got := sourceview.RenderTask(snapshot.(model.Task)); !bytes.Equal(got, want.Bytes()) {
 		t.Errorf("RenderTask diverges from CLI --json:\n got %s\nwant %s", got, want.Bytes())
 	}
 }
@@ -1699,7 +1699,7 @@ func TestRenderTaskKeepsEveryCommentPastShowCap(t *testing.T) {
 		Comments        []json.RawMessage `json:"comments"`
 		CommentsOmitted *int              `json:"comments_omitted"`
 	}
-	if err := json.Unmarshal(fusefs.RenderTask(snapshot.(model.Task)), &doc); err != nil {
+	if err := json.Unmarshal(sourceview.RenderTask(snapshot.(model.Task)), &doc); err != nil {
 		t.Fatalf("unmarshal rendered task: %v", err)
 	}
 	if len(doc.Comments) != comments {
@@ -1740,7 +1740,7 @@ func TestRenderSprintMatchesCLIJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load sprint: %v", err)
 	}
-	if got := fusefs.RenderSprint(snapshot.(model.Sprint)); !bytes.Equal(got, want.Bytes()) {
+	if got := sourceview.RenderSprint(snapshot.(model.Sprint)); !bytes.Equal(got, want.Bytes()) {
 		t.Errorf("RenderSprint diverges from CLI --json:\n got %s\nwant %s", got, want.Bytes())
 	}
 }
@@ -1772,7 +1772,7 @@ func TestRenderProjectMatchesCLIJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load project: %v", err)
 	}
-	if got := fusefs.RenderProject(snapshot.(model.Project)); !bytes.Equal(got, want.Bytes()) {
+	if got := sourceview.RenderProject(snapshot.(model.Project)); !bytes.Equal(got, want.Bytes()) {
 		t.Errorf("RenderProject diverges from CLI --json:\n got %s\nwant %s", got, want.Bytes())
 	}
 }
@@ -1846,9 +1846,9 @@ func modelLog() model.Log {
 	}
 }
 
-func mustParseLog(t *testing.T, data []byte) fusefs.ParsedLog {
+func mustParseLog(t *testing.T, data []byte) sourceview.ParsedLog {
 	t.Helper()
-	p, err := fusefs.ParseLog(data)
+	p, err := sourceview.ParseLog(data)
 	if err != nil {
 		t.Fatalf("ParseLog(%q): %v", data, err)
 	}
@@ -1856,7 +1856,7 @@ func mustParseLog(t *testing.T, data []byte) fusefs.ParsedLog {
 }
 
 func TestRenderLogGolden(t *testing.T) {
-	if got := string(fusefs.RenderLog(richLog())); got != goldenLog {
+	if got := string(sourceview.RenderLog(richLog())); got != goldenLog {
 		t.Errorf("rich log render:\n got %q\nwant %q", got, goldenLog)
 	}
 	minimal := model.Log{
@@ -1864,7 +1864,7 @@ func TestRenderLogGolden(t *testing.T) {
 		Title:  "07",
 		Author: "A <a@x>",
 	}
-	if got := string(fusefs.RenderLog(minimal)); got != goldenMinimalLog {
+	if got := string(sourceview.RenderLog(minimal)); got != goldenMinimalLog {
 		t.Errorf("minimal log render:\n got %q\nwant %q", got, goldenMinimalLog)
 	}
 }
@@ -1883,7 +1883,7 @@ func TestRenderLogCLIEntriesParseable(t *testing.T) {
 			{Author: "B <b@x>", TS: 200, Text: "rolled back to 0%"},
 		},
 	}
-	rendered := string(fusefs.RenderLog(l))
+	rendered := string(sourceview.RenderLog(l))
 	// The second entry's text must end at a newline so the following fence
 	// opens a fresh line — never "...5%<!-- cc-notes:entry".
 	if !strings.Contains(rendered, "flipped to 5%\n<!-- cc-notes:entry") {
@@ -1946,7 +1946,7 @@ func TestLogRoundTrip(t *testing.T) {
 	}
 	for name, l := range cases {
 		t.Run(name, func(t *testing.T) {
-			ops, err := fusefs.DiffLog(l, mustParseLog(t, fusefs.RenderLog(l)))
+			ops, err := sourceview.DiffLog(l, mustParseLog(t, sourceview.RenderLog(l)))
 			if err != nil {
 				t.Fatalf("DiffLog: %v", err)
 			}
@@ -1959,10 +1959,10 @@ func TestLogRoundTrip(t *testing.T) {
 
 func TestDiffLogAppendEntry(t *testing.T) {
 	base := richLog()
-	text := string(fusefs.RenderLog(base))
+	text := string(sourceview.RenderLog(base))
 	text += "<!-- cc-notes:entry author=\"ignored\" ts=\"1999-01-01T00:00:00Z\" -->\n"
 	text += "rolled back to 0%\nincident closed.\n"
-	ops, err := fusefs.DiffLog(base, mustParseLog(t, []byte(text)))
+	ops, err := sourceview.DiffLog(base, mustParseLog(t, []byte(text)))
 	if err != nil {
 		t.Fatalf("DiffLog: %v", err)
 	}
@@ -1977,7 +1977,7 @@ func TestDiffLogAppendEntry(t *testing.T) {
 // recovers it, and DiffLog against the source produces no ops.
 func TestRenderParseLogModel(t *testing.T) {
 	base := modelLog()
-	rendered := string(fusefs.RenderLog(base))
+	rendered := string(sourceview.RenderLog(base))
 	if !strings.Contains(rendered, ` model="claude-fable-5" -->`) {
 		t.Errorf("model attribute missing from fence:\n%s", rendered)
 	}
@@ -1994,7 +1994,7 @@ func TestRenderParseLogModel(t *testing.T) {
 	if got := p.Entries[1].Model; got != "" {
 		t.Errorf("entry 1 model %q, want empty", got)
 	}
-	ops, err := fusefs.DiffLog(base, p)
+	ops, err := sourceview.DiffLog(base, p)
 	if err != nil {
 		t.Fatalf("DiffLog: %v", err)
 	}
@@ -2019,7 +2019,7 @@ func TestRenderParseLogModelQuoted(t *testing.T) {
 		CreatedAt: 100,
 		UpdatedAt: 200,
 	}
-	rendered := string(fusefs.RenderLog(base))
+	rendered := string(sourceview.RenderLog(base))
 	if !strings.Contains(rendered, ` model="vendor/model"preview" -->`) {
 		t.Errorf("embedded quote not rendered raw:\n%s", rendered)
 	}
@@ -2036,7 +2036,7 @@ func TestRenderParseLogModelQuoted(t *testing.T) {
 	if got, want := p.Entries[1].Model, `vendor\`; got != want {
 		t.Errorf("entry 1 model %q, want %q", got, want)
 	}
-	ops, err := fusefs.DiffLog(base, p)
+	ops, err := sourceview.DiffLog(base, p)
 	if err != nil {
 		t.Fatalf("DiffLog: %v", err)
 	}
@@ -2088,10 +2088,10 @@ func TestParseLogModelless(t *testing.T) {
 // commit-derived author/ts, the model is op-carried and honored.
 func TestDiffLogAppendEntryModel(t *testing.T) {
 	base := richLog()
-	text := string(fusefs.RenderLog(base))
+	text := string(sourceview.RenderLog(base))
 	text += "<!-- cc-notes:entry author=\"ignored\" ts=\"1999-01-01T00:00:00Z\" model=\"claude-fable-5\" -->\n"
 	text += "unquoted globs broke rg\n"
-	ops, err := fusefs.DiffLog(base, mustParseLog(t, []byte(text)))
+	ops, err := sourceview.DiffLog(base, mustParseLog(t, []byte(text)))
 	if err != nil {
 		t.Fatalf("DiffLog: %v", err)
 	}
@@ -2107,17 +2107,17 @@ func TestDiffLogModelImmutable(t *testing.T) {
 	base := modelLog()
 	cases := []struct {
 		name   string
-		mutate func(p *fusefs.ParsedLog)
+		mutate func(p *sourceview.ParsedLog)
 	}{
-		{"changed model", func(p *fusefs.ParsedLog) { p.Entries[0].Model = "claude-opus-4-8" }},
-		{"removed model", func(p *fusefs.ParsedLog) { p.Entries[0].Model = "" }},
+		{"changed model", func(p *sourceview.ParsedLog) { p.Entries[0].Model = "claude-opus-4-8" }},
+		{"removed model", func(p *sourceview.ParsedLog) { p.Entries[0].Model = "" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseLog(t, fusefs.RenderLog(base))
+			p := mustParseLog(t, sourceview.RenderLog(base))
 			tc.mutate(&p)
-			_, err := fusefs.DiffLog(base, p)
-			if !errors.Is(err, fusefs.ErrImmutableField) {
+			_, err := sourceview.DiffLog(base, p)
+			if !errors.Is(err, sourceview.ErrImmutableField) {
 				t.Fatalf("err %v, want ErrImmutableField", err)
 			}
 		})
@@ -2128,35 +2128,35 @@ func TestDiffLogFrontmatterEdits(t *testing.T) {
 	base := richLog()
 	cases := []struct {
 		name   string
-		mutate func(*fusefs.ParsedLog)
+		mutate func(*sourceview.ParsedLog)
 		want   []model.Op
 	}{
 		{
-			"title", func(p *fusefs.ParsedLog) { p.Title = set("Renamed timeline") },
+			"title", func(p *sourceview.ParsedLog) { p.Title = set("Renamed timeline") },
 			[]model.Op{model.SetTitle{Title: "Renamed timeline"}},
 		},
 		{
-			"add tag", func(p *fusefs.ParsedLog) { p.Tags = set([]string{"ops", "rollout", "urgent"}) },
+			"add tag", func(p *sourceview.ParsedLog) { p.Tags = set([]string{"ops", "rollout", "urgent"}) },
 			[]model.Op{model.AddTag{Tag: "urgent"}},
 		},
 		{
-			"remove tag", func(p *fusefs.ParsedLog) { p.Tags = set([]string{"ops"}) },
+			"remove tag", func(p *sourceview.ParsedLog) { p.Tags = set([]string{"ops"}) },
 			[]model.Op{model.RemoveTag{Tag: "rollout"}},
 		},
 		{
-			"add anchor", func(p *fusefs.ParsedLog) { p.Paths = set([]string{"internal/auth", "internal/auth/oauth.go"}) },
+			"add anchor", func(p *sourceview.ParsedLog) { p.Paths = set([]string{"internal/auth", "internal/auth/oauth.go"}) },
 			[]model.Op{model.AddAnchor{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "internal/auth/oauth.go"}}},
 		},
 		{
-			"remove anchor", func(p *fusefs.ParsedLog) { p.Branches = set([]string{}) },
+			"remove anchor", func(p *sourceview.ParsedLog) { p.Branches = set([]string{}) },
 			[]model.Op{model.RemoveAnchor{Anchor: model.Anchor{Kind: model.AnchorBranch, Value: "main"}}},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseLog(t, fusefs.RenderLog(base))
+			p := mustParseLog(t, sourceview.RenderLog(base))
 			tc.mutate(&p)
-			ops, err := fusefs.DiffLog(base, p)
+			ops, err := sourceview.DiffLog(base, p)
 			if err != nil {
 				t.Fatalf("DiffLog: %v", err)
 			}
@@ -2171,21 +2171,21 @@ func TestDiffLogAppendOnly(t *testing.T) {
 	base := richLog()
 	cases := []struct {
 		name   string
-		mutate func(p *fusefs.ParsedLog)
+		mutate func(p *sourceview.ParsedLog)
 	}{
-		{"modified entry text", func(p *fusefs.ParsedLog) { p.Entries[0].Text = "rewritten\n" }},
-		{"modified entry author", func(p *fusefs.ParsedLog) { p.Entries[0].Author = "Mallory <m@x>" }},
-		{"modified entry ts", func(p *fusefs.ParsedLog) { p.Entries[0].TS = "2000-01-01T00:00:00Z" }},
-		{"added model to existing entry", func(p *fusefs.ParsedLog) { p.Entries[0].Model = "claude-opus-4-8" }},
-		{"reordered entries", func(p *fusefs.ParsedLog) { p.Entries[0], p.Entries[1] = p.Entries[1], p.Entries[0] }},
-		{"removed entry", func(p *fusefs.ParsedLog) { p.Entries = p.Entries[:1] }},
+		{"modified entry text", func(p *sourceview.ParsedLog) { p.Entries[0].Text = "rewritten\n" }},
+		{"modified entry author", func(p *sourceview.ParsedLog) { p.Entries[0].Author = "Mallory <m@x>" }},
+		{"modified entry ts", func(p *sourceview.ParsedLog) { p.Entries[0].TS = "2000-01-01T00:00:00Z" }},
+		{"added model to existing entry", func(p *sourceview.ParsedLog) { p.Entries[0].Model = "claude-opus-4-8" }},
+		{"reordered entries", func(p *sourceview.ParsedLog) { p.Entries[0], p.Entries[1] = p.Entries[1], p.Entries[0] }},
+		{"removed entry", func(p *sourceview.ParsedLog) { p.Entries = p.Entries[:1] }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := mustParseLog(t, fusefs.RenderLog(base))
+			p := mustParseLog(t, sourceview.RenderLog(base))
 			tc.mutate(&p)
-			_, err := fusefs.DiffLog(base, p)
-			if !errors.Is(err, fusefs.ErrImmutableField) {
+			_, err := sourceview.DiffLog(base, p)
+			if !errors.Is(err, sourceview.ErrImmutableField) {
 				t.Fatalf("err %v, want ErrImmutableField", err)
 			}
 		})
@@ -2196,18 +2196,18 @@ func TestDiffLogImmutableFrontmatter(t *testing.T) {
 	base := richLog()
 	cases := []struct {
 		field  string
-		mutate func(*fusefs.ParsedLog)
+		mutate func(*sourceview.ParsedLog)
 	}{
-		{"id", func(p *fusefs.ParsedLog) { p.ID = set("0000000000000000000000000000000000000000") }},
-		{"author", func(p *fusefs.ParsedLog) { p.Author = set("Mallory <m@example.com>") }},
-		{"created", func(p *fusefs.ParsedLog) { p.Created = set("2020-01-01T00:00:00Z") }},
+		{"id", func(p *sourceview.ParsedLog) { p.ID = set("0000000000000000000000000000000000000000") }},
+		{"author", func(p *sourceview.ParsedLog) { p.Author = set("Mallory <m@example.com>") }},
+		{"created", func(p *sourceview.ParsedLog) { p.Created = set("2020-01-01T00:00:00Z") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.field, func(t *testing.T) {
-			p := mustParseLog(t, fusefs.RenderLog(base))
+			p := mustParseLog(t, sourceview.RenderLog(base))
 			tc.mutate(&p)
-			_, err := fusefs.DiffLog(base, p)
-			if !errors.Is(err, fusefs.ErrImmutableField) {
+			_, err := sourceview.DiffLog(base, p)
+			if !errors.Is(err, sourceview.ErrImmutableField) {
 				t.Fatalf("err %v, want ErrImmutableField", err)
 			}
 			if !strings.Contains(err.Error(), tc.field) {
@@ -2219,9 +2219,9 @@ func TestDiffLogImmutableFrontmatter(t *testing.T) {
 
 func TestDiffLogUpdatedIsInformational(t *testing.T) {
 	base := richLog()
-	p := mustParseLog(t, fusefs.RenderLog(base))
+	p := mustParseLog(t, sourceview.RenderLog(base))
 	p.Updated = set("1999-12-31T23:59:59Z")
-	ops, err := fusefs.DiffLog(base, p)
+	ops, err := sourceview.DiffLog(base, p)
 	if err != nil {
 		t.Fatalf("DiffLog: %v", err)
 	}
@@ -2236,7 +2236,7 @@ func TestParseLogSentinelCollision(t *testing.T) {
 	body := "---\ntitle: Bad\nauthor: A <a@x>\n---\n" +
 		"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\n" +
 		"text mentioning <!-- cc-notes:entry author=\"forged\" ts=\"x\" --> inline\n"
-	if _, err := fusefs.ParseLog([]byte(body)); !errors.Is(err, fusefs.ErrParse) {
+	if _, err := sourceview.ParseLog([]byte(body)); !errors.Is(err, sourceview.ErrParse) {
 		t.Fatalf("err %v, want ErrParse", err)
 	}
 }
@@ -2246,7 +2246,7 @@ func TestParseLogTextBeforeFirstEntry(t *testing.T) {
 		"loose text with no fence\n" +
 		"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\n" +
 		"entry text\n"
-	if _, err := fusefs.ParseLog([]byte(body)); !errors.Is(err, fusefs.ErrParse) {
+	if _, err := sourceview.ParseLog([]byte(body)); !errors.Is(err, sourceview.ErrParse) {
 		t.Fatalf("err %v, want ErrParse", err)
 	}
 }
@@ -2255,7 +2255,7 @@ func TestNewLog(t *testing.T) {
 	t.Run("frontmatter title with entries", func(t *testing.T) {
 		doc := "---\ntitle: Brand new\ntags: [b, a, b]\npaths: [internal/auth]\n---\n" +
 			"<!-- cc-notes:entry author=\"ignored\" ts=\"2025-12-12T02:54:56Z\" -->\nfirst entry\n"
-		ops, err := fusefs.NewLog(mustParseLog(t, []byte(doc)))
+		ops, err := sourceview.NewLog(mustParseLog(t, []byte(doc)))
 		if err != nil {
 			t.Fatalf("NewLog: %v", err)
 		}
@@ -2280,7 +2280,7 @@ func TestNewLog(t *testing.T) {
 	t.Run("heading fallback from first entry", func(t *testing.T) {
 		doc := "---\n---\n" +
 			"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\n# Heading title\nrest\n"
-		ops, err := fusefs.NewLog(mustParseLog(t, []byte(doc)))
+		ops, err := sourceview.NewLog(mustParseLog(t, []byte(doc)))
 		if err != nil {
 			t.Fatalf("NewLog: %v", err)
 		}
@@ -2291,13 +2291,13 @@ func TestNewLog(t *testing.T) {
 	t.Run("no title anywhere", func(t *testing.T) {
 		doc := "---\n---\n" +
 			"<!-- cc-notes:entry author=\"A <a@x>\" ts=\"2025-12-12T02:54:56Z\" -->\nplain text\n"
-		if _, err := fusefs.NewLog(mustParseLog(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+		if _, err := sourceview.NewLog(mustParseLog(t, []byte(doc))); !errors.Is(err, sourceview.ErrParse) {
 			t.Fatalf("err %v, want ErrParse", err)
 		}
 	})
 	t.Run("id on a new log", func(t *testing.T) {
 		doc := "---\nid: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0\ntitle: Copied\n---\n"
-		if _, err := fusefs.NewLog(mustParseLog(t, []byte(doc))); !errors.Is(err, fusefs.ErrParse) {
+		if _, err := sourceview.NewLog(mustParseLog(t, []byte(doc))); !errors.Is(err, sourceview.ErrParse) {
 			t.Fatalf("err %v, want ErrParse", err)
 		}
 	})
@@ -2385,7 +2385,7 @@ func richRunbook() model.Runbook {
 }
 
 func TestRenderRunbookGolden(t *testing.T) {
-	if got := string(fusefs.RenderRunbook(richRunbook())); got != goldenRunbook {
+	if got := string(sourceview.RenderRunbook(richRunbook())); got != goldenRunbook {
 		t.Errorf("rich runbook render:\n got %q\nwant %q", got, goldenRunbook)
 	}
 	minimal := model.Runbook{
@@ -2394,7 +2394,7 @@ func TestRenderRunbookGolden(t *testing.T) {
 		Status: model.RunbookActive,
 		Author: "A <a@x>",
 	}
-	if got := string(fusefs.RenderRunbook(minimal)); got != goldenMinimalRunbook {
+	if got := string(sourceview.RenderRunbook(minimal)); got != goldenMinimalRunbook {
 		t.Errorf("minimal runbook render:\n got %q\nwant %q", got, goldenMinimalRunbook)
 	}
 
@@ -2406,7 +2406,7 @@ func TestRenderRunbookGolden(t *testing.T) {
 	wantAnchored := strings.Replace(goldenMinimalRunbook,
 		"labels: []\n",
 		"labels: []\npaths: [scripts/deploy.sh]\nbranches: [main]\n", 1)
-	if got := string(fusefs.RenderRunbook(anchored)); got != wantAnchored {
+	if got := string(sourceview.RenderRunbook(anchored)); got != wantAnchored {
 		t.Errorf("anchored runbook render:\n got %q\nwant %q", got, wantAnchored)
 	}
 }
@@ -2429,7 +2429,7 @@ func TestRenderRunbookForeignShortIDs(t *testing.T) {
 			StartedAt: 1765680896,
 		}},
 	}
-	got := string(fusefs.RenderRunbook(rb))
+	got := string(sourceview.RenderRunbook(rb))
 	if !strings.Contains(got, "<!-- cc-notes:step s1 -->") {
 		t.Fatalf("step fence lost short id:\n%s", got)
 	}
@@ -2468,7 +2468,7 @@ const goldenInvestigation = "---\n" +
 	"\n" +
 	"The sender outlives the collector return.\n" +
 	"\n" +
-	"- [goroutine stacks.txt](../attachments/a1b2c3d/goroutine%20stacks.txt)\n" +
+	"- [goroutine stacks.txt](../attachments/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/goroutine%20stacks.txt)\n" +
 	"\n" +
 	"## Verdict\n" +
 	"\n" +
@@ -2513,7 +2513,7 @@ func richInvestigation() model.Investigation {
 }
 
 func TestRenderInvestigationGolden(t *testing.T) {
-	if got := string(fusefs.RenderInvestigation(richInvestigation())); got != goldenInvestigation {
+	if got := string(sourceview.RenderInvestigation(richInvestigation())); got != goldenInvestigation {
 		t.Errorf("investigation render:\n got %q\nwant %q", got, goldenInvestigation)
 	}
 }
@@ -2558,7 +2558,7 @@ func richPlan() model.Plan {
 }
 
 func TestRenderPlanGolden(t *testing.T) {
-	if got := string(fusefs.RenderPlan(richPlan())); got != goldenPlan {
+	if got := string(sourceview.RenderPlan(richPlan())); got != goldenPlan {
 		t.Errorf("plan render:\n got %q\nwant %q", got, goldenPlan)
 	}
 }
@@ -2567,7 +2567,7 @@ func TestRenderPlanGolden(t *testing.T) {
 // renders, and the absence of the supersede key when no successor exists.
 func TestRenderPlanUnrecordedOutcome(t *testing.T) {
 	p := model.Plan{ID: "c1c2c3c4c5c6c7c8c9c0d1d2d3d4d5d6d7d8d9d0", Title: "Draft", Body: "text", Status: model.PlanDraft}
-	got := string(fusefs.RenderPlan(p))
+	got := string(sourceview.RenderPlan(p))
 	if !strings.Contains(got, "## Outcome\n\n_Not recorded._\n") {
 		t.Errorf("plan render lost the outcome placeholder:\n%s", got)
 	}

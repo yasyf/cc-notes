@@ -37,9 +37,9 @@ func indexedDuplicateList[S model.Snapshot](ctx context.Context, s *Store, kind 
 	if err != nil {
 		return nil, false, err
 	}
-	entries, hit, err := readQueryMetadataIndexWithoutWait(ctx, source, func(tx *bolt.Tx) ([]tipEntry, error) {
+	entries, hit, err := readIndexedQuery(ctx, source, func(tx *bolt.Tx, source queryMetadataSource) ([]tipEntry, error) {
 		var entries []tipEntry
-		err := walkQueryMetadataPostings(tx, source.binding, queryMetadataDuplicatesBucket, queryMetadataLabelPrefix(kind, fingerprint), false, func(row queryMetadata) bool {
+		err := source.walk(tx, queryMetadataDuplicatesBucket, queryMetadataLabelPrefix(kind, fingerprint), false, func(row queryMetadata) bool {
 			return row.Kind == kind && row.DuplicateContent == fingerprint
 		}, func(row queryMetadata) error {
 			if err := ctx.Err(); err != nil {

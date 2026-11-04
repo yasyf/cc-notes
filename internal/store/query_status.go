@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"fmt"
@@ -23,27 +24,39 @@ type StatusMetadata struct {
 	Captured *Store
 }
 
-// StatusMetadata reads every requested kind from one captured ref universe.
-// A derived-cache miss retains that capture for the authoritative status reader.
+// StatusMetadata reads the requested metadata and body tips from one managed
+// authority view. Historical pins return a miss when current rows differ.
 func (s *Store) StatusMetadata(ctx context.Context, kinds ...model.Kind) (StatusMetadata, bool, error) {
-	pinned, sources, err := captureStatusMetadataSources(ctx, s, kinds...)
-	if err != nil {
-		return StatusMetadata{}, false, err
-	}
-	result := StatusMetadata{Captured: pinned}
-	for _, source := range sources {
-		rows, hit, err := readQueryMetadataIndex(ctx, source, func(tx *bolt.Tx) ([]StatusRecord, error) {
+	var result StatusMetadata
+	var hit bool
+	err := s.managedView(ctx, func(tx *bolt.Tx) error {
+		pinned, sources, err := captureStatusMetadataSourcesAt(ctx, s, tx, kinds...)
+		if err != nil {
+			return err
+		}
+		result.Captured = pinned
+		for _, source := range sources {
+			if source.pinned {
+				diff, err := diffQueryMetadata(ctx, tx, source.binding, source.kind, source.tips)
+				if err != nil {
+					return err
+				}
+				if len(diff.Changed) != 0 || len(diff.Removed) != 0 {
+					result.Records = nil
+					return nil
+				}
+			}
 			rows := make([]StatusRecord, 0, len(source.tips))
 			for id := range source.tips {
 				if err := ctx.Err(); err != nil {
-					return nil, err
+					return err
 				}
 				row, err := decodeQueryMetadata(tx, source, readQueryMetadata(tx, source.binding, id))
 				if err != nil {
-					return nil, err
+					return err
 				}
 				if row.ID != id {
-					return nil, fmt.Errorf("status metadata identity differs from %s", id)
+					return fmt.Errorf("status metadata identity differs from %s", id)
 				}
 				rows = append(rows, StatusRecord(row))
 			}
@@ -53,70 +66,77 @@ func (s *Store) StatusMetadata(ctx context.Context, kinds ...model.Kind) (Status
 				}
 				return cmp.Compare(a.ID, b.ID)
 			})
-			return rows, nil
-		})
-		if err != nil {
-			return StatusMetadata{}, false, err
+			result.Records = append(result.Records, rows...)
 		}
-		if !hit {
-			return StatusMetadata{Captured: pinned}, false, nil
-		}
-		result.Records = append(result.Records, rows...)
-	}
-	if err := ctx.Err(); err != nil {
+		hit = true
+		return nil
+	})
+	if err != nil {
 		return StatusMetadata{}, false, err
 	}
-	if err := pinned.CheckRecords(); err != nil {
-		return StatusMetadata{}, false, err
-	}
-	return result, true, nil
+	return result, hit, nil
 }
 
-func captureStatusMetadataSources(ctx context.Context, s *Store, kinds ...model.Kind) (*Store, []queryMetadataSource, error) {
+func captureStatusMetadataSources(ctx context.Context, s *Store, kinds ...model.Kind) (pinned *Store, sources []queryMetadataSource, err error) {
+	err = s.managedView(ctx, func(tx *bolt.Tx) error {
+		var err error
+		pinned, sources, err = captureStatusMetadataSourcesAt(ctx, s, tx, kinds...)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return pinned, sources, nil
+}
+
+func captureStatusMetadataSourcesAt(ctx context.Context, s *Store, tx *bolt.Tx, kinds ...model.Kind) (*Store, []queryMetadataSource, error) {
+	pins := maps.Clone(s.pins)
+	if pins == nil {
+		pins = make(map[string]model.SHA)
+	}
 	sources := make([]queryMetadataSource, len(kinds))
 	for i, kind := range kinds {
 		source, err := queryMetadataIdentity(ctx, s, kind)
 		if err != nil {
 			return nil, nil, err
 		}
-		if !source.pinned {
-			source.generation, err = source.currentGeneration(ctx)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		sources[i] = source
-	}
-	var pinned *Store
-	if s.pins != nil {
-		pinned = s.Pinned(maps.Clone(s.pins))
-	} else {
-		var err error
-		pinned, err = s.PinnedKinds(ctx, kinds...)
-		if err != nil {
+		if err := validateQueryMetadataBinding(tx, source); err != nil {
 			return nil, nil, err
 		}
-	}
-	for i, source := range sources {
-		if !source.pinned {
-			generation, err := source.currentGeneration(ctx)
+		captured := make(map[model.EntityID]model.SHA)
+		root := refs.Root(kind)
+		if source.pinned {
+			for _, entry := range directChildren(root, pins) {
+				if err := ctx.Err(); err != nil {
+					return nil, nil, err
+				}
+				captured[model.EntityID(strings.TrimPrefix(entry.ref, root))] = entry.tip
+			}
+		} else {
+			authority, err := managedRoot(tx)
 			if err != nil {
 				return nil, nil, err
 			}
-			if generation != source.generation {
-				source.generation = ""
+			prefix := []byte(root)
+			cursor := authority.Bucket([]byte("refs")).Cursor()
+			for ref, value := cursor.Seek(prefix); bytes.HasPrefix(ref, prefix); ref, value = cursor.Next() {
+				if err := ctx.Err(); err != nil {
+					return nil, nil, err
+				}
+				if !refs.DirectChild(root, string(ref)) {
+					continue
+				}
+				tip := model.SHA(value)
+				captured[model.EntityID(strings.TrimPrefix(string(ref), root))] = tip
+				pins[string(ref)] = tip
 			}
 		}
-		source.store = pinned
-		source.tips = make(map[model.EntityID]model.SHA)
-		root := refs.Root(source.kind)
-		for _, entry := range directChildren(root, pinned.pins) {
-			if err := ctx.Err(); err != nil {
-				return nil, nil, err
-			}
-			source.tips[model.EntityID(strings.TrimPrefix(entry.ref, root))] = entry.tip
-		}
+		source.tips = captured
 		sources[i] = source
+	}
+	pinned := s.Pinned(pins)
+	for i := range sources {
+		sources[i].store = pinned
 	}
 	return pinned, sources, nil
 }

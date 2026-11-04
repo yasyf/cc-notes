@@ -195,11 +195,15 @@ func (c *Client) ResolveEntity(ctx context.Context, prefix string) (model.Kind, 
 	if err := c.s.CheckRecords(); err != nil {
 		return "", "", err
 	}
-	tips, err := c.s.RecordsGit.Refs(ctx, refs.Namespace)
+	lowered := strings.ToLower(prefix)
+	prefixes := make([]string, 0, len(model.Kinds()))
+	for _, kind := range model.Kinds() {
+		prefixes = append(prefixes, refs.Root(kind)+lowered)
+	}
+	tips, err := c.s.ManagedTips(ctx, prefixes...)
 	if err != nil {
 		return "", "", err
 	}
-	lowered := strings.ToLower(prefix)
 	byKind := make(map[model.Kind][]string, len(model.Kinds()))
 	for ref := range tips {
 		parsed, err := refs.Parse(ref)

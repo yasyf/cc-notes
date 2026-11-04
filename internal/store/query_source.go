@@ -6,19 +6,18 @@ import (
 	"maps"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/model"
 )
 
 type queryMetadataSource struct {
-	store      *Store
-	kind       model.Kind
-	binding    string
-	tips       map[model.EntityID]model.SHA
-	pinned     bool
-	generation string
+	store    *Store
+	kind     model.Kind
+	binding  string
+	tips     map[model.EntityID]model.SHA
+	pinned   bool
+	retained *retainedQuery
 }
 
 func queryMetadataIdentity(ctx context.Context, s *Store, kind model.Kind) (queryMetadataSource, error) {
@@ -48,38 +47,15 @@ func captureQueryMetadata(ctx context.Context, s *Store, kind model.Kind) (query
 	return source.capture(ctx)
 }
 
-func (q queryMetadataSource) currentGeneration(ctx context.Context) (string, error) {
-	taken := time.Now()
-	generation, err := q.store.Repo.RefGeneration(ctx, refs.Root(q.kind))
-	if err != nil {
-		return "", err
-	}
-	if !generation.SettledAt(taken) {
-		return "", nil
-	}
-	return generation.Key(), nil
-}
-
 func (q queryMetadataSource) capture(ctx context.Context) (queryMetadataSource, error) {
 	var pinned *Store
 	if q.pinned {
 		pinned = q.store.Pinned(maps.Clone(q.store.pins))
 	} else {
 		var err error
-		q.generation, err = q.currentGeneration(ctx)
-		if err != nil {
-			return queryMetadataSource{}, err
-		}
 		pinned, err = q.store.PinnedKinds(ctx, q.kind)
 		if err != nil {
 			return queryMetadataSource{}, err
-		}
-		generation, err := q.currentGeneration(ctx)
-		if err != nil {
-			return queryMetadataSource{}, err
-		}
-		if generation != q.generation {
-			q.generation = ""
 		}
 	}
 	q.store = pinned

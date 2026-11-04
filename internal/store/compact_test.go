@@ -135,6 +135,9 @@ func TestCompactFreshCloneFoldsIdentically(t *testing.T) {
 		t.Fatalf("Open clone: %v", err)
 	}
 	t.Cleanup(func() { _ = cs.Close() })
+	if err := cs.Reindex(ctx); err != nil {
+		t.Fatal(err)
+	}
 	got, err := cs.Load(ctx, ref)
 	if err != nil {
 		t.Fatalf("Load clone: %v", err)
