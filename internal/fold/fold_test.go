@@ -132,6 +132,28 @@ func TestFoldDoc(t *testing.T) {
 	}
 }
 
+func TestFoldAnswerReadsStoredNullTagsAsEmpty(t *testing.T) {
+	pack, err := model.DecodePack([]byte(`{"v":1,"lamport":1,"ops":[{"kind":"create_answer","nonce":"n","title":"Q","body":"A","tags":null,"anchors":[]}]}`))
+	if err != nil {
+		t.Fatalf("DecodePack: %v", err)
+	}
+	created := mk("aaa", nil, "alice", 100, 1, pack.Ops...)
+	untagged, err := fold.Answer([]model.PackCommit{created})
+	if err != nil {
+		t.Fatalf("Answer() error = %v", err)
+	}
+	if untagged.Tags == nil || len(untagged.Tags) != 0 {
+		t.Fatalf("Tags = %#v, want an empty array", untagged.Tags)
+	}
+	tagged, err := fold.Answer([]model.PackCommit{created, mk("bbb", []string{"aaa"}, "alice", 200, 2, model.AddTag{Tag: "owner-ruling"})})
+	if err != nil {
+		t.Fatalf("Answer() error = %v", err)
+	}
+	if !slices.Equal(tagged.Tags, []string{"owner-ruling"}) {
+		t.Fatalf("Tags = %v, want [owner-ruling]", tagged.Tags)
+	}
+}
+
 func TestFoldAnswer(t *testing.T) {
 	witness := []model.AnchorWitness{
 		{Anchor: model.Anchor{Kind: model.AnchorPath, Value: "cache.go"}, OID: "0011"},

@@ -1130,6 +1130,43 @@ func TestParseTaskErrors(t *testing.T) {
 	}
 }
 
+func TestNewCreateOpsWithoutTagsCarryAnEmptyArray(t *testing.T) {
+	body := []byte("---\ntitle: Untagged\n---\nBody here.\n")
+	cases := map[string]func() ([]model.Op, error){
+		"note": func() ([]model.Op, error) {
+			return sourceview.NewNote(mustParseNote(t, body))
+		},
+		"doc": func() ([]model.Op, error) {
+			return sourceview.NewDoc(mustParseDoc(t, body))
+		},
+		"answer": func() ([]model.Op, error) {
+			parsed, err := sourceview.ParseAnswer(body)
+			if err != nil {
+				return nil, err
+			}
+			return sourceview.NewAnswer(parsed)
+		},
+		"log": func() ([]model.Op, error) {
+			return sourceview.NewLog(mustParseLog(t, []byte("---\ntitle: Untagged\n---\n<!-- cc-notes:entry author=\"ignored\" ts=\"2025-12-12T02:54:56Z\" -->\nfirst entry\n")))
+		},
+	}
+	for name, build := range cases {
+		t.Run(name, func(t *testing.T) {
+			ops, err := build()
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			wire, err := json.Marshal(ops[0])
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !bytes.Contains(wire, []byte(`"tags":[]`)) {
+				t.Fatalf("create op %s, want an empty tags array", wire)
+			}
+		})
+	}
+}
+
 func TestNewNote(t *testing.T) {
 	t.Run("frontmatter title", func(t *testing.T) {
 		doc := "---\ntitle: Brand new\ntags: [b, a, b]\ncommits: [ffff111]\n---\nBody here.\n"

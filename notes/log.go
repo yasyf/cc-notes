@@ -83,7 +83,7 @@ func (c *Client) CreateLog(ctx context.Context, spec LogSpec) (model.Log, bool, 
 	}
 	anchors := buildAnchors(AnchorSpec{Commits: commits, Paths: spec.Anchors.Paths, Dirs: spec.Anchors.Dirs, Branches: spec.Anchors.Branches})
 	ops := make([]model.Op, 0, 1+len(spec.Attachments))
-	ops = append(ops, model.CreateLog{Nonce: model.NewNonce(), Title: spec.Title, Tags: spec.Tags, Anchors: anchors})
+	ops = append(ops, model.CreateLog{Nonce: model.NewNonce(), Title: spec.Title, Tags: model.WireTags(spec.Tags), Anchors: anchors})
 	ops = append(ops, attachmentAddOps(spec.Attachments)...)
 	snap, err := c.s.Create(ctx, ops)
 	reused := false

@@ -1,10 +1,12 @@
 package notes_test
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -163,4 +165,59 @@ func answerIDs(answers []model.Answer) []model.EntityID {
 		out[i] = a.ID
 	}
 	return out
+}
+
+func TestCreateWithoutTagsStoresAnArrayAndTagsLater(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+
+	storedTags := func(t *testing.T, id model.EntityID) string {
+		t.Helper()
+		var pack struct {
+			Ops []struct {
+				Tags json.RawMessage `json:"tags"`
+			} `json:"ops"`
+		}
+		if err := json.Unmarshal([]byte(gittest.Git(t, dir, "show", string(id)+":ops.json")), &pack); err != nil {
+			t.Fatalf("decode the stored create op: %v", err)
+		}
+		return string(pack.Ops[0].Tags)
+	}
+
+	answer, _, err := c.CreateAnswer(ctx, notes.NoteSpec{Title: "Which cache backend?", Body: "Redis"})
+	if err != nil {
+		t.Fatalf("CreateAnswer: %v", err)
+	}
+	if got := storedTags(t, answer.ID); got != "[]" {
+		t.Fatalf("stored create_answer tags = %s, want []", got)
+	}
+	tagged, err := c.EditAnswer(ctx, answer.ID, notes.NoteEdit{AddTags: []string{"owner-ruling"}})
+	if err != nil {
+		t.Fatalf("EditAnswer: %v", err)
+	}
+	if !slices.Equal(tagged.Tags, []string{"owner-ruling"}) {
+		t.Fatalf("tags after a later add = %v, want [owner-ruling]", tagged.Tags)
+	}
+
+	note, _, err := c.CreateNote(ctx, notes.NoteSpec{Title: "A fact", Body: "It holds"})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	doc, _, err := c.CreateDoc(ctx, notes.DocSpec{Title: "A guide", Body: "Read it", When: "always"})
+	if err != nil {
+		t.Fatalf("CreateDoc: %v", err)
+	}
+	entryLog, _, err := c.CreateLog(ctx, notes.LogSpec{Title: "A log", Entry: "started"})
+	if err != nil {
+		t.Fatalf("CreateLog: %v", err)
+	}
+	investigation, _, err := c.CreateInvestigation(ctx, notes.InvestigationSpec{Title: "A hang", Premise: "the pool"})
+	if err != nil {
+		t.Fatalf("CreateInvestigation: %v", err)
+	}
+	for kind, id := range map[string]model.EntityID{"note": note.ID, "doc": doc.ID, "log": entryLog.ID, "investigation": investigation.ID} {
+		if got := storedTags(t, id); got != "[]" {
+			t.Errorf("stored create_%s tags = %s, want []", kind, got)
+		}
+	}
 }

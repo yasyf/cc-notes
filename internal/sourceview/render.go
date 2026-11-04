@@ -528,7 +528,7 @@ func NewNote(p ParsedDoc) ([]model.Op, error) {
 		Nonce:   model.NewNonce(),
 		Title:   title,
 		Body:    p.Body,
-		Tags:    sortedSet(stringsValue(p.Tags)),
+		Tags:    model.WireTags(sortedSet(stringsValue(p.Tags))),
 		Anchors: anchors,
 	}}, nil
 }
@@ -724,7 +724,7 @@ func NewDoc(p ParsedDoc) ([]model.Op, error) {
 		Title:   title,
 		Body:    p.Body,
 		When:    stringValue(p.When),
-		Tags:    sortedSet(stringsValue(p.Tags)),
+		Tags:    model.WireTags(sortedSet(stringsValue(p.Tags))),
 		Anchors: anchors,
 	}}, nil
 }
@@ -832,7 +832,7 @@ func NewAnswer(p ParsedDoc) ([]model.Op, error) {
 		Nonce:   model.NewNonce(),
 		Title:   title,
 		Body:    p.Body,
-		Tags:    sortedSet(stringsValue(p.Tags)),
+		Tags:    model.WireTags(sortedSet(stringsValue(p.Tags))),
 		Anchors: anchors,
 	}}, nil
 }
@@ -1103,7 +1103,7 @@ func NewLog(p ParsedLog) ([]model.Op, error) {
 	ops := []model.Op{model.CreateLog{
 		Nonce:   model.NewNonce(),
 		Title:   title,
-		Tags:    sortedSet(stringsValue(p.Tags)),
+		Tags:    model.WireTags(sortedSet(stringsValue(p.Tags))),
 		Anchors: anchors,
 	}}
 	for _, pe := range p.Entries {

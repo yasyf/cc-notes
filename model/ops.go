@@ -17,6 +17,12 @@ type CreateOp interface {
 	CreateKind() Kind
 }
 
+// WireTags is the tags field of a new create op: an array on the wire even when
+// empty, so a reader of the raw op never meets null.
+func WireTags(tags []string) []string {
+	return append([]string{}, tags...)
+}
+
 // CreateNote is the root operation of a note chain. The nonce makes
 // otherwise-identical creates hash to distinct entity ids.
 type CreateNote struct {
