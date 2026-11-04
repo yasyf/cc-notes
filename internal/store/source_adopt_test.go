@@ -70,7 +70,7 @@ func TestPublicationRefusesSourceHeadThatDoesNotDescend(t *testing.T) {
 	}
 }
 
-func TestManagedReadsServeWhileAnotherProcessHoldsTheAuthority(t *testing.T) {
+func TestManagedReadsServeWhileAReindexHoldsTheAuthority(t *testing.T) {
 	s := initStore(t)
 	note := create(t, s, noteOps("read during reindex"))
 	ref := refs.For(model.KindNote, note.EntityID())
@@ -79,12 +79,15 @@ func TestManagedReadsServeWhileAnotherProcessHoldsTheAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = lock.Close() })
+	if err := os.WriteFile(s.reindexBuildingPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	if tip, err := s.managedTip(ctx, ref); err != nil || tip != note.Meta().Head {
-		t.Fatalf("managed tip behind a held authority=%s, %v; want %s", tip, err, note.Meta().Head)
+		t.Fatalf("managed tip during a reindex=%s, %v; want %s", tip, err, note.Meta().Head)
 	}
 	if _, err := s.SourceHead(ctx); err != nil {
-		t.Fatalf("source head behind a held authority: %v", err)
+		t.Fatalf("source head during a reindex: %v", err)
 	}
 }

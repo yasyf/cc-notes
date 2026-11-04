@@ -19,7 +19,7 @@ import (
 
 func (s *Store) adoptSourceHead(ctx context.Context, db *bolt.DB) error {
 	head, err := s.sourceRefTip(ctx, sourceindex.Ref)
-	if err != nil {
+	if err != nil || head == "" {
 		return err
 	}
 	var stored sourceindex.Revision
@@ -34,9 +34,6 @@ func (s *Store) adoptSourceHead(ctx context.Context, db *bolt.DB) error {
 		return err
 	}
 	unrelated := fmt.Errorf("source head %s does not descend from managed head %s: %w", head, stored.Token, managed.ErrReindex)
-	if head == "" {
-		return unrelated
-	}
 	var chain []sourceindex.Revision
 	var updates []gitcmd.RefUpdate
 	if err := s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
