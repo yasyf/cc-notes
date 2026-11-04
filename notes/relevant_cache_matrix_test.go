@@ -601,7 +601,7 @@ func invalidationCases() []matrixCase {
 				fx.run(t, "branch", "feature")
 				fx.anchored(t, "feature work", "feature")
 			},
-			writes: []matrixWrite{{name: "git branch unrelated", do: gitWrite("branch", "unrelated"), want: tierRevalidate}},
+			writes: []matrixWrite{{name: "git branch unrelated", do: gitWrite("branch", "unrelated"), want: tierHit}},
 		},
 		{
 			name: "unrelated nested branch created",
@@ -609,7 +609,7 @@ func invalidationCases() []matrixCase {
 				fx.run(t, "branch", "team/feature")
 				fx.anchored(t, "team work", "team/feature")
 			},
-			writes: []matrixWrite{{name: "git branch team/unrelated", do: gitWrite("branch", "team/unrelated"), want: tierRevalidate}},
+			writes: []matrixWrite{{name: "git branch team/unrelated", do: gitWrite("branch", "team/unrelated"), want: tierHit}},
 		},
 		{
 			name: "detached HEAD gains a nearer bookmark",
@@ -705,6 +705,14 @@ func invalidationCases() []matrixCase {
 				fx.anchored(t, "other work", "other")
 			},
 			writes: []matrixWrite{{name: "checkout other relinks HEAD", do: gitWrite("checkout", "-q", "other"), want: tierRebuild, changes: true}},
+		},
+		{
+			name:  "another branch's tracking config written",
+			setup: func(t *testing.T, fx *matrixFixture) { fx.crossAuthor(t) },
+			writes: []matrixWrite{
+				{name: "git config branch.unrelated.remote", do: gitWrite("config", "branch.unrelated.remote", "origin"), want: tierHit},
+				{name: "git config core.abbrev", do: gitWrite("config", "core.abbrev", "12"), want: tierRebuild},
+			},
 		},
 		{
 			name:   "author email changed in local config",

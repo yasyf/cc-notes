@@ -40,6 +40,9 @@ type relevantCacheEntry struct {
 	Files      []fileStamp  `json:"files,omitempty"`
 	Rendered   []string     `json:"rendered,omitempty"`
 	LooseRefs  []string     `json:"loose_refs,omitempty"`
+	HeadDeps   []fileStamp  `json:"head_deps,omitempty"`
+	AnyHead    bool         `json:"any_head,omitempty"`
+	ConfigSum  string       `json:"config_sum,omitempty"`
 	Deps       relevantDeps `json:"-"`
 	Output     []byte       `json:"-"`
 }
@@ -342,6 +345,11 @@ func (e relevantCacheEntry) built(now time.Time) bool {
 // trusted. The moved stamps, taken before the directories are read, persist
 // with the check's start as the entry's build time once they are older than
 // the racy window.
+//
+// A moved branch directory qualifies when every branch the entry resolves still
+// has its own stamp, and a rewritten common config when only its [branch]
+// sections changed: a busy repository moves both constantly, and neither a
+// sibling branch nor another branch's tracking config reaches p's rendering.
 func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relevantCacheEntry, p string, filter RelevantFilter, now time.Time) bool {
 	if (e.Racy && !e.RacyRefs) || !e.built(now) || !e.filesValid() {
 		return false
@@ -351,13 +359,18 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 	built := time.Unix(0, e.Built)
 	stamps := slices.Clone(e.Stamps)
 	var moved []int
-	headsMoved := false
+	headsMoved, configMoved := false, false
+	config := joinPath(c.s.CommonDir(), "config")
 	for i, s := range e.Stamps {
 		if stamps[i] = restamp(s); stamps[i] == s && (!e.Racy || !s.racy(built)) {
 			continue
 		}
+		if s.Path == config && !stamps[i].Missing {
+			configMoved = true
+			continue
+		}
 		root, ok := roots[s.Path]
-		heads := s.Path == c.headsDir()
+		heads := c.branchDir(s)
 		if (!ok && !heads) || s.Link || s.Ident || stamps[i].Missing || stamps[i].Inode != s.Inode || stamps[i].Mode != s.Mode {
 			return false
 		}
@@ -372,8 +385,13 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 		moved = append(moved, i)
 	}
 	cutoff := e.Built - relevantRacyWindow.Nanoseconds()
-	if headsMoved && !onlyLiveRefSince(c.headsDir(), cutoff) {
+	if headsMoved && !c.resolvedBranchesHeld(e, built, cutoff) {
 		return false
+	}
+	if configMoved {
+		if sum := configSumWithoutBranches(config); sum == "" || sum != e.ConfigSum {
+			return false
+		}
 	}
 	for _, i := range moved {
 		if !c.unscoredSince(ctx, e.Stamps[i].Path, roots[e.Stamps[i].Path], p, e.Rendered, cutoff) {
@@ -398,6 +416,20 @@ func (c *Client) entityRootDirs() map[string]string {
 
 func (c *Client) headsDir() string {
 	return joinPath(c.s.RecordsCommonDir(), filepath.FromSlash("refs/heads"))
+}
+
+func (c *Client) branchDir(s fileStamp) bool {
+	heads := c.headsDir()
+	return s.Mode.IsDir() && (s.Path == heads || strings.HasPrefix(s.Path, heads+string(filepath.Separator)))
+}
+
+func (c *Client) resolvedBranchesHeld(e relevantCacheEntry, built time.Time, cutoff int64) bool {
+	if e.AnyHead {
+		return onlyLiveRefSince(c.headsDir(), cutoff)
+	}
+	return !slices.ContainsFunc(e.HeadDeps, func(h fileStamp) bool {
+		return lstampOf(h.Path) != h || (e.Racy && h.racy(built))
+	})
 }
 
 // onlyLiveRefSince reports whether the source projection's live ref, which every

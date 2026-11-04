@@ -196,7 +196,7 @@ func (e *commandError) Error() string {
 	if e.stderr == "" {
 		return fmt.Sprintf("git %s: %v", strings.Join(e.args, " "), e.err)
 	}
-	return fmt.Sprintf("git %s: %v: %s", strings.Join(e.args, " "), e.err, e.stderr)
+	return fmt.Sprintf("git %s: %v: %s", strings.Join(e.args, " "), e.err, strings.ReplaceAll(e.stderr, "\n", "; "))
 }
 
 func (e *commandError) Unwrap() error { return e.err }
