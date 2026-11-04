@@ -54,11 +54,8 @@ func (m *Map) build(entries []bulkEntry) (model.SHA, error) {
 	if len(entries) == 0 {
 		return "", nil
 	}
-	first, last := entries[0].key, entries[len(entries)-1].key
-	common := 0
-	for common < len(first) && common < len(last) && first[common] == last[common] {
-		common++
-	}
+	first := entries[0].key
+	common := commonPrefix(first, entries[len(entries)-1].key)
 	n := &node{header: header{Prefix: first[:common]}}
 	if len(first) == common {
 		n.value, n.ValueRetention = entries[0].value, entries[0].retained

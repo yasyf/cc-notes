@@ -199,31 +199,127 @@ func (m *Map) Delete(root model.SHA, key string) (model.SHA, error) {
 	return m.mutate(root, hex.EncodeToString([]byte(key)), "", "", true)
 }
 
-// Apply rejects duplicate keys and publishes no refs while deriving a new root.
+// Apply rejects duplicate keys and rewrites each touched node once while deriving a new root.
 func (m *Map) Apply(root model.SHA, mutations []Mutation) (model.SHA, error) {
 	if err := m.objects.Err(); err != nil {
 		return "", err
 	}
 	mutations = slices.Clone(mutations)
 	slices.SortFunc(mutations, func(a, b Mutation) int { return strings.Compare(a.Key, b.Key) })
+	encoded := make([]bulkEntry, len(mutations))
 	for i, mutation := range mutations {
 		if i > 0 && mutations[i-1].Key == mutation.Key {
 			return "", fmt.Errorf("duplicate source graph mutation %q", mutation.Key)
 		}
-		var err error
+		if err := validKey(mutation.Key); err != nil {
+			return "", err
+		}
+		encoded[i].key = hexKey(mutation.Key)
 		if mutation.Delete {
 			if len(mutation.Value) != 0 {
 				return "", fmt.Errorf("delete source graph key %q carries a value", mutation.Key)
 			}
-			root, err = m.Delete(root, mutation.Key)
-		} else {
-			root, err = m.Put(root, mutation.Key, mutation.Value)
+			continue
 		}
+		if m.retention {
+			return "", errors.New("retention maps require entity leaves")
+		}
+		value, err := m.objects.WriteBlob(mutation.Value)
 		if err != nil {
 			return "", err
 		}
+		m.work.ValueWrites++
+		if m.shared != nil {
+			m.shared.valueWrites.Add(1)
+		}
+		m.values[value] = bytes.Clone(mutation.Value)
+		encoded[i].value = value
 	}
-	return root, nil
+	return m.apply(root, encoded)
+}
+
+func (m *Map) apply(hash model.SHA, mutations []bulkEntry) (model.SHA, error) {
+	if err := m.objects.Err(); err != nil {
+		return "", err
+	}
+	if len(mutations) == 0 {
+		return hash, nil
+	}
+	first := mutations[0].key
+	common := commonPrefix(first, mutations[len(mutations)-1].key)
+	n := node{header: header{Prefix: first[:common]}}
+	var previous *node
+	if hash != "" {
+		loaded, err := m.load(hash)
+		if err != nil {
+			return "", err
+		}
+		common = commonPrefix(first[:common], loaded.Prefix)
+		if common == len(loaded.Prefix) {
+			n, previous = *loaded, loaded
+		} else {
+			n = node{header: header{Prefix: loaded.Prefix[:common]}}
+			n.Children[strings.IndexByte(nibbles, loaded.Prefix[common])] = child{Hash: hash, Count: loaded.Count, Retention: loaded.Aggregate}
+		}
+	}
+	if len(first) == common {
+		n.value, n.ValueRetention = mutations[0].value, ""
+		mutations = mutations[1:]
+	}
+	for len(mutations) > 0 {
+		index := strings.IndexByte(nibbles, mutations[0].key[common])
+		end := 1
+		for end < len(mutations) && mutations[end].key[common] == mutations[0].key[common] {
+			end++
+		}
+		old, _, err := m.child(&n, index)
+		if err != nil {
+			return "", err
+		}
+		next, err := m.apply(old, mutations[:end])
+		if err != nil {
+			return "", err
+		}
+		if next != old {
+			n.Children[index] = child{}
+			if next != "" {
+				childNode, err := m.load(next)
+				if err != nil {
+					return "", err
+				}
+				n.Children[index] = child{Hash: next, Count: childNode.Count, Retention: childNode.Aggregate}
+			}
+		}
+		mutations = mutations[end:]
+	}
+	if previous != nil && n.value == previous.value && n.Children == previous.Children {
+		return hash, nil
+	}
+	if n.value == "" {
+		var only model.SHA
+		children := 0
+		for _, next := range n.Children {
+			if next.Hash != "" {
+				children++
+				only = next.Hash
+			}
+		}
+		if children == 0 {
+			return "", nil
+		}
+		if children == 1 {
+			return only, nil
+		}
+	}
+	return m.write(&n)
+}
+
+func commonPrefix(a, b string) int {
+	common := 0
+	for common < len(a) && common < len(b) && a[common] == b[common] {
+		common++
+	}
+	return common
 }
 
 // Rank returns the number of keys strictly before key and its exact membership.

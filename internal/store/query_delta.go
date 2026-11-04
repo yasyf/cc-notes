@@ -146,6 +146,7 @@ func applyQueryMetadataDelta(ctx context.Context, tx *bolt.Tx, binding string, k
 	if err != nil {
 		return err
 	}
+	batch := make(queryGenerationBatch)
 	for _, change := range diff.Changed {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -160,7 +161,7 @@ func applyQueryMetadataDelta(ctx context.Context, tx *bolt.Tx, binding string, k
 		if row.Version != queryMetadataVersion || row.Binding != binding || row.Kind != kind || row.ID != change.ID || row.Tip != change.Tip {
 			return fmt.Errorf("folded metadata identity differs from captured %s %s %s", binding, kind, change.ID)
 		}
-		if err := replaceQueryMetadata(ctx, tx, row); err != nil {
+		if err := batch.replaceMetadata(tx, row); err != nil {
 			return err
 		}
 	}
@@ -168,9 +169,9 @@ func applyQueryMetadataDelta(ctx context.Context, tx *bolt.Tx, binding string, k
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := deleteQueryMetadata(ctx, tx, binding, id); err != nil {
+		if err := batch.deleteMetadata(tx, binding, id); err != nil {
 			return err
 		}
 	}
-	return ctx.Err()
+	return batch.flush(ctx, tx)
 }

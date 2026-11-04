@@ -1,10 +1,12 @@
 package store
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 
 	bolt "go.etcd.io/bbolt"
 
@@ -79,6 +81,38 @@ func (store queryObjectStore) put(hash model.SHA, data []byte) error {
 		return err
 	}
 	return store.ids.Put(hashKey, key)
+}
+
+func (store queryObjectStore) putBatch(ctx context.Context, order []model.SHA, values map[model.SHA][]byte) error {
+	ids := make(map[model.SHA]uint64, len(order))
+	for _, hash := range order {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		id, err := store.objects.NextSequence()
+		if err != nil {
+			return err
+		}
+		if err := store.objects.Put(binary.BigEndian.AppendUint64(nil, id), values[hash]); err != nil {
+			return err
+		}
+		ids[hash] = id
+	}
+	keys := slices.Clone(order)
+	slices.Sort(keys)
+	for _, hash := range keys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		key, err := queryObjectKey(hash)
+		if err != nil {
+			return err
+		}
+		if err := store.ids.Put(key, binary.BigEndian.AppendUint64(nil, ids[hash])); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
 func (store queryObjectStore) delete(hash model.SHA) error {

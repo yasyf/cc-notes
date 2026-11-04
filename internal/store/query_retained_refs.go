@@ -81,6 +81,39 @@ func (counts *queryReferenceCounts) flush(ctx context.Context) error {
 	return ctx.Err()
 }
 
+type queryObjectWrites struct {
+	objects map[model.SHA][]byte
+	refs    map[model.SHA]uint64
+	order   []model.SHA
+}
+
+func (w *queryObjectWrites) flush(ctx context.Context, objects queryObjectStore, counts *queryReferenceCounts) ([]model.SHA, error) {
+	if err := objects.putBatch(ctx, w.order, w.objects); err != nil {
+		return nil, err
+	}
+	for hash, refs := range w.refs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := objects.get(hash)
+		if err != nil {
+			return nil, err
+		}
+		if data == nil {
+			return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
+		}
+		count, err := counts.get(hash)
+		if err != nil {
+			return nil, err
+		}
+		if math.MaxUint64-count < refs {
+			return nil, fmt.Errorf("immutable query object reference count overflow %s: %w", hash, managed.ErrReindex)
+		}
+		counts.set(hash, count+refs)
+	}
+	return w.order, nil
+}
+
 func queryObjectRefCount(root *bolt.Bucket, hash model.SHA) (uint64, error) {
 	id, err := queryObjectID(root.Bucket([]byte(managed.QueryObjectIDs)), hash)
 	if err != nil || id == 0 {

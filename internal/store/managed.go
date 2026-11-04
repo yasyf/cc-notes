@@ -478,6 +478,7 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 		return err
 	}
 	tips := root.Bucket([]byte("refs"))
+	batch := make(queryGenerationBatch)
 	for _, update := range intent.Updates {
 		parsed, err := refs.Parse(update.Ref)
 		if errors.Is(err, refs.ErrNotCCNotes) {
@@ -491,7 +492,7 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 				return err
 			}
 			binding := s.listCacheName(parsed.Kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, "")
-			if err := deleteQueryMetadata(ctx, tx, binding, parsed.ID); err != nil {
+			if err := batch.deleteMetadata(tx, binding, parsed.ID); err != nil {
 				return err
 			}
 		} else if err := tips.Put([]byte(update.Ref), []byte(update.New)); err != nil {
@@ -499,9 +500,15 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 		}
 	}
 	for _, row := range intent.Rows {
-		if err := replaceQueryMetadata(ctx, tx, row); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if err := batch.replaceMetadata(tx, row); err != nil {
+			return err
+		}
+	}
+	if err := batch.flush(ctx, tx); err != nil {
+		return err
 	}
 	if err := applySource(tx, intent.Source); err != nil {
 		return err
