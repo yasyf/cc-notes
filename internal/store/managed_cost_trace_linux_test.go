@@ -43,9 +43,24 @@ func TestManagedCostTraceAccountsOperationAndDescendantWork(t *testing.T) {
 	}
 }
 
+func TestManagedCostTraceIgnoresAThreadKilledAtSyscallEntry(t *testing.T) {
+	raw := []byte(`1700000000.000001 read(3, "abc", 3) = 3
+1700000000.000002 ???( <unfinished ...>
+1700000000.000003 +++ exited with 0 +++
+`)
+	calls, err := managedCostParseTrace(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0].name != "read" {
+		t.Fatalf("calls=%+v; want only the read", calls)
+	}
+}
+
 func TestManagedCostTraceRejectsUnaccountedEvidence(t *testing.T) {
 	for _, raw := range []string{
 		"1793615657.374343 ???( <detached ...>\n",
+		"1700000000.000001 ???( <unfinished ...>\n1700000000.000002 read(3, \"abc\", 3) = 3\n",
 		"1700000000.000001 read(3, \"unfinished\", 10 <detached ...>\n",
 		"1700000000.000001 unreadable syscall\n",
 		"1700000000.000001 <... read resumed>0) = 0\n",
