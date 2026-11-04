@@ -420,8 +420,10 @@ func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (
 	publishErr := s.RecordsGit.Holding(lock).UpdateRefs(ctx, intent.Updates)
 	published = publishErr == nil
 	recoverErr := s.recoverManaged(context.WithoutCancel(ctx), db)
-	result := errors.Join(publishErr, recoverErr)
-	return result
+	if published {
+		return errors.Join(recoverErr, s.CheckRecords())
+	}
+	return errors.Join(publishErr, recoverErr)
 }
 
 func (s *Store) recoverManaged(ctx context.Context, db *bolt.DB) error {
