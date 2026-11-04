@@ -3178,7 +3178,7 @@ def redirect_event(tmp_path, command: str, error: str):
 
 def test_redirect_mapped_tool() -> None:
     """mapped_tool resolves each command shape to its MCP tool by longest-prefix match; operator/unknown -> None."""
-    check("map: inventory is the full 167-tool set", len(CC_NOTES_TOOLS) == 167, str(len(CC_NOTES_TOOLS)))
+    check("map: inventory is the full 168-tool set", len(CC_NOTES_TOOLS) == 168, str(len(CC_NOTES_TOOLS)))
     check("map: plan add drops the title positional -> plan_add", mapped_tool(["plan", "add", "Ship it", "--approved"]) == "plan_add", repr(mapped_tool(["plan", "add", "Ship it", "--approved"])))
     check("map: plan root verbs -> plan_<verb>", mapped_tool(["plan", "start", "abc"]) == "plan_start" and mapped_tool(["plan", "supersede", "abc", "--by", "def"]) == "plan_supersede")
     check("map: runbook add drops the title positional -> runbook_add", mapped_tool(["runbook", "add", "Deploy", "--branch", "main"]) == "runbook_add", repr(mapped_tool(["runbook", "add", "Deploy", "--branch", "main"])))
@@ -5052,6 +5052,37 @@ def test_branch_answers_scope_the_floats_to_the_current_branch(monkeypatch, tmp_
     check("branch scope: the pick sees the chosen answer, not just the question", options.get("auth001aaaa") == "Session store? → Redis", repr(options))
     check("branch scope: the pick reads the prompt", asked and asked[0][0] == "apply the incident fix", repr(asked))
     check("branch scope: a picked id outside the candidates floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "prompt", rows)) is None)
+
+
+def prompt_named_answer(prompt: str) -> tuple[str, ...]:
+    return ("answer", "match", "--json", "--label", "scope:durable", "--", prompt)
+
+
+def test_a_ruling_with_no_anchor_floats_on_the_first_prompt_that_names_its_topic(monkeypatch, tmp_path) -> None:
+    """The Akamai ruling carries no branch, path or dir, so only the prompt's own words can reach it, and they do on the first prompt, ahead of the branch's."""
+    prompt = "journal cadence calls fail with 403s at the GSK edge"
+    ruling = durable_answer("ff7fca1aaaa", title="Do we chase Akamai edge 403s (GSK or any tenant proxy) at all, ever?", body="No. Never a lane, a read, a report, a line to him.")
+    evt = prompt_event(monkeypatch, tmp_path, [durable_answer("auth001aaaa", title="Session store?", body="Redis")], prompt=prompt)
+    listed = evt.ctx.call_cli
+    monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **kw: json.dumps([ruling]) if tuple(args[1:]) == prompt_named_answer(prompt) else listed(args, **kw))
+    digest = float_session_answers(evt)
+    message = digest.message or "" if digest else ""
+    check("match: the ruling floats with its answer", "ff7fca1 Do we chase Akamai edge 403s" in message and "Never a lane" in message, message)
+    check("match: the ruling comes before the branch's answers", message.find("ff7fca1") < message.find("auth001"), message)
+
+
+def test_a_ruling_the_prompt_names_reaches_the_prompt_pick(monkeypatch, tmp_path) -> None:
+    """A later prompt offers the answers its words name to the pick, beside the branch's."""
+    prompt = "journal cadence calls fail with 403s at the GSK edge"
+    evt = prompt_event(monkeypatch, tmp_path, [durable_answer("auth001aaaa", title="Session store?", body="Redis")], prompt=prompt)
+    listed = evt.ctx.call_cli
+    ruling = durable_answer("ff7fca1aaaa", title="Do we chase Akamai edge 403s?", body="No.")
+    monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **kw: json.dumps([ruling]) if tuple(args[1:]) == prompt_named_answer(prompt) else listed(args, **kw))
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide(PICK_NONE, asked))
+    stage_prompt_answers(evt)
+    options = offered(asked, "answer")
+    check("match: the pick is offered the ruling and the branch answer", "ff7fca1aaaa" in options and "auth001aaaa" in options, repr(options))
 
 
 def test_branch_answers_float_nothing_on_a_detached_head(monkeypatch, tmp_path) -> None:

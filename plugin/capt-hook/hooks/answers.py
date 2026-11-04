@@ -33,6 +33,7 @@ from .common import (
     answer_question,
     answer_text,
     branch_answers,
+    matched_answers,
     clamp_title,
     current_branch,
     durable_answers,
@@ -383,7 +384,8 @@ def pick_prompt_answer(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) 
     async_=True,
 )
 def stage_prompt_answers(evt: UserPromptSubmitEvent) -> None:
-    if not (fresh := unseen_answers(evt, branch_answers(evt))):
+    named = matched_answers(evt, evt.user_prompt or "")
+    if not (fresh := unseen_answers(evt, list({a["id"]: a for a in [*branch_answers(evt), *named]}.values()))):
         return
     if not (picked := pick_prompt_answer(evt, fresh)):
         return

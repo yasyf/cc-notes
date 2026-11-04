@@ -152,7 +152,7 @@ MCP_READ_TOOLS = frozenset(
     {
         "note_list", "note_show", "note_search", "note_review",
         "doc_list", "doc_show", "doc_search", "doc_review",
-        "answer_list", "answer_show", "answer_search", "answer_review",
+        "answer_list", "answer_show", "answer_search", "answer_match", "answer_review",
         "log_list", "log_show", "log_search",
         "task_list", "task_show", "task_ready", "task_backlog", "task_stale", "task_archived", "task_criterion_list",
         "project_list", "project_show",

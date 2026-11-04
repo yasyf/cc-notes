@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **An answer reaches a session by its own words.** `answer match TEXT` ranks
+  answers by the rare words they share with a text, with `match:<phrase>` labels
+  first, capped at 5. The first prompt of a session and the per-prompt pick use it, so
+  a durable answer with no branch, path or dir anchor reaches a session whose
+  prompt names its topic.
+
 ### Fixed
 - **A full listing no longer re-folds what it just cached.** The fold cache held
   16,384 entries, and a repository with about 14,000 live records filled its

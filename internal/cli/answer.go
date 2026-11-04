@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -9,6 +11,8 @@ import (
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
+
+const answerMatchLimit = 5
 
 func newAnswerCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -24,6 +28,7 @@ func newAnswerCmd() *cobra.Command {
 		newAnswerEditCmd(),
 		newAnswerRmCmd(),
 		newAnswerSearchCmd(),
+		newAnswerMatchCmd(),
 		newAnswerVerifyCmd(),
 		newAnswerSupersedeCmd(),
 		newAnswerExpireCmd(),
@@ -48,6 +53,55 @@ func newAnswerRmCmd() *cobra.Command {
 }
 
 func newAnswerSearchCmd() *cobra.Command { return answerDocument.searchVerb() }
+
+// newAnswerMatchCmd builds "answer match TEXT": the answers whose own words a
+// text uses, for a caller that has a text and no idea what was ruled on it.
+func newAnswerMatchCmd() *cobra.Command {
+	var labels []string
+	var limit int
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "match TEXT",
+		Short: "Rank answers by the rare words they share with TEXT; - reads stdin",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := openClient(cmd)
+			if err != nil {
+				return err
+			}
+			text := args[0]
+			if text == "-" {
+				read, err := io.ReadAll(cmd.InOrStdin())
+				if err != nil {
+					return err
+				}
+				text = string(read)
+			}
+			found, err := c.MatchAnswers(cmd.Context(), text, notes.SearchFilter{Labels: labels, Limit: limit})
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				dtos := make([]answerMatchDTO, len(found))
+				for i, match := range found {
+					dtos[i] = answerMatchDTO{newAnswerSummaryDTO(match.Answer, ""), match.Phrase, match.Terms, match.Score}
+				}
+				return printJSON(cmd.OutOrStdout(), dtos)
+			}
+			for _, match := range found {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), leanAnswerLine(match.Answer)); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	flags := cmd.Flags()
+	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
+	flags.IntVar(&limit, "limit", answerMatchLimit, "maximum results")
+	bindJSON(flags, &jsonOut)
+	return cmd
+}
 
 func newAnswerVerifyCmd() *cobra.Command { return answerDocument.verifyVerb() }
 
