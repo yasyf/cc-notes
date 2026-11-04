@@ -317,7 +317,7 @@ func publishPack(dir string, tmp *os.File, tier int, checksum []byte, entries []
 	if !durable {
 		return nil
 	}
-	directory, err := os.Open(dir)
+	directory, err := os.Open(dir) //nolint:gosec // G304: this repository's pack directory.
 	if err != nil {
 		return err
 	}
@@ -505,7 +505,7 @@ func readMidxPackNames(path string, names map[string]struct{}) (resultErr error)
 		return err
 	}
 	for i := 0; i+midxChunkRowSize < len(table); i += midxChunkRowSize {
-		if string(table[i:i+4]) != "PNAM" {
+		if string(table[i:i+4]) != "PNAM" { //nolint:gosec // G602: the loop bound leaves a full row.
 			continue
 		}
 		start := int64(binary.BigEndian.Uint64(table[i+4:]))                //nolint:gosec // G115: a file offset.

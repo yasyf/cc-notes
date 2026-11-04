@@ -219,7 +219,7 @@ func (p *managedPack) object(offset int64) (plumbing.EncodedObject, error) {
 	if err != nil {
 		return nil, errors.Join(err, inflater.Close())
 	}
-	written, copyErr := io.Copy(writer, inflater)
+	written, copyErr := io.Copy(writer, io.LimitReader(inflater, size+1))
 	if err := errors.Join(copyErr, inflater.Close(), writer.Close()); err != nil {
 		return nil, err
 	}
