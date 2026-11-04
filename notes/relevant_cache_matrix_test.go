@@ -703,6 +703,29 @@ func invalidationCases() []matrixCase {
 			settled: tierRevalidate,
 		},
 		{
+			name: "default base advances without moving the merge base",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.crossAuthor(t)
+				fx.run(t, "update-ref", "refs/remotes/origin/main", string(fx.root))
+				fx.run(t, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+			},
+			writes: []matrixWrite{{name: "origin/main moved to a commit off the merge base", want: tierRevalidate, do: func(t *testing.T, fx *matrixFixture) {
+				side := fx.run(t, "commit-tree", string(fx.root)+"^{tree}", "-p", string(fx.root), "-m", "side")
+				fx.run(t, "update-ref", "refs/remotes/origin/main", side)
+			}}},
+		},
+		{
+			name: "default base catches up with HEAD",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.crossAuthor(t)
+				fx.run(t, "update-ref", "refs/remotes/origin/main", string(fx.root))
+				fx.run(t, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+			},
+			writes: []matrixWrite{{name: "origin/main moved onto HEAD", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+				fx.run(t, "update-ref", "refs/remotes/origin/main", string(fx.theirs))
+			}}},
+		},
+		{
 			name: "origin/HEAD made ambiguous by a tag",
 			setup: func(t *testing.T, fx *matrixFixture) {
 				fx.crossAuthor(t)

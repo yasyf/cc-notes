@@ -43,6 +43,10 @@ type relevantCacheEntry struct {
 	HeadDeps   []fileStamp  `json:"head_deps,omitempty"`
 	AnyHead    bool         `json:"any_head,omitempty"`
 	ConfigSum  string       `json:"config_sum,omitempty"`
+	BaseFile   string       `json:"base_file,omitempty"`
+	BaseRef    string       `json:"base_ref,omitempty"`
+	Head       model.SHA    `json:"head,omitempty"`
+	MergeBase  model.SHA    `json:"merge_base,omitempty"`
 	Deps       relevantDeps `json:"-"`
 	Output     []byte       `json:"-"`
 }
@@ -160,7 +164,7 @@ func (c *Client) RelevantCached(ctx context.Context, target string, filter Relev
 	if !slices.Equal(before, after) || slices.ContainsFunc(after, func(f fileStamp) bool { return f.racyMtime(in.start) }) || in.noCache || !in.close() {
 		return out, nil
 	}
-	entry := relevantCacheEntry{Key: in.key(), Files: after, Rendered: rendered, LooseRefs: loose, Output: out}
+	entry := relevantCacheEntry{Key: in.key(), Files: after, Rendered: rendered, LooseRefs: loose, Output: out, MergeBase: in.mergeBase}
 	in.fill(&entry)
 	for _, e := range entries {
 		if fe, ok := freshOf(e); ok && e.Verdict == "" && fe.StaleAt == 0 && fe.VerifiedAt != 0 {
@@ -349,7 +353,9 @@ func (e relevantCacheEntry) built(now time.Time) bool {
 // A moved branch directory qualifies when every branch the entry resolves still
 // has its own stamp, and a rewritten common config when only its [branch]
 // sections changed: a busy repository moves both constantly, and neither a
-// sibling branch nor another branch's tracking config reaches p's rendering.
+// sibling branch nor another branch's tracking config reaches p's rendering. A
+// moved default base qualifies when its merge base with HEAD is unchanged, the
+// only thing rendering reads from it, at the cost of one git process.
 func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relevantCacheEntry, p string, filter RelevantFilter, now time.Time) bool {
 	if (e.Racy && !e.RacyRefs) || !e.built(now) || !e.filesValid() {
 		return false
@@ -359,7 +365,7 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 	built := time.Unix(0, e.Built)
 	stamps := slices.Clone(e.Stamps)
 	var moved []int
-	headsMoved, configMoved := false, false
+	headsMoved, configMoved, baseMoved := false, false, false
 	config := joinPath(c.s.CommonDir(), "config")
 	for i, s := range e.Stamps {
 		if stamps[i] = restamp(s); stamps[i] == s && (!e.Racy || !s.racy(built)) {
@@ -367,6 +373,10 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 		}
 		if s.Path == config && !stamps[i].Missing {
 			configMoved = true
+			continue
+		}
+		if s.Path == e.BaseFile && !stamps[i].Missing {
+			baseMoved = true
 			continue
 		}
 		root, ok := roots[s.Path]
@@ -392,6 +402,9 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 		if sum := configSumWithoutBranches(config); sum == "" || sum != e.ConfigSum {
 			return false
 		}
+	}
+	if baseMoved && !c.mergeBaseHeld(ctx, e, resolved) {
+		return false
 	}
 	for _, i := range moved {
 		if !c.unscoredSince(ctx, e.Stamps[i].Path, roots[e.Stamps[i].Path], p, e.Rendered, cutoff) {
@@ -419,8 +432,24 @@ func (c *Client) headsDir() string {
 }
 
 func (c *Client) branchDir(s fileStamp) bool {
-	heads := c.headsDir()
-	return s.Mode.IsDir() && (s.Path == heads || strings.HasPrefix(s.Path, heads+string(filepath.Separator)))
+	if !s.Mode.IsDir() {
+		return false
+	}
+	for _, dir := range []string{c.headsDir(), joinPath(c.s.RecordsCommonDir(), filepath.FromSlash("refs/remotes"))} {
+		if s.Path == dir || strings.HasPrefix(s.Path, dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) mergeBaseHeld(ctx context.Context, e relevantCacheEntry, resolved []string) bool {
+	short := strings.TrimPrefix(e.BaseRef, "refs/remotes/")
+	if e.MergeBase == "" || slices.ContainsFunc(resolved, func(rev string) bool { return rev != "" && strings.Contains(rev, short) }) {
+		return false
+	}
+	mergeBase, err := c.s.Git.MergeBase(ctx, e.BaseRef, string(e.Head))
+	return err == nil && mergeBase == e.MergeBase
 }
 
 func (c *Client) resolvedBranchesHeld(e relevantCacheEntry, headsMoved bool, built time.Time, cutoff int64) bool {

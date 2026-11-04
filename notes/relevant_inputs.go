@@ -82,6 +82,8 @@ type relevantInputs struct {
 	branch     model.Branch
 	me         string
 	baseRef    model.Branch
+	baseTarget string
+	mergeBase  model.SHA
 	base       model.SHA
 	staleAfter time.Duration
 	vars       map[string]string
@@ -632,7 +634,7 @@ func (in *relevantInputs) watchDep(name string, depth int) {
 		in.revalidate = true
 		return
 	}
-	if strings.HasPrefix(name, "refs/heads/") {
+	if (strings.HasPrefix(name, "refs/heads/") || strings.HasPrefix(name, "refs/remotes/")) && name != in.baseTarget {
 		in.headDeps = append(in.headDeps, lstampOf(file))
 	}
 	in.watch(nearestExisting(parentPath(file)))
@@ -960,7 +962,8 @@ func (in *relevantInputs) watchBranch(ctx context.Context) error {
 func (in *relevantInputs) watchBase(ctx context.Context) error {
 	if in.filter.Base == "" {
 		in.watchRef("refs/remotes/origin/HEAD", 0)
-		if short, ok := strings.CutPrefix(in.symrefs["refs/remotes/origin/HEAD"], "refs/remotes/"); ok {
+		in.baseTarget = in.symrefs["refs/remotes/origin/HEAD"]
+		if short, ok := strings.CutPrefix(in.baseTarget, "refs/remotes/"); ok {
 			for _, candidate := range []string{"refs/" + short, "refs/tags/" + short, "refs/heads/" + short} {
 				in.watchDep(candidate, 0)
 				in.fixed = append(in.fixed, candidate)
@@ -1156,9 +1159,17 @@ func (in *relevantInputs) racyRefs() bool {
 	dirs := in.client.entityRootDirs()
 	racyElsewhere := func(s fileStamp) bool {
 		_, dir := dirs[s.Path]
-		return s.racy(in.start) && !dir && !in.client.branchDir(s) && s.Path != joinPath(in.commonDir, "config")
+		return s.racy(in.start) && !dir && !in.client.branchDir(s) && s.Path != joinPath(in.commonDir, "config") && s.Path != in.baseFile()
 	}
 	return !in.untrusted && !slices.ContainsFunc(in.stamps, racyElsewhere) && !slices.ContainsFunc(in.guards, racyElsewhere)
+}
+
+func (in *relevantInputs) baseFile() string {
+	if in.baseTarget == "" {
+		return ""
+	}
+	file, _ := in.refFile(in.baseTarget)
+	return file
 }
 
 func (in *relevantInputs) fill(e *relevantCacheEntry) {
@@ -1174,4 +1185,7 @@ func (in *relevantInputs) fill(e *relevantCacheEntry) {
 	e.HeadDeps = in.headDeps
 	e.AnyHead = in.detached()
 	e.ConfigSum = in.configSum
+	e.BaseFile = in.baseFile()
+	e.BaseRef = in.baseTarget
+	e.Head = in.head
 }
