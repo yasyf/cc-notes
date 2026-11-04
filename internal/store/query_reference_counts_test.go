@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing"
@@ -20,11 +20,12 @@ func TestQueryReferenceCountsCancelWithoutDirtyingPages(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		id, err := queryObjectID(bucket.Bucket([]byte(managed.QueryObjectIDs)), queryReferenceTestHash)
-		if err != nil {
+		counts := newQueryReferenceCounts(bucket)
+		if _, err := counts.get(queryReferenceTestHash); err != nil {
 			return err
 		}
-		return bucket.Bucket([]byte(managed.QueryObjectRefs)).Put(binary.BigEndian.AppendUint64(nil, id), binary.BigEndian.AppendUint64(nil, 3))
+		counts.set(queryReferenceTestHash, 3)
+		return counts.flush(t.Context())
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,13 +94,8 @@ func TestQueryReferenceCountsFlushAndCancellation(t *testing.T) {
 		t.Fatalf("flush = %v", err)
 	}
 	if err := db.View(func(tx *bolt.Tx) error {
-		root := tx.Bucket([]byte("counts"))
-		id, err := queryObjectID(root.Bucket([]byte(managed.QueryObjectIDs)), queryReferenceTestHash)
-		if err != nil {
-			return err
-		}
-		if value := root.Bucket([]byte(managed.QueryObjectRefs)).Get(binary.BigEndian.AppendUint64(nil, id)); value != nil {
-			t.Fatalf("canceled count committed: %x", value)
+		if tx.Bucket([]byte("counts")).Bucket([]byte(managed.QueryObjectRefs)).Stats().KeyN != 0 {
+			t.Fatal("canceled count block committed")
 		}
 		return nil
 	}); err != nil {
@@ -122,4 +118,67 @@ func createQueryReferenceTestRoot(tx *bolt.Tx) (*bolt.Bucket, error) {
 		return nil, err
 	}
 	return root, store.put(queryReferenceTestHash, []byte("shared"))
+}
+
+func TestQueryReferenceBlocksPreserveBoundaryNeighbors(t *testing.T) {
+	db := newQueryMetadataDB(t)
+	hashes := make([]model.SHA, queryReferenceBlockEntries+2)
+	if err := db.Update(func(tx *bolt.Tx) error {
+		root, err := createQueryReferenceTestRoot(tx)
+		if err != nil {
+			return err
+		}
+		store, counts := queryObjectStoreAt(root), newQueryReferenceCounts(root)
+		for i := range hashes {
+			data := []byte(fmt.Sprintf("boundary-%d", i))
+			hash := model.SHA(plumbing.ComputeHash(plumbing.BlobObject, data).String())
+			hashes[i] = hash
+			if err := store.put(hash, data); err != nil {
+				return err
+			}
+			if _, err := counts.get(hash); err != nil {
+				return err
+			}
+			counts.set(hash, uint64(i+1))
+		}
+		return counts.flush(t.Context())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *bolt.Tx) error {
+		counts := newQueryReferenceCounts(tx.Bucket([]byte("counts")))
+		for _, i := range []int{queryReferenceBlockEntries - 2, queryReferenceBlockEntries - 1} {
+			if _, err := counts.get(hashes[i]); err != nil {
+				return err
+			}
+			counts.set(hashes[i], 0)
+		}
+		return counts.flush(t.Context())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *bolt.Tx) error {
+		root := tx.Bucket([]byte("counts"))
+		counts := newQueryReferenceCounts(root)
+		for i, hash := range hashes {
+			want := uint64(i + 1)
+			if i == queryReferenceBlockEntries-2 || i == queryReferenceBlockEntries-1 {
+				want = 0
+			}
+			got, err := counts.get(hash)
+			if err != nil || got != want {
+				t.Fatalf("count %d = %d, %v; want %d", i, got, err, want)
+			}
+			counts.set(hash, 0)
+		}
+		if err := counts.flush(t.Context()); err != nil {
+			return err
+		}
+		if n := root.Bucket([]byte(managed.QueryObjectRefs)).Stats().KeyN; n != 0 {
+			t.Fatalf("retired reference blocks = %d", n)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

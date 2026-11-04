@@ -199,8 +199,28 @@ func TestRetainedMetadataReclaimsRetiredAndTransientObjects(t *testing.T) {
 		err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
 			root := tx.Bucket(queryGenerationsBucket)
 			objects := queryObjectStoreAt(root)
-			if objects.objects.Stats().KeyN != objects.ids.Stats().KeyN || objects.ids.Stats().KeyN != root.Bucket([]byte(managed.QueryObjectRefs)).Stats().KeyN {
+			if objects.objects.Stats().KeyN != objects.ids.Stats().KeyN {
 				t.Fatal("object, identity, and reference indexes differ in cardinality")
+			}
+			references := 0
+			if err := root.Bucket([]byte(managed.QueryObjectRefs)).ForEach(func(key, data []byte) error {
+				block := binary.BigEndian.Uint64(key)
+				for i := range queryReferenceBlockEntries {
+					if binary.BigEndian.Uint64(data[i*8:i*8+8]) == 0 {
+						continue
+					}
+					references++
+					id := block*queryReferenceBlockEntries + uint64(i) + 1
+					if objects.objects.Get(binary.BigEndian.AppendUint64(nil, id)) == nil {
+						t.Fatal("orphaned reference count")
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			if references != objects.ids.Stats().KeyN {
+				t.Fatal("reference and identity cardinalities differ")
 			}
 			return objects.ids.ForEach(func(hash, id []byte) error {
 				if objects.objects.Get(id) == nil {

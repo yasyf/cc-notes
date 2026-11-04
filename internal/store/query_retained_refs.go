@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/binary"
@@ -54,6 +55,9 @@ func (counts *queryReferenceCounts) set(hash model.SHA, value uint64) {
 	counts.values[hash] = entry
 }
 
+const queryReferenceBlockEntries = 128
+const queryReferenceBlockBytes = queryReferenceBlockEntries * 8
+
 func (counts *queryReferenceCounts) flush(ctx context.Context) error {
 	keys := make([]model.SHA, 0, len(counts.values))
 	for hash, value := range counts.values {
@@ -62,21 +66,47 @@ func (counts *queryReferenceCounts) flush(ctx context.Context) error {
 		}
 	}
 	slices.SortFunc(keys, func(a, b model.SHA) int { return cmp.Compare(counts.values[a].id, counts.values[b].id) })
+	blocks := make(map[uint64][]byte)
+	blockOrder := make([]uint64, 0, len(keys))
 	for _, hash := range keys {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		entry := counts.values[hash]
-		value := entry.after
-		key := binary.BigEndian.AppendUint64(nil, entry.id)
-		if value == 0 {
+		block, offset := (entry.id-1)/queryReferenceBlockEntries, (entry.id-1)%queryReferenceBlockEntries*8
+		data := blocks[block]
+		if data == nil {
+			stored := counts.bucket.Get(binary.BigEndian.AppendUint64(nil, block))
+			if stored == nil {
+				data = make([]byte, queryReferenceBlockBytes)
+			} else if len(stored) != queryReferenceBlockBytes {
+				return fmt.Errorf("invalid immutable query reference block %d: %w", block, managed.ErrReindex)
+			} else {
+				data = bytes.Clone(stored)
+			}
+			blocks[block] = data
+			blockOrder = append(blockOrder, block)
+		}
+		binary.BigEndian.PutUint64(data[offset:offset+8], entry.after)
+	}
+	var zero [queryReferenceBlockBytes]byte
+	for _, block := range blockOrder {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		key, data := binary.BigEndian.AppendUint64(nil, block), blocks[block]
+		if bytes.Equal(data, zero[:]) {
 			if err := counts.bucket.Delete(key); err != nil {
 				return err
 			}
-		} else if err := counts.bucket.Put(key, binary.BigEndian.AppendUint64(nil, value)); err != nil {
+		} else if err := counts.bucket.Put(key, data); err != nil {
 			return err
 		}
-		counts.values[hash] = queryReferenceCount{id: entry.id, before: value, after: value}
+	}
+	for _, hash := range keys {
+		entry := counts.values[hash]
+		entry.before = entry.after
+		counts.values[hash] = entry
 	}
 	return ctx.Err()
 }
@@ -126,14 +156,15 @@ func readQueryObjectCount(bucket *bolt.Bucket, id uint64, hash model.SHA) (uint6
 	if id == 0 {
 		return 0, nil
 	}
-	data := bucket.Get(binary.BigEndian.AppendUint64(nil, id))
+	block, offset := (id-1)/queryReferenceBlockEntries, (id-1)%queryReferenceBlockEntries*8
+	data := bucket.Get(binary.BigEndian.AppendUint64(nil, block))
 	if data == nil {
 		return 0, nil
 	}
-	if len(data) != 8 {
+	if len(data) != queryReferenceBlockBytes {
 		return 0, fmt.Errorf("invalid immutable query object reference count %s: %w", hash, managed.ErrReindex)
 	}
-	return binary.BigEndian.Uint64(data), nil
+	return binary.BigEndian.Uint64(data[offset : offset+8]), nil
 }
 
 func queryObjectChildren(ctx context.Context, objects queryObjectStore, hash model.SHA) ([]model.SHA, error) {
