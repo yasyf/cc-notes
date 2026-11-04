@@ -44,6 +44,9 @@ func (s *Store) GCLocal(ctx context.Context) (int, error) {
 	for tip := range live {
 		tags[cacheNameTag(string(tip))] = true
 	}
+	if err := s.Repo.RollupPacks(); err != nil {
+		return 0, err
+	}
 	tidied := s.cache.sweep(func(hint cacheHint) bool { return hint.rank <= floor && !tags[hint.tag] }, foldCacheBudget)
 	return tidied + s.relevant.sweep(nil, relevantCacheBudget), nil
 }

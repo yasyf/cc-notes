@@ -33,6 +33,8 @@ type SourceObjects struct {
 }
 
 // SourceObjects shares one native read scope across an immutable graph operation.
+// Objects it writes stay in memory until run succeeds, then land as one pack
+// before it returns; on failure they are never written.
 func (r *Repo) SourceObjects(ctx context.Context, run func(*SourceObjects) error) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -41,12 +43,17 @@ func (r *Repo) SourceObjects(ctx context.Context, run func(*SourceObjects) error
 	defer r.mu.Unlock()
 	r.beginRead(ctx)
 	defer r.endRead(&err)
+	r.storage.buffer = newObjectBuffer()
+	defer func() { r.storage.buffer = nil }()
 	objects := &SourceObjects{repo: r, ctx: ctx}
 	defer func() { objects.closed = true }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return errors.Join(run(objects), ctx.Err())
+	if err := errors.Join(run(objects), ctx.Err()); err != nil {
+		return err
+	}
+	return r.storage.flushBuffer()
 }
 
 func (s *SourceObjects) check() error {
@@ -55,6 +62,28 @@ func (s *SourceObjects) check() error {
 	}
 	return s.ctx.Err()
 }
+
+// KeepOnly limits the final write to what the roots reach, dropping the
+// intermediate graph nodes this scope wrote and replaced. Only a scope that
+// publishes exactly these roots may call it.
+func (s *SourceObjects) KeepOnly(roots ...model.SHA) error {
+	if err := s.check(); err != nil {
+		return err
+	}
+	hashes := make([]plumbing.Hash, len(roots))
+	for i, root := range roots {
+		if !plumbing.IsHash(string(root)) {
+			return fmt.Errorf("invalid root sha %q", root)
+		}
+		hashes[i] = plumbing.NewHash(string(root))
+	}
+	s.repo.storage.buffer.roots = hashes
+	return nil
+}
+
+// HoldPacks protects each pack this scope writes with a keep file until
+// ReleaseHeldPacks, so `git repack -a -d` cannot delete it before its ref lands.
+func (s *SourceObjects) HoldPacks() { s.repo.storage.buffer.hold = true }
 
 // Err reports cancellation or use after the owning callback has returned.
 func (s *SourceObjects) Err() error { return s.check() }
@@ -70,11 +99,22 @@ func (s *SourceObjects) ObjectType(sha model.SHA) (plumbing.ObjectType, error) {
 	if !plumbing.IsHash(string(sha)) {
 		return plumbing.InvalidObject, fmt.Errorf("invalid object sha %q", sha)
 	}
+	hash := plumbing.NewHash(string(sha))
+	value, err := s.repo.storage.bufferedObject(hash)
+	if errors.Is(err, plumbing.ErrObjectNotFound) {
+		value, err = s.repo.storage.managedObject(hash)
+	}
+	if err == nil {
+		return value.Type(), nil
+	}
+	if !errors.Is(err, plumbing.ErrObjectNotFound) {
+		return plumbing.InvalidObject, err
+	}
 	batch, err := s.repo.storage.scope.batch(s.repo.storage.backend)
 	if err != nil {
 		return plumbing.InvalidObject, err
 	}
-	info, err := batch.Info(plumbing.NewHash(string(sha)))
+	info, err := batch.Info(hash)
 	if err != nil {
 		return plumbing.InvalidObject, err
 	}

@@ -360,6 +360,7 @@ func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
+	defer func() { err = errors.Join(err, s.Repo.ReleaseHeldPacks()) }()
 	if ready, err := s.reindexReady(); err != nil {
 		return err
 	} else if ready {
