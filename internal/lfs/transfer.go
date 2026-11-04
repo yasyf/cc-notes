@@ -22,7 +22,7 @@ import (
 func (c *Client) Upload(ctx context.Context, store Store, objects []Object) (uploaded int, err error) {
 	res, err := c.batch(ctx, "upload", objects)
 	if err != nil {
-		return 0, err
+		return 0, redacted(err)
 	}
 	var objErrs []error
 	for _, obj := range res {
@@ -43,7 +43,7 @@ func (c *Client) Upload(ctx context.Context, store Store, objects []Object) (upl
 			continue
 		}
 		if err != nil {
-			return uploaded, err
+			return uploaded, redacted(err)
 		}
 		uploaded++
 	}
@@ -58,7 +58,7 @@ func (c *Client) Upload(ctx context.Context, store Store, objects []Object) (upl
 func (c *Client) Download(ctx context.Context, store Store, objects []Object) (downloaded int, err error) {
 	res, err := c.batch(ctx, "download", objects)
 	if err != nil {
-		return 0, err
+		return 0, redacted(err)
 	}
 	var objErrs []error
 	for _, obj := range res {
@@ -71,7 +71,7 @@ func (c *Client) Download(ctx context.Context, store Store, objects []Object) (d
 			return downloaded, fmt.Errorf("download %s: no download action", obj.OID)
 		}
 		if err := c.getObject(ctx, store, obj, act); err != nil {
-			return downloaded, err
+			return downloaded, redacted(err)
 		}
 		downloaded++
 	}

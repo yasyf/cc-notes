@@ -38,8 +38,16 @@ type ObjectError struct {
 }
 
 func (e *ObjectError) Error() string {
-	return fmt.Sprintf("object %s: server: %d %s", e.OID, e.Code, e.Message)
+	return fmt.Sprintf("object %s: server: %d %s", e.OID, e.Code, gitcmd.RedactURLs(e.Message))
 }
+
+type redactedError struct{ err error }
+
+func redacted(err error) error { return &redactedError{err: err} }
+
+func (e *redactedError) Error() string { return gitcmd.RedactURLs(e.err.Error()) }
+
+func (e *redactedError) Unwrap() error { return e.err }
 
 // Credentials resolves and records Basic-auth credentials for the batch
 // endpoint. gitcmd.Git implements it with git's credential machinery.
@@ -75,13 +83,13 @@ func NewClient(ctx context.Context, g gitcmd.Git, ep Endpoint, operation string)
 	if ep.SSHUserHost == "" {
 		header, err := extraHeader(ctx, g, ep.Href)
 		if err != nil {
-			return nil, err
+			return nil, redacted(err)
 		}
 		return &Client{Endpoint: ep.Href, Header: header, Creds: g}, nil
 	}
 	grant, err := sshAuthenticate(ctx, ep, operation)
 	if err != nil {
-		return nil, err
+		return nil, redacted(err)
 	}
 	if grant.Href == "" {
 		return nil, fmt.Errorf("ssh %s git-lfs-authenticate: grant has no href", ep.SSHUserHost)
