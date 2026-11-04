@@ -1,0 +1,39 @@
+name: Managed write bytes and faults
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  write-bytes-and-faults:
+    runs-on: ubuntu-latest
+    env:
+      CCN_GRADE_WRITE_BYTES_AND_FAULTS: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Install required tracers and LFS
+        run: sudo apt-get update && sudo apt-get install -y strace git-lfs
+      - name: Grade managed writes
+        env:
+          CCN_REQUIRE_MANAGED_COST: '1'
+          CCN_MANAGED_COST_REINDEX: '1'
+          CCN_MANAGED_COST_ARTIFACT_DIR: ${{ runner.temp }}/write-cost-managed-artifacts
+        run: ./scripts/test.sh -count=1 -v -run '^TestManagedFreshProcessCost$' ./internal/store
+      - name: Grade helper writes
+        if: ${{ !cancelled() }}
+        env:
+          CCN_REQUIRE_HELPER_COST: '1'
+          CCN_HELPER_COST_ARTIFACT_DIR: ${{ runner.temp }}/write-cost-helper-artifacts
+        run: ./scripts/test.sh -count=1 -v -run '^TestHelperFreshProcessCost$' ./internal/store
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: managed-write-bytes-and-faults
+          path: ${{ runner.temp }}/write-cost-*-artifacts
+          if-no-files-found: error

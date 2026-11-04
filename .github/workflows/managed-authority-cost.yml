@@ -63,6 +63,7 @@ jobs:
         if: matrix.lane == 'baseline'
         env:
           CCN_REQUIRE_MANAGED_COST: '1'
+          CCN_GRADE_WRITE_BYTES_AND_FAULTS: '1'
           CCN_MANAGED_COST_ARTIFACT_DIR: ${{ runner.temp }}/managed-baseline-artifacts
         run: |
           set -euo pipefail

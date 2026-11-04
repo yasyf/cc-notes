@@ -217,7 +217,7 @@ func TestHelperFreshProcessCost(t *testing.T) {
 			{"minor_faults", low.MinorFaults, high.MinorFaults, 256},
 			{"git_processes", low.GitProcesses, high.GitProcesses, 8},
 		} {
-			if c.high > c.low+c.allowance {
+			if c.high > c.low+c.allowance && !gradedByWriteCostCheck(c.name) {
 				t.Errorf("HELPER_COST_REGRESSION: %s %s32=%d10000=%d allowance=%d", mode, c.name, c.low, c.high, c.allowance)
 			}
 		}
