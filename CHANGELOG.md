@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`answer match` finds an answer by words only in its body, and draws far
+  fewer on a line that merely shares a word.** An answer whose deciding words sit
+  in its body now matches when three rare words of the text make up at least half
+  of its rare words. Rarity floors on both paths cut the rulings a real report
+  line draws from 2.41 to 0.52 on average.
 - **An answer reaches a session by its own words.** `answer match TEXT` ranks
   answers by the rare words they share with a text, with `match:<phrase>` labels
   first, capped at 5. The first prompt of a session and the per-prompt pick use it, so
