@@ -3,6 +3,7 @@ package notes
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/yasyf/cc-notes/internal/ccnhome"
@@ -66,10 +67,9 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		}
 		remotes = targets
 	}
+	var adoptErr error
 	if opts.Prefix == "" {
-		if _, err := c.s.AdoptExtendedRefs(ctx); err != nil {
-			return SyncReport{}, err
-		}
+		_, adoptErr = c.s.AdoptExtendedRefs(ctx)
 	}
 	var report SyncReport
 	var syncErr error
@@ -95,7 +95,7 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 			return report, fmt.Errorf("tidy after sync: %w", err)
 		}
 	}
-	return report, syncErr
+	return report, errors.Join(syncErr, adoptErr)
 }
 
 // syncTargets is the remote set a bare Sync converges: every cc-notes-wired
