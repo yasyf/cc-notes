@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"syscall"
 	"time"
@@ -32,6 +33,8 @@ type managedPack struct {
 	index []byte
 	data  []byte
 	gone  bool
+	// cleanup unmaps a pack whose handle is dropped without a later refresh.
+	cleanup runtime.Cleanup
 }
 
 func (s *objectStorage) managedObject(hash plumbing.Hash) (plumbing.EncodedObject, error) {
@@ -136,6 +139,10 @@ func (p *managedPack) mapFiles() error {
 		return errors.Join(err, syscall.Munmap(index))
 	}
 	p.index, p.data = index, data
+	p.cleanup = runtime.AddCleanup(p, func(mappings [2][]byte) {
+		_ = syscall.Munmap(mappings[0])
+		_ = syscall.Munmap(mappings[1])
+	}, [2][]byte{index, data})
 	return nil
 }
 
@@ -143,6 +150,7 @@ func (p *managedPack) unmap() error {
 	if p.index == nil {
 		return nil
 	}
+	p.cleanup.Stop()
 	err := errors.Join(syscall.Munmap(p.index), syscall.Munmap(p.data))
 	p.index, p.data = nil, nil
 	return err

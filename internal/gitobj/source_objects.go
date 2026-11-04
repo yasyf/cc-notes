@@ -81,6 +81,10 @@ func (s *SourceObjects) KeepOnly(roots ...model.SHA) error {
 	return nil
 }
 
+// HoldPacks protects each pack this scope writes with a keep file until
+// ReleaseHeldPacks, so `git repack -a -d` cannot delete it before its ref lands.
+func (s *SourceObjects) HoldPacks() { s.repo.storage.buffer.hold = true }
+
 // Err reports cancellation or use after the owning callback has returned.
 func (s *SourceObjects) Err() error { return s.check() }
 

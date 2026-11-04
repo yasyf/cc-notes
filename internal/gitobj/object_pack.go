@@ -63,6 +63,7 @@ type objectBuffer struct {
 	objects map[plumbing.Hash]plumbing.EncodedObject
 	size    int64
 	roots   []plumbing.Hash
+	hold    bool
 }
 
 func newObjectBuffer() *objectBuffer {
@@ -168,10 +169,10 @@ func (s *objectStorage) writeObjects(objects []plumbing.EncodedObject) error {
 	}
 	_, err = tmp.Write(pack)
 	tier := packTier(int64(len(pack)))
-	if err := publishPack(dir, tmp, tier, checksum, entries, s.holdPacks, false, err); err != nil {
+	if err := publishPack(dir, tmp, tier, checksum, entries, s.buffer.hold, false, err); err != nil {
 		return err
 	}
-	if s.holdPacks {
+	if s.buffer.hold {
 		s.held = append(s.held, filepath.Join(dir, packStem(tier, checksum)+packKeepExt))
 	}
 	if int(checksum[0])%rollupOneIn == 0 {
@@ -343,16 +344,9 @@ func managedPackStem(name, ext string) (int, string, bool) {
 	return int(rest[0] - '0'), stem, true
 }
 
-// HoldNewPacks makes this handle protect each pack it writes with a keep file
-// until ReleaseHeldPacks, for a writer that publishes refs to them afterwards.
-func (r *Repo) HoldNewPacks() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.storage.holdPacks = true
-}
-
-// ReleaseHeldPacks drops the keep files of the packs this handle wrote, once
-// their refs are published or abandoned.
+// ReleaseHeldPacks drops the keep files of the packs held scopes wrote, once
+// their refs are published or abandoned. The caller owns every hold on this
+// handle, which a publication does by holding the publication lock around both.
 func (r *Repo) ReleaseHeldPacks() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -445,7 +439,7 @@ func (s *objectStorage) rollupPacks() error {
 		}
 		if info, err := os.Stat(filepath.Join(dir, merged+packFileExt)); err == nil && tier+1 < packTopTier {
 			sizes[merged] = info.Size()
-			tiers[tier+1] = append(tiers[tier+1], merged)
+			tiers[tier+1] = append(tiers[tier+1], merged) //nolint:gosec // G602: guarded by the tier bound above.
 		}
 	}
 	return result

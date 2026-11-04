@@ -262,9 +262,9 @@ func TestRollupLeavesPacksAMultiPackIndexLists(t *testing.T) {
 func TestHeldPackSurvivesRepackUntilReleased(t *testing.T) {
 	dir := gittest.InitRepo(t)
 	repo := open(t, dir)
-	repo.HoldNewPacks()
 	var blobs []model.SHA
 	err := repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+		objects.HoldPacks()
 		blobs = writeBlobs(t, objects, "unpublished", 6)
 		return nil
 	})
@@ -291,9 +291,9 @@ func TestHeldPackSurvivesRepackUntilReleased(t *testing.T) {
 func TestRollupWaitsForAFreshKeepFileAndRetiresAStaleOne(t *testing.T) {
 	dir := gittest.InitRepo(t)
 	repo := open(t, dir)
-	repo.HoldNewPacks()
 	for scope := range 8 {
 		err := repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
+			objects.HoldPacks()
 			writeBlobs(t, objects, fmt.Sprintf("held %d", scope), 5)
 			return nil
 		})

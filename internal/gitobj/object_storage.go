@@ -25,9 +25,8 @@ type objectStorage struct {
 	scope   *objectReadScope
 	buffer  *objectBuffer
 	managed managedPacks
-	// holdPacks and held protect packs a writer has yet to publish refs to.
-	holdPacks bool
-	held      []string
+	// held names the keep files of packs a writer has yet to publish refs to.
+	held []string
 }
 
 func (s *objectStorage) Reindex() { s.scope.refresh = true }

@@ -237,6 +237,7 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 		return nil, nil, err
 	}
 	err = s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
+		objects.HoldPacks()
 		if previous.EntityRoot == "" {
 			var err error
 			revision, err = s.buildSourceSnapshot(objects, revision, values)
