@@ -93,7 +93,7 @@ func TestIndexedDuplicatePostingLifecycle(t *testing.T) {
 		return count
 	}
 	for _, row := range []queryMetadata{old, updated} {
-		if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, row) }); err != nil {
+		if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, row) }); err != nil {
 			t.Fatal(err)
 		}
 		if walk(row) != 1 {
@@ -105,7 +105,7 @@ func TestIndexedDuplicatePostingLifecycle(t *testing.T) {
 	}
 	abort := errors.New("abort fingerprint update")
 	if err := db.Update(func(tx *bolt.Tx) error {
-		if err := replaceQueryMetadata(tx, old); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, old); err != nil {
 			return err
 		}
 		return abort
@@ -115,7 +115,7 @@ func TestIndexedDuplicatePostingLifecycle(t *testing.T) {
 	if walk(old) != 0 || walk(updated) != 1 {
 		t.Fatal("aborted replacement changed fingerprint postings")
 	}
-	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(tx, updated.Binding, updated.ID) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(t.Context(), tx, updated.Binding, updated.ID) }); err != nil {
 		t.Fatal(err)
 	}
 	if walk(updated) != 0 {
@@ -170,7 +170,7 @@ func TestIndexedDuplicateSurvivorOrderCollisionAndPins(t *testing.T) {
 		}()
 		row := projectQueryMetadata(q.binding, other.Meta().Head, other)
 		row.DuplicateContent = fingerprint
-		if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, row) }); err != nil {
+		if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, row) }); err != nil {
 			t.Fatal(err)
 		}
 	}()

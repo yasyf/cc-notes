@@ -376,7 +376,7 @@ func retentionPointer(retained gitobj.SourceOperationLFS) []byte {
 }
 
 func requireRetentionType(objects *gitobj.SourceObjects, sha model.SHA, want plumbing.ObjectType) error {
-	actual, err := objects.ObjectType(sha)
+	actual, err := objects.ObjectType(objects.Context(), sha)
 	if err != nil {
 		return fmt.Errorf("%w: retained object %s: %w", ErrCorrupt, sha, err)
 	}

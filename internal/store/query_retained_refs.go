@@ -34,9 +34,9 @@ func queryObjectChildren(ctx context.Context, objects *bolt.Bucket, hash model.S
 	if len(data) == 0 {
 		return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
 	}
-	kind := plumbing.ObjectType(data[0])
-	if kind != plumbing.BlobObject && kind != plumbing.TreeObject {
-		return nil, fmt.Errorf("invalid immutable query object type %s: %w", hash, managed.ErrReindex)
+	kind, err := queryObjectKind(data[0])
+	if err != nil {
+		return nil, err
 	}
 	value, err := (queryGraphObjects{ctx: ctx, bucket: objects}).read(hash, kind)
 	if err != nil || kind == plumbing.BlobObject {

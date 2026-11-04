@@ -45,12 +45,31 @@ type retainedQuery struct {
 
 func (o queryGraphObjects) Context() context.Context { return o.ctx }
 func (o queryGraphObjects) Err() error               { return o.ctx.Err() }
+
+func queryObjectKind(data byte) (plumbing.ObjectType, error) {
+	switch data {
+	case byte(plumbing.BlobObject):
+		return plumbing.BlobObject, nil
+	case byte(plumbing.TreeObject):
+		return plumbing.TreeObject, nil
+	default:
+		return plumbing.InvalidObject, fmt.Errorf("invalid immutable query object type %d: %w", data, managed.ErrReindex)
+	}
+}
+
 func (o queryGraphObjects) read(hash model.SHA, kind plumbing.ObjectType) (*plumbing.MemoryObject, error) {
 	if err := o.Err(); err != nil {
 		return nil, err
 	}
 	data := o.bucket.Get([]byte(hash))
-	if len(data) == 0 || plumbing.ObjectType(data[0]) != kind {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
+	}
+	actual, err := queryObjectKind(data[0])
+	if err != nil {
+		return nil, err
+	}
+	if actual != kind {
 		return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
 	}
 	if plumbing.ComputeHash(kind, data[1:]).String() != string(hash) {
@@ -81,7 +100,16 @@ func (o queryGraphObjects) put(value *plumbing.MemoryObject) (model.SHA, error) 
 		return "", err
 	}
 	hash := model.SHA(value.Hash().String())
-	encoded := append([]byte{byte(value.Type())}, data...)
+	var kind byte
+	switch value.Type() {
+	case plumbing.BlobObject:
+		kind = byte(plumbing.BlobObject)
+	case plumbing.TreeObject:
+		kind = byte(plumbing.TreeObject)
+	default:
+		return "", fmt.Errorf("invalid immutable query object type %s", value.Type())
+	}
+	encoded := append([]byte{kind}, data...)
 	if existing := o.bucket.Get([]byte(hash)); existing != nil {
 		if !bytes.Equal(existing, encoded) {
 			return "", fmt.Errorf("immutable query object collision %s", hash)
@@ -210,7 +238,7 @@ func queryRowPostings(row queryMetadata) []sourcegraph.Mutation {
 	return entries
 }
 
-func replaceQueryGeneration(tx *bolt.Tx, binding string, id model.EntityID, previous, next []byte) error {
+func replaceQueryGeneration(ctx context.Context, tx *bolt.Tx, binding string, id model.EntityID, previous, next []byte) error {
 	root, err := tx.CreateBucketIfNotExists(queryGenerationsBucket)
 	if err != nil {
 		return err
@@ -232,7 +260,7 @@ func replaceQueryGeneration(tx *bolt.Tx, binding string, id model.EntityID, prev
 		return err
 	}
 	var created []model.SHA
-	index := sourcegraph.New(queryGraphObjects{ctx: context.Background(), bucket: objects, counts: counts, created: &created})
+	index := sourcegraph.New(queryGraphObjects{ctx: ctx, bucket: objects, counts: counts, created: &created})
 	previousRoot := generation.Root
 	mutations := make(map[string]sourcegraph.Mutation)
 	if previous != nil {
@@ -272,17 +300,17 @@ func replaceQueryGeneration(tx *bolt.Tx, binding string, id model.EntityID, prev
 	}
 	if generation.Root != previousRoot {
 		if generation.Root != "" {
-			if err := retainQueryObject(context.Background(), objects, counts, generation.Root); err != nil {
+			if err := retainQueryObject(ctx, objects, counts, generation.Root); err != nil {
 				return err
 			}
 		}
 		if previousRoot != "" {
-			if err := releaseQueryObject(context.Background(), objects, counts, previousRoot); err != nil {
+			if err := releaseQueryObject(ctx, objects, counts, previousRoot); err != nil {
 				return err
 			}
 		}
 	}
-	if err := pruneQueryObjects(context.Background(), objects, counts, created); err != nil {
+	if err := pruneQueryObjects(ctx, objects, counts, created); err != nil {
 		return err
 	}
 	data, err := json.Marshal(generation)

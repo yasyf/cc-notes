@@ -40,14 +40,14 @@ func TestQueryMetadataSupersedersMatchSnapshotOracle(t *testing.T) {
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, doc := range docs {
-			if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", doc)); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", doc)); err != nil {
 				return err
 			}
 		}
-		if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", model.Answer{ID: "other-kind", SupersededBy: []model.EntityID{"target"}})); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", model.Answer{ID: "other-kind", SupersededBy: []model.EntityID{"target"}})); err != nil {
 			return err
 		}
-		return replaceQueryMetadata(tx, projectQueryMetadata("binding\x00other", "tip", model.Doc{ID: "other-binding", SupersededBy: []model.EntityID{"target"}}))
+		return replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding\x00other", "tip", model.Doc{ID: "other-binding", SupersededBy: []model.EntityID{"target"}}))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,14 +81,14 @@ func TestQueryMetadataExactAnchorsAndKindIsolation(t *testing.T) {
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for i, anchor := range anchors {
 			id := model.EntityID(fmt.Sprintf("doc-%d", i))
-			if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", model.Doc{ID: id, Anchors: []model.Anchor{anchor}})); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", model.Doc{ID: id, Anchors: []model.Anchor{anchor}})); err != nil {
 				return err
 			}
 		}
-		if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", model.Answer{ID: "answer", Anchors: anchors})); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", model.Answer{ID: "answer", Anchors: anchors})); err != nil {
 			return err
 		}
-		return replaceQueryMetadata(tx, projectQueryMetadata("binding\x00other", "tip", model.Doc{ID: "other-binding", Anchors: anchors}))
+		return replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding\x00other", "tip", model.Doc{ID: "other-binding", Anchors: anchors}))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,12 +114,12 @@ func TestQueryMetadataRelationsReplaceDeleteAndRollback(t *testing.T) {
 	newAnchor := model.Anchor{Kind: model.AnchorPath, Value: "new"}
 	original := projectQueryMetadata("binding", "old-tip", model.Doc{ID: "source", Tags: []string{"label"}, Anchors: []model.Anchor{oldAnchor}, SupersededBy: []model.EntityID{"old-target"}})
 	replacement := projectQueryMetadata("binding", "new-tip", model.Doc{ID: "source", Tags: []string{"label"}, Anchors: []model.Anchor{newAnchor}, SupersededBy: []model.EntityID{"new-target"}, Deleted: true})
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, original) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, original) }); err != nil {
 		t.Fatal(err)
 	}
 	rollback := errors.New("rollback")
 	if err := db.Update(func(tx *bolt.Tx) error {
-		if err := replaceQueryMetadata(tx, replacement); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, replacement); err != nil {
 			return err
 		}
 		return rollback
@@ -136,7 +136,7 @@ func TestQueryMetadataRelationsReplaceDeleteAndRollback(t *testing.T) {
 	}); len(got) != 0 {
 		t.Fatalf("rollback retained new edge: %v", got)
 	}
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, replacement) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, replacement) }); err != nil {
 		t.Fatal(err)
 	}
 	for _, includeDeleted := range []bool{false, true} {
@@ -170,7 +170,7 @@ func TestQueryMetadataRelationsReplaceDeleteAndRollback(t *testing.T) {
 	}); len(got) != 0 {
 		t.Fatalf("replace retained old edge: %v", got)
 	}
-	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(tx, "binding", "source") }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(t.Context(), tx, "binding", "source") }); err != nil {
 		t.Fatal(err)
 	}
 	if got := metadataPostingIDs(t, db, func(tx *bolt.Tx, visit func(queryMetadata) error) error {
@@ -193,7 +193,7 @@ func TestQueryMetadataLivePostingsDoNotHydrateDeletedRows(t *testing.T) {
 			if err := db.Update(func(tx *bolt.Tx) error {
 				for i := range size {
 					row := projectQueryMetadata("binding", "tip", model.Doc{ID: model.EntityID(fmt.Sprintf("deleted-%04d", i)), Tags: []string{"selected"}, Anchors: []model.Anchor{anchor}, SupersededBy: []model.EntityID{"target"}, Deleted: true})
-					if err := replaceQueryMetadata(tx, row); err != nil {
+					if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 						return err
 					}
 					if err := queryMetadataBinding(tx, "binding").Bucket(queryMetadataRowsBucket).Put([]byte(row.ID), []byte("invalid deleted JSON")); err != nil {
@@ -223,7 +223,7 @@ func TestQueryMetadataLivePostingsDoNotHydrateDeletedRows(t *testing.T) {
 			if err := db.Update(func(tx *bolt.Tx) error {
 				for _, id := range []model.EntityID{"live-a", "live-b"} {
 					row := projectQueryMetadata("binding", "tip", model.Doc{ID: id, Tags: []string{"selected"}, Anchors: []model.Anchor{anchor}, SupersededBy: []model.EntityID{"target"}})
-					if err := replaceQueryMetadata(tx, row); err != nil {
+					if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 						return err
 					}
 				}

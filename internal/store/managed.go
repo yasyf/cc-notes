@@ -384,7 +384,7 @@ func (s *Store) recoverManaged(ctx context.Context, db *bolt.DB) error {
 			return err
 		}
 		if applied {
-			if err := s.applyManaged(tx, intent); err != nil {
+			if err := s.applyManaged(ctx, tx, intent); err != nil {
 				return err
 			}
 		}
@@ -392,7 +392,7 @@ func (s *Store) recoverManaged(ctx context.Context, db *bolt.DB) error {
 	})
 }
 
-func (s *Store) applyManaged(tx *bolt.Tx, intent managedIntent) error {
+func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedIntent) error {
 	root, err := managedRoot(tx)
 	if err != nil {
 		return err
@@ -411,7 +411,7 @@ func (s *Store) applyManaged(tx *bolt.Tx, intent managedIntent) error {
 				return err
 			}
 			binding := s.listCacheName(parsed.Kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, "")
-			if err := deleteQueryMetadata(tx, binding, parsed.ID); err != nil {
+			if err := deleteQueryMetadata(ctx, tx, binding, parsed.ID); err != nil {
 				return err
 			}
 		} else if err := tips.Put([]byte(update.Ref), []byte(update.New)); err != nil {
@@ -419,7 +419,7 @@ func (s *Store) applyManaged(tx *bolt.Tx, intent managedIntent) error {
 		}
 	}
 	for _, row := range intent.Rows {
-		if err := replaceQueryMetadata(tx, row); err != nil {
+		if err := replaceQueryMetadata(ctx, tx, row); err != nil {
 			return err
 		}
 	}

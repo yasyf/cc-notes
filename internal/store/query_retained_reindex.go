@@ -43,7 +43,7 @@ func copyQueryObject(ctx context.Context, source, objects, counts *bolt.Bucket, 
 	if len(data) == 0 {
 		return managed.ErrReindex
 	}
-	if plumbing.ObjectType(data[0]) == plumbing.TreeObject {
+	if data[0] == byte(plumbing.TreeObject) {
 		original := queryGraphObjects{ctx: ctx, bucket: source}
 		entries, err := original.ReadTree(hash)
 		if err != nil {
@@ -64,7 +64,7 @@ func copyQueryObject(ctx context.Context, source, objects, counts *bolt.Bucket, 
 		}
 		return nil
 	}
-	if plumbing.ObjectType(data[0]) != plumbing.BlobObject || plumbing.ComputeHash(plumbing.BlobObject, data[1:]).String() != string(hash) {
+	if data[0] != byte(plumbing.BlobObject) || plumbing.ComputeHash(plumbing.BlobObject, data[1:]).String() != string(hash) {
 		return managed.ErrReindex
 	}
 	return objects.Put([]byte(hash), data)

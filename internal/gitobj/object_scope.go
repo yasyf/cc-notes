@@ -142,11 +142,11 @@ type objectReadScope struct {
 	closed  bool
 }
 
-func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
+func (s *objectReadScope) batch(ctx context.Context, git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
 	if s.closed {
 		return nil, os.ErrClosed
 	}
-	if err := s.ctx.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	for _, batch := range s.batches {
@@ -155,7 +155,7 @@ func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
 		}
 	}
 	if s.pool == nil {
-		batch, err := git.ObjectBatch(s.ctx)
+		batch, err := git.ObjectBatch(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -166,12 +166,12 @@ func (s *objectReadScope) batch(git gitcmd.Git) (*gitcmd.ObjectBatch, error) {
 	batch, err := s.pool.take()
 	s.err = errors.Join(s.err, err)
 	if batch == nil {
-		if batch, err = git.ObjectBatch(context.WithoutCancel(s.ctx)); err != nil {
+		if batch, err = git.ObjectBatch(context.WithoutCancel(ctx)); err != nil {
 			return nil, err
 		}
 	}
 	s.batches = append(s.batches, batch)
-	s.unbind = append(s.unbind, batch.Bind(s.ctx))
+	s.unbind = append(s.unbind, batch.Bind(ctx))
 	return batch, nil
 }
 

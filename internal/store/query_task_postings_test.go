@@ -48,16 +48,16 @@ func TestQueryMetadataTaskPostingsMatchSnapshots(t *testing.T) {
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, task := range tasks {
-			if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", task)); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", task)); err != nil {
 				return err
 			}
 		}
 		for _, runbook := range runbooks {
-			if err := replaceQueryMetadata(tx, projectQueryMetadata("binding", "tip", runbook)); err != nil {
+			if err := replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding", "tip", runbook)); err != nil {
 				return err
 			}
 		}
-		return replaceQueryMetadata(tx, projectQueryMetadata("binding\x00other", "tip", model.Task{ID: "other-binding", Parent: "target", BlockedBy: []model.EntityID{"target"}}))
+		return replaceQueryMetadata(t.Context(), tx, projectQueryMetadata("binding\x00other", "tip", model.Task{ID: "other-binding", Parent: "target", BlockedBy: []model.EntityID{"target"}}))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -128,12 +128,12 @@ func TestQueryMetadataTaskPostingsReplaceDeleteRollback(t *testing.T) {
 					}
 				}
 			}
-			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, makeRow("old", false)) }); err != nil {
+			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, makeRow("old", false)) }); err != nil {
 				t.Fatal(err)
 			}
 			rollback := errors.New("rollback")
 			if err := db.Update(func(tx *bolt.Tx) error {
-				if err := replaceQueryMetadata(tx, makeRow("new", false)); err != nil {
+				if err := replaceQueryMetadata(t.Context(), tx, makeRow("new", false)); err != nil {
 					return err
 				}
 				return rollback
@@ -142,16 +142,16 @@ func TestQueryMetadataTaskPostingsReplaceDeleteRollback(t *testing.T) {
 			}
 			assertTarget("old", []model.EntityID{"source"})
 			assertTarget("new", nil)
-			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, makeRow("new", false)) }); err != nil {
+			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, makeRow("new", false)) }); err != nil {
 				t.Fatal(err)
 			}
 			assertTarget("old", nil)
 			assertTarget("new", []model.EntityID{"source"})
-			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(tx, makeRow("new", true)) }); err != nil {
+			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, makeRow("new", true)) }); err != nil {
 				t.Fatal(err)
 			}
 			assertTarget("new", nil)
-			if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(tx, "binding", "source") }); err != nil {
+			if err := db.Update(func(tx *bolt.Tx) error { return deleteQueryMetadata(t.Context(), tx, "binding", "source") }); err != nil {
 				t.Fatal(err)
 			}
 			if err := db.View(func(tx *bolt.Tx) error {
@@ -180,7 +180,7 @@ func TestQueryMetadataTaskPostingsReadOnlyMatchingRows(t *testing.T) {
 						model.Runbook{ID: model.EntityID(fmt.Sprintf("runbook-%d", i)), Runs: []model.RunbookRun{{Task: "other"}}},
 					} {
 						row := projectQueryMetadata("binding", "tip", snapshot)
-						if err := replaceQueryMetadata(tx, row); err != nil {
+						if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 							return err
 						}
 						if err := queryMetadataBinding(tx, "binding").Bucket(queryMetadataRowsBucket).Put([]byte(row.ID), []byte("invalid unrelated JSON")); err != nil {
@@ -199,7 +199,7 @@ func TestQueryMetadataTaskPostingsReadOnlyMatchingRows(t *testing.T) {
 			}
 			if err := db.Update(func(tx *bolt.Tx) error {
 				row := projectQueryMetadata("binding", "tip", model.Task{ID: "selected", Parent: "selected", BlockedBy: []model.EntityID{"selected"}})
-				return replaceQueryMetadata(tx, row)
+				return replaceQueryMetadata(t.Context(), tx, row)
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -224,7 +224,7 @@ func TestQueryMetadataTaskRelationRejectsDigestCollision(t *testing.T) {
 	db := newQueryMetadataDB(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		row := projectQueryMetadata("binding", "tip", model.Task{ID: "wrong", Parent: "other", BlockedBy: []model.EntityID{"other"}})
-		if err := replaceQueryMetadata(tx, row); err != nil {
+		if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 			return err
 		}
 		binding := queryMetadataBinding(tx, "binding")

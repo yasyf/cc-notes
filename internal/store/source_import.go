@@ -398,7 +398,7 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 			revision.ProjectionDigest = provenance.ObjectDigest
 		}
 		if len(imported.applied[token]) != 0 && revision.RetentionConflicts != 0 {
-			return fmt.Errorf("Applied receipts %v token %s: required LFS content is missing or inconsistent", imported.applied[token], token)
+			return fmt.Errorf("applied receipts %v token %s: required LFS content is missing or inconsistent", imported.applied[token], token)
 		}
 		return nil
 	})
@@ -643,10 +643,10 @@ func (s *Store) validateAppliedImports(ctx context.Context, imported *importedSo
 		}
 		revision := imported.revisions[operation.Token]
 		if _, legacy := imported.legacyProofs[id]; !legacy && operation.RetentionRoot != revision.RetentionRoot {
-			return fmt.Errorf("Applied receipt %s token %s: pinned aggregate differs from committed revision", id, operation.Token)
+			return fmt.Errorf("applied receipt %s token %s: pinned aggregate differs from committed revision", id, operation.Token)
 		}
 		if err := sourceProjection(revision); err != nil {
-			return fmt.Errorf("Applied receipt %s token %s: %w", id, operation.Token, err)
+			return fmt.Errorf("applied receipt %s token %s: %w", id, operation.Token, err)
 		}
 		entities := make([]sourceview.Entity, 0)
 		err := s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
@@ -669,21 +669,21 @@ func (s *Store) validateAppliedImports(ctx context.Context, imported *importedSo
 			})
 		})
 		if err != nil {
-			return fmt.Errorf("Applied receipt %s token %s: %w", id, operation.Token, err)
+			return fmt.Errorf("applied receipt %s token %s: %w", id, operation.Token, err)
 		}
 		tips := make([]model.SHA, 0, len(entities))
 		lfs := make(map[string]int64)
 		for _, entity := range entities {
 			snapshot, err := s.LoadAt(ctx, entity.Tip)
 			if err != nil {
-				return fmt.Errorf("Applied receipt %s token %s entity %s: %w", id, operation.Token, entity.Ref, err)
+				return fmt.Errorf("applied receipt %s token %s entity %s: %w", id, operation.Token, entity.Ref, err)
 			}
 			if revision.RenderPolicy != sourceview.RenderPolicy {
-				return fmt.Errorf("Applied receipt %s token %s: unknown renderer %s", id, operation.Token, revision.RenderPolicy)
+				return fmt.Errorf("applied receipt %s token %s: unknown renderer %s", id, operation.Token, revision.RenderPolicy)
 			}
 			rendered := sourceview.CodecOf(entity.Kind).Render(snapshot)
 			if int64(len(rendered)) != entity.Size || sha256.Sum256(rendered) != entity.Hash {
-				return fmt.Errorf("Applied receipt %s token %s entity %s: rendered bytes differ", id, operation.Token, entity.Ref)
+				return fmt.Errorf("applied receipt %s token %s entity %s: rendered bytes differ", id, operation.Token, entity.Ref)
 			}
 			tips = append(tips, entity.Tip)
 			if entity.Deleted {
@@ -691,12 +691,12 @@ func (s *Store) validateAppliedImports(ctx context.Context, imported *importedSo
 			}
 			for _, attachment := range entity.Attachments {
 				if size, found := lfs[attachment.OID]; found && size != attachment.Size {
-					return fmt.Errorf("Applied receipt %s token %s: LFS size conflict", id, operation.Token)
+					return fmt.Errorf("applied receipt %s token %s: LFS size conflict", id, operation.Token)
 				}
 				lfs[attachment.OID] = attachment.Size
 				info, err := os.Stat(s.LFS().Path(attachment.OID))
 				if err != nil || info.Size() != attachment.Size {
-					return fmt.Errorf("Applied receipt %s token %s LFS %s: %w", id, operation.Token, attachment.OID, errors.Join(err, sourceindex.ErrProjectionUnavailable))
+					return fmt.Errorf("applied receipt %s token %s LFS %s: %w", id, operation.Token, attachment.OID, errors.Join(err, sourceindex.ErrProjectionUnavailable))
 				}
 			}
 		}
@@ -704,7 +704,7 @@ func (s *Store) validateAppliedImports(ctx context.Context, imported *importedSo
 			slices.Sort(tips)
 			tips = slices.Compact(tips)
 			if !slices.Equal(tips, proof.RetainedTips) {
-				return fmt.Errorf("Applied receipt %s token %s: raw content pin does not cover its complete committed view", id, operation.Token)
+				return fmt.Errorf("applied receipt %s token %s: raw content pin does not cover its complete committed view", id, operation.Token)
 			}
 			retained := make([]gitobj.SourceOperationLFS, 0, len(lfs))
 			for oid, size := range lfs {
@@ -712,7 +712,7 @@ func (s *Store) validateAppliedImports(ctx context.Context, imported *importedSo
 			}
 			slices.SortFunc(retained, func(a, b gitobj.SourceOperationLFS) int { return strings.Compare(a.OID, b.OID) })
 			if !slices.Equal(retained, proof.RetainedLFS) {
-				return fmt.Errorf("Applied receipt %s token %s: LFS pin does not cover its complete committed view", id, operation.Token)
+				return fmt.Errorf("applied receipt %s token %s: LFS pin does not cover its complete committed view", id, operation.Token)
 			}
 		}
 	}
