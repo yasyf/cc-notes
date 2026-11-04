@@ -195,7 +195,7 @@ func queryGenerationBinding(tx *bolt.Tx, binding string) *bolt.Bucket {
 	return root.Bucket(queryMetadataAtom(binding))
 }
 
-func readQueryGeneration(store queryObjectStore, key []byte) (queryGeneration, error) {
+func readQueryGeneration(bucket *bolt.Bucket, key []byte) (queryGeneration, error) {
 	var generation queryGeneration
 	if bucket == nil {
 		return generation, managed.ErrReindex
