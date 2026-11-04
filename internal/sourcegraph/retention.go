@@ -375,8 +375,9 @@ func retentionPointer(retained gitobj.SourceOperationLFS) []byte {
 	return []byte("version https://git-lfs.github.com/spec/v1\noid sha256:" + retained.OID + "\nsize " + strconv.FormatInt(retained.Size, 10) + "\n")
 }
 
+//nolint:contextcheck // SourceObjects binds the operation context to its scoped batch reader.
 func requireRetentionType(objects *gitobj.SourceObjects, sha model.SHA, want plumbing.ObjectType) error {
-	actual, err := objects.ObjectType(objects.Context(), sha)
+	actual, err := objects.ObjectType(sha)
 	if err != nil {
 		return fmt.Errorf("%w: retained object %s: %w", ErrCorrupt, sha, err)
 	}

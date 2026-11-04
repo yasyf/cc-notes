@@ -63,14 +63,14 @@ func (s *SourceObjects) Err() error { return s.check() }
 func (s *SourceObjects) Context() context.Context { return s.ctx }
 
 // ObjectType verifies an object's existence and type without reading its body.
-func (s *SourceObjects) ObjectType(ctx context.Context, sha model.SHA) (plumbing.ObjectType, error) {
+func (s *SourceObjects) ObjectType(sha model.SHA) (plumbing.ObjectType, error) {
 	if err := s.check(); err != nil {
 		return plumbing.InvalidObject, err
 	}
 	if !plumbing.IsHash(string(sha)) {
 		return plumbing.InvalidObject, fmt.Errorf("invalid object sha %q", sha)
 	}
-	batch, err := s.repo.storage.scope.batch(ctx, s.repo.storage.backend)
+	batch, err := s.repo.storage.scope.batch(s.repo.storage.backend)
 	if err != nil {
 		return plumbing.InvalidObject, err
 	}
