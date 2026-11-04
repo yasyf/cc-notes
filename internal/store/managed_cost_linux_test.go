@@ -215,8 +215,8 @@ func TestManagedFreshProcessCost(t *testing.T) {
 			allowance int64
 		}{
 			{"read_return_bytes", small.ReadBytes, large.ReadBytes, 256 << 10},
-			{"write_return_bytes", small.WriteBytes, large.WriteBytes, writeBytesGrowth},
-			{"minor_faults", small.MinorFaults, large.MinorFaults, minorFaultsGrowth},
+			{"write_return_bytes", small.WriteBytes, large.WriteBytes, 256 << 10},
+			{"minor_faults", small.MinorFaults, large.MinorFaults, 256},
 			{"git_processes", small.GitProcesses, large.GitProcesses, 8},
 		} {
 			if counter.high > counter.low+counter.allowance {
@@ -224,7 +224,7 @@ func TestManagedFreshProcessCost(t *testing.T) {
 			}
 		}
 		for _, name := range []string{"read", "pread64", "open", "openat", "newfstatat", "fstat", "getdents64", "fsync", "fdatasync"} {
-			if large.Syscalls[name] > small.Syscalls[name]+syscallGrowth(name) {
+			if large.Syscalls[name] > small.Syscalls[name]+64 {
 				t.Errorf("MANAGED_AUTHORITY_COST_REGRESSION: mode=%s %s grew:32=%d10000=%d", mode, name, small.Syscalls[name], large.Syscalls[name])
 			}
 		}
@@ -234,24 +234,7 @@ func TestManagedFreshProcessCost(t *testing.T) {
 	}
 }
 
-// A write copies one radix path per index, so its cost follows tree depth, not
-// record count: 32 to 10000 records is 8.3 doublings. The bytes allow 128 KiB per
-// doubling, about 1.3 MiB a write. At the monorepo's peak of 560 writes an hour
-// that is 0.2 MiB/s, under 0.01% of this Mac's 2.5 GiB/s disk.
-const (
-	writeBytesGrowth       = (128 << 10) * 83 / 10
-	minorFaultsPerDoubling = 160
-	minorFaultsGrowth      = minorFaultsPerDoubling * 83 / 10
-	historyDoublings       = 5
-	writeStallLimit        = 10 * time.Second
-)
-
-func syscallGrowth(name string) int64 {
-	if name == "openat" || name == "newfstatat" {
-		return 24 * 83 / 10
-	}
-	return 64
-}
+const writeStallLimit = 10 * time.Second
 
 func managedCostFixture(t *testing.T, count int) (string, model.Task) {
 	t.Helper()

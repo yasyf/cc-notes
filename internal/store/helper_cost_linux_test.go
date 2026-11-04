@@ -213,8 +213,8 @@ func TestHelperFreshProcessCost(t *testing.T) {
 			low, high, allowance int64
 		}{
 			{"read_return_bytes", low.ReadBytes, high.ReadBytes, 256 << 10},
-			{"write_return_bytes", low.WriteBytes, high.WriteBytes, writeBytesGrowth},
-			{"minor_faults", low.MinorFaults, high.MinorFaults, minorFaultsGrowth},
+			{"write_return_bytes", low.WriteBytes, high.WriteBytes, 256 << 10},
+			{"minor_faults", low.MinorFaults, high.MinorFaults, 256},
 			{"git_processes", low.GitProcesses, high.GitProcesses, 8},
 		} {
 			if c.high > c.low+c.allowance {
@@ -222,7 +222,7 @@ func TestHelperFreshProcessCost(t *testing.T) {
 			}
 		}
 		for _, name := range []string{"read", "pread64", "open", "openat", "newfstatat", "fstat", "getdents64", "fsync", "fdatasync"} {
-			if high.Syscalls[name] > low.Syscalls[name]+syscallGrowth(name) {
+			if high.Syscalls[name] > low.Syscalls[name]+64 {
 				t.Errorf("HELPER_COST_REGRESSION: %s %s32=%d10000=%d", mode, name, low.Syscalls[name], high.Syscalls[name])
 			}
 		}
