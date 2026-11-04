@@ -265,12 +265,17 @@ func (s *Store) managedWrite(ctx context.Context, build func(*bolt.DB) (*managed
 	if err := s.ImportFetchedRef(ctx, drift.ref, drift.tip); err != nil {
 		return fmt.Errorf("adopt %s: %w", drift.ref, err)
 	}
-	return fmt.Errorf("%w: %w", gitcmd.ErrCASMismatch, drift)
+	err = s.publishManagedIntent(ctx, build)
+	if errors.As(err, &drift) {
+		return fmt.Errorf("%w: %w", gitcmd.ErrCASMismatch, drift)
+	}
+	return err
 }
 
 // AdoptExtendedRefs imports every entity ref the authority lacks or trails,
-// returning how many it adopted. A ref that does not descend from its authority
-// tip stays out: only an explicit reindex may discard managed history.
+// returning how many it adopted and joining the failures of those it could not.
+// A ref that does not descend from its authority tip stays out: only an explicit
+// reindex may discard managed history.
 func (s *Store) AdoptExtendedRefs(ctx context.Context) (int, error) {
 	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
 	if err != nil {
@@ -281,13 +286,15 @@ func (s *Store) AdoptExtendedRefs(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	adopted := 0
+	var failures []error
 	for ref, tip := range tips {
 		if _, err := refs.Parse(ref); err != nil || authoritative[ref] == tip {
 			continue
 		}
 		extended, err := s.extendsAuthority(ctx, authoritative[ref], tip)
 		if err != nil {
-			return adopted, err
+			failures = append(failures, fmt.Errorf("adopt %s: %w", ref, err))
+			continue
 		}
 		if !extended {
 			continue
@@ -295,11 +302,11 @@ func (s *Store) AdoptExtendedRefs(ctx context.Context) (int, error) {
 		switch err := s.ImportFetchedRef(ctx, ref, tip); {
 		case err == nil:
 			adopted++
-		case !errors.Is(err, gitcmd.ErrCASMismatch):
-			return adopted, fmt.Errorf("adopt %s: %w", ref, err)
+		case !errors.Is(err, gitcmd.ErrCASMismatch) && !errors.Is(err, managed.ErrReindex):
+			failures = append(failures, fmt.Errorf("adopt %s: %w", ref, err))
 		}
 	}
-	return adopted, nil
+	return adopted, errors.Join(failures...)
 }
 
 func (s *Store) extendsAuthority(ctx context.Context, authoritative, tip model.SHA) (bool, error) {
@@ -367,8 +374,6 @@ func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (
 				if update.Old != update.New || update.New != tip {
 					return fmt.Errorf("import fetched ref %s: %w", update.Ref, gitcmd.ErrCASMismatch)
 				}
-				intent.Before[i] = tip
-				continue
 			}
 			var authoritative model.SHA
 			if err := db.View(func(tx *bolt.Tx) error {
@@ -382,14 +387,18 @@ func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (
 				return err
 			}
 			if authoritative != tip {
-				extended, err := s.extendsAuthority(ctx, authoritative, tip)
-				if err != nil {
-					return err
+				extended := false
+				if tip != "" {
+					if extended, err = s.extendsAuthority(ctx, authoritative, tip); err != nil {
+						return err
+					}
 				}
-				if extended && tip != "" {
+				if !extended {
+					return fmt.Errorf("git ref changed outside managed publication: %s: %w", update.Ref, managed.ErrReindex)
+				}
+				if intent.Imported != update.Ref {
 					return &managedDrift{ref: update.Ref, tip: tip}
 				}
-				return fmt.Errorf("git ref changed outside managed publication: %s: %w", update.Ref, managed.ErrReindex)
 			}
 		}
 		intent.Before[i] = tip

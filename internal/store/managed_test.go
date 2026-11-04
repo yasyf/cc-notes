@@ -249,6 +249,25 @@ func TestAdoptExtendedRefsImportsExtensionsAndKeepsRewinds(t *testing.T) {
 	}
 }
 
+func TestImportFetchedRefRefusesARewindUnderTheLock(t *testing.T) {
+	s := initStore(t)
+	note := create(t, s, noteOps("managed tip stays"))
+	ref := refs.For(model.KindNote, note.EntityID())
+	kept, err := s.Append(t.Context(), ref, []model.Op{model.SetBody{Body: "managed append"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: kept.Meta().Head, New: note.Meta().Head}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportFetchedRef(t.Context(), ref, note.Meta().Head); !errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("import of a rewound tip=%v; want ErrReindex", err)
+	}
+	if loaded, err := s.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(loaded, kept) {
+		t.Fatalf("refused import changed authority=%#v, %v; want %#v", loaded, err, kept)
+	}
+}
+
 func TestManagedAuthorityAdoptsExtensionsAndReindexesTheRest(t *testing.T) {
 	s := initStore(t)
 	a := create(t, s, answerOps("managed before raw writer")).(model.Answer)
