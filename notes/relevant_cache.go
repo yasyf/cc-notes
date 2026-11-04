@@ -312,7 +312,7 @@ func (c *Client) relevantName(p string, filter RelevantFilter, variant, exe stri
 }
 
 func (e relevantCacheEntry) hit(now time.Time) bool {
-	return e.settled(now) && e.stampsValid() && e.filesValid()
+	return e.settled(now) && e.stampsValid() && e.filesValid() && e.headDepsValid()
 }
 
 // settled reports whether everything but the fingerprints still holds: the
@@ -370,7 +370,7 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 			continue
 		}
 		root, ok := roots[s.Path]
-		heads := c.branchDir(s)
+		heads := c.branchDir(s) && (!e.AnyHead || s.Path == c.headsDir())
 		if (!ok && !heads) || s.Link || s.Ident || stamps[i].Missing || stamps[i].Inode != s.Inode || stamps[i].Mode != s.Mode {
 			return false
 		}
@@ -385,7 +385,7 @@ func (c *Client) restampUnscoredWrites(ctx context.Context, name string, e relev
 		moved = append(moved, i)
 	}
 	cutoff := e.Built - relevantRacyWindow.Nanoseconds()
-	if headsMoved && !c.resolvedBranchesHeld(e, built, cutoff) {
+	if !c.resolvedBranchesHeld(e, headsMoved, built, cutoff) {
 		return false
 	}
 	if configMoved {
@@ -423,13 +423,12 @@ func (c *Client) branchDir(s fileStamp) bool {
 	return s.Mode.IsDir() && (s.Path == heads || strings.HasPrefix(s.Path, heads+string(filepath.Separator)))
 }
 
-func (c *Client) resolvedBranchesHeld(e relevantCacheEntry, built time.Time, cutoff int64) bool {
+func (c *Client) resolvedBranchesHeld(e relevantCacheEntry, headsMoved bool, built time.Time, cutoff int64) bool {
 	if e.AnyHead {
-		return onlyLiveRefSince(c.headsDir(), cutoff)
+		return !headsMoved || onlyLiveRefSince(c.headsDir(), cutoff)
 	}
-	return !slices.ContainsFunc(e.HeadDeps, func(h fileStamp) bool {
-		return lstampOf(h.Path) != h || (e.Racy && h.racy(built))
-	})
+	racy := e.Racy && slices.ContainsFunc(e.HeadDeps, func(h fileStamp) bool { return h.racy(built) })
+	return !racy && e.headDepsValid()
 }
 
 // onlyLiveRefSince reports whether the source projection's live ref, which every
@@ -546,6 +545,10 @@ func (e relevantCacheEntry) stampsValid() bool {
 		}
 	}
 	return true
+}
+
+func (e relevantCacheEntry) headDepsValid() bool {
+	return !slices.ContainsFunc(e.HeadDeps, func(h fileStamp) bool { return lstampOf(h.Path) != h })
 }
 
 func (e relevantCacheEntry) filesValid() bool {

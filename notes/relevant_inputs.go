@@ -758,14 +758,19 @@ func configSumWithoutBranches(path string) string {
 		return ""
 	}
 	sum := sha256.New()
-	branch, continued := false, false
+	inBranch := false
 	for line := range bytes.Lines(data) {
 		trimmed := bytes.TrimSpace(line)
-		if !continued && bytes.HasPrefix(trimmed, []byte("[")) {
-			branch = bytes.HasPrefix(bytes.ToLower(trimmed), []byte(`[branch "`))
+		// A trailing backslash may continue a value or sit in a comment; telling
+		// them apart takes git's full parser, so such a file is digested whole.
+		if bytes.HasSuffix(trimmed, []byte(`\`)) {
+			whole := sha256.Sum256(data)
+			return hex.EncodeToString(whole[:])
 		}
-		continued = bytes.HasSuffix(trimmed, []byte(`\`))
-		if !branch {
+		if bytes.HasPrefix(trimmed, []byte("[")) {
+			inBranch = bytes.HasPrefix(bytes.ToLower(trimmed), []byte(`[branch "`))
+		}
+		if !inBranch {
 			sum.Write(line)
 		}
 	}

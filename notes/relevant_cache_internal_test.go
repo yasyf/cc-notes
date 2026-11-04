@@ -1304,3 +1304,43 @@ func TestRelevantNameSeparatesExecutablePathsFromVariants(t *testing.T) {
 		t.Fatalf("distinct executable/variant tuples share cache name %s", first)
 	}
 }
+
+func TestConfigSumWithoutBranches(t *testing.T) {
+	const base = "[core]\n\tbare = false\n[user]\n\temail = a@example.com\n"
+	cases := []struct {
+		name   string
+		before string
+		after  string
+		same   bool
+	}{
+		{name: "branch section added", before: base, after: base + "[branch \"x\"]\n\tremote = origin\n", same: true},
+		{name: "branch section edited", before: base + "[branch \"x\"]\n\tremote = a\n", after: base + "[branch \"x\"]\n\tremote = b\n", same: true},
+		{name: "section after a branch still counts", before: "[branch \"x\"]\n\tremote = a\n[user]\n\temail = a@example.com\n", after: "[branch \"x\"]\n\tremote = a\n[user]\n\temail = b@example.com\n"},
+		{name: "user email edited", before: base, after: strings.Replace(base, "a@example.com", "b@example.com", 1)},
+		{name: "commented backslash before a section", before: "[branch \"x\"] # \\\n[user]\n\temail = a@example.com\n", after: "[branch \"x\"] # \\\n[user]\n\temail = b@example.com\n"},
+		{name: "continued value starting with a bracket", before: "[branch \"x\"]\n\tdescription = a\\\n[user]\n", after: "[branch \"x\"]\n\tdescription = b\\\n[user]\n"},
+		{name: "branch variable without a subsection", before: base, after: base + "[branch]\n\tsort = -committerdate\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config")
+			sum := func(content string) string {
+				t.Helper()
+				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return configSumWithoutBranches(path)
+			}
+			before, after := sum(tc.before), sum(tc.after)
+			if before == "" || after == "" {
+				t.Fatalf("empty digest: %q %q", before, after)
+			}
+			if (before == after) != tc.same {
+				t.Fatalf("same digest = %t, want %t", before == after, tc.same)
+			}
+		})
+	}
+	if got := configSumWithoutBranches(filepath.Join(t.TempDir(), "missing")); got != "" {
+		t.Fatalf("missing config digest = %q, want empty", got)
+	}
+}
