@@ -618,6 +618,7 @@ func (c *Client) crossAuthorSet(ctx context.Context, in *relevantInputs) (map[st
 	if err != nil {
 		return nil, err
 	}
+	in.mergeBase = mergeBase
 	authors, err := c.s.Git.RevRangeFileAuthors(ctx, string(mergeBase), string(in.head))
 	if err != nil {
 		return nil, err
