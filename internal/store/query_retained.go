@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -241,6 +242,30 @@ func queryRowPostings(row queryMetadata) []sourcegraph.Mutation {
 	return entries
 }
 
+func queryPostingChanges(previous, next []sourcegraph.Mutation) []sourcegraph.Mutation {
+	before := make(map[string]sourcegraph.Mutation, len(previous))
+	after := make(map[string]sourcegraph.Mutation, len(next))
+	for _, entry := range previous {
+		before[entry.Key] = entry
+	}
+	for _, entry := range next {
+		after[entry.Key] = entry
+	}
+	var changes []sourcegraph.Mutation
+	for key := range before {
+		if _, found := after[key]; !found {
+			changes = append(changes, sourcegraph.Mutation{Key: key, Delete: true})
+		}
+	}
+	for key, entry := range after {
+		if previous, found := before[key]; !found || !bytes.Equal(previous.Value, entry.Value) {
+			changes = append(changes, entry)
+		}
+	}
+	slices.SortFunc(changes, func(a, b sourcegraph.Mutation) int { return cmp.Compare(a.Key, b.Key) })
+	return changes
+}
+
 type queryGenerationDelta struct {
 	mutations map[string]sourcegraph.Mutation
 	added     uint64
@@ -255,14 +280,13 @@ func (b queryGenerationBatch) replace(binding string, id model.EntityID, previou
 		delta = &queryGenerationDelta{mutations: make(map[string]sourcegraph.Mutation)}
 		b[binding] = delta
 	}
+	var before, after []sourcegraph.Mutation
 	if previous != nil {
 		var row queryMetadata
 		if err := json.Unmarshal(previous, &row); err != nil {
 			return err
 		}
-		for _, entry := range queryRowPostings(row) {
-			delta.mutations[entry.Key] = sourcegraph.Mutation{Key: entry.Key, Delete: true}
-		}
+		before = queryRowPostings(row)
 	}
 	if next == nil {
 		delta.mutations[queryRowKey(id)] = sourcegraph.Mutation{Key: queryRowKey(id), Delete: true}
@@ -271,10 +295,11 @@ func (b queryGenerationBatch) replace(binding string, id model.EntityID, previou
 		if err := json.Unmarshal(next, &row); err != nil {
 			return err
 		}
-		for _, entry := range queryRowPostings(row) {
-			delta.mutations[entry.Key] = entry
-		}
+		after = queryRowPostings(row)
 		delta.mutations[queryRowKey(id)] = sourcegraph.Mutation{Key: queryRowKey(id), Value: next}
+	}
+	for _, entry := range queryPostingChanges(before, after) {
+		delta.mutations[entry.Key] = entry
 	}
 	if previous == nil && next != nil {
 		delta.added++
