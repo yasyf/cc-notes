@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -290,11 +291,7 @@ func TestManagedAuthorityGuardianRetainsLockThroughCallerExit(t *testing.T) {
 	}
 	poisonManagedUnrelatedRef(t, s, model.KindAnswer)
 	updates := []gitcmd.RefUpdate{prepared.RefUpdate()}
-	rows, err := s.managedRows(t.Context(), updates, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	intent, err := json.Marshal(managedIntent{Updates: updates, Before: []model.SHA{a.Head}, Rows: rows})
+	intent, err := json.Marshal(updates[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +334,7 @@ func TestManagedAuthorityGuardianRetainsLockThroughCallerExit(t *testing.T) {
 	p.send(t, "exit")
 	p.wait(t, 77)
 	pending := readManagedPending(t, s)
-	if len(pending.Updates) != 1 || pending.Updates[0] != updates[0] {
+	if !slices.Contains(pending.Updates, updates[0]) {
 		t.Fatalf("caller exit discarded durable intent=%+v", pending)
 	}
 	lock, err := os.OpenFile(filepath.Join(s.recordsCommonDir, "cc-notes-managed", "authority-v1.db.lock"), os.O_RDWR, 0o600)

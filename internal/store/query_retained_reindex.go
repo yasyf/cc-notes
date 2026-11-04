@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	bolt "go.etcd.io/bbolt"
@@ -80,13 +79,10 @@ func copyQueryObject(ctx context.Context, source, objects queryObjectStore, coun
 }
 
 func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination *bolt.Tx) (err error) {
-	if _, err := os.Stat(managed.Path(s.recordsCommonDir)); errors.Is(err, os.ErrNotExist) {
+	db, err := s.openManaged(true)
+	if errors.Is(err, managed.ErrReindex) {
 		return nil
 	} else if err != nil {
-		return err
-	}
-	db, err := s.openManaged(true)
-	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, db.Close()) }()

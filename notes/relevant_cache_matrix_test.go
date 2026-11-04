@@ -703,6 +703,52 @@ func invalidationCases() []matrixCase {
 			settled: tierRevalidate,
 		},
 		{
+			name: "default base advances without moving the merge base",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.crossAuthor(t)
+				fx.run(t, "update-ref", "refs/remotes/origin/main", string(fx.root))
+				fx.run(t, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+			},
+			writes: []matrixWrite{{name: "origin/main moved to a commit off the merge base", want: tierRevalidate, do: func(t *testing.T, fx *matrixFixture) {
+				side := fx.run(t, "commit-tree", string(fx.root)+"^{tree}", "-p", string(fx.root), "-m", "side")
+				fx.run(t, "update-ref", "refs/remotes/origin/main", side)
+			}}},
+		},
+		{
+			name: "default base file turned into a symref",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.crossAuthor(t)
+				fx.run(t, "update-ref", "refs/remotes/origin/main", string(fx.root))
+				fx.run(t, "update-ref", "refs/remotes/origin/release", string(fx.root))
+				fx.run(t, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+				fx.run(t, "update-ref", "refs/heads/release", string(fx.theirs))
+			},
+			writes: []matrixWrite{{name: "origin/main points at origin/release", want: tierRebuild, changes: true, do: gitWrite("symbolic-ref", "refs/remotes/origin/main", "refs/remotes/origin/release")}},
+		},
+		{
+			name: "anchored alias reaches the default base",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.run(t, "update-ref", "refs/remotes/origin/main", string(fx.root))
+				fx.run(t, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+				fx.run(t, "symbolic-ref", "refs/heads/alias", "refs/remotes/origin/main")
+				fx.anchored(t, "alias work", "alias")
+			},
+			writes: []matrixWrite{{name: "origin/main moved off HEAD's history", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+				fx.run(t, "update-ref", "refs/remotes/origin/main", string(fx.sideCommit(t)))
+			}}},
+		},
+		{
+			name: "default base catches up with HEAD",
+			setup: func(t *testing.T, fx *matrixFixture) {
+				fx.crossAuthor(t)
+				fx.run(t, "update-ref", "refs/remotes/origin/main", string(fx.root))
+				fx.run(t, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+			},
+			writes: []matrixWrite{{name: "main moved onto HEAD", want: tierRebuild, changes: true, do: func(t *testing.T, fx *matrixFixture) {
+				fx.run(t, "update-ref", "refs/heads/main", string(fx.theirs))
+			}}},
+		},
+		{
 			name: "origin/HEAD made ambiguous by a tag",
 			setup: func(t *testing.T, fx *matrixFixture) {
 				fx.crossAuthor(t)
