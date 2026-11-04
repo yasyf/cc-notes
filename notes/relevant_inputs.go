@@ -1,7 +1,6 @@
 package notes
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/cc-notes/model"
@@ -757,24 +757,8 @@ func configSumWithoutBranches(path string) string {
 	if err != nil {
 		return ""
 	}
-	sum := sha256.New()
-	inBranch := false
-	for line := range bytes.Lines(data) {
-		trimmed := bytes.TrimSpace(line)
-		// A trailing backslash may continue a value or sit in a comment; telling
-		// them apart takes git's full parser, so such a file is digested whole.
-		if bytes.HasSuffix(trimmed, []byte(`\`)) {
-			whole := sha256.Sum256(data)
-			return hex.EncodeToString(whole[:])
-		}
-		if bytes.HasPrefix(trimmed, []byte("[")) {
-			inBranch = bytes.HasPrefix(bytes.ToLower(trimmed), []byte(`[branch "`))
-		}
-		if !inBranch {
-			sum.Write(line)
-		}
-	}
-	return hex.EncodeToString(sum.Sum(nil))
+	sum := sha256.Sum256(gitobj.WithoutBranchSections(data))
+	return hex.EncodeToString(sum[:])
 }
 
 func (in *relevantInputs) configStamped() map[string]bool {
