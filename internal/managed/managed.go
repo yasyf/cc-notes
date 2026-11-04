@@ -16,6 +16,9 @@ import (
 // Format identifies the managed authority schema and projection contract.
 const Format = "cc-notes-managed-v4"
 
+// PageSize keeps authority writes independent of the host memory page size.
+const PageSize = 4096
+
 // QueryGenerations identifies the required immutable metadata storage.
 const QueryGenerations = "query-generations-v1"
 
@@ -124,7 +127,7 @@ func Initialize(ctx context.Context, commonDir string) (err error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	db, err := bolt.Open(Path(commonDir), 0o600, nil)
+	db, err := bolt.Open(Path(commonDir), 0o600, &bolt.Options{PageSize: PageSize})
 	if err != nil {
 		return err
 	}
