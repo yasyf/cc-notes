@@ -33,6 +33,8 @@ type SourceObjects struct {
 }
 
 // SourceObjects shares one native read scope across an immutable graph operation.
+// Objects it writes stay in memory until run succeeds, then land as one pack
+// before it returns; on failure they are never written.
 func (r *Repo) SourceObjects(ctx context.Context, run func(*SourceObjects) error) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -41,12 +43,17 @@ func (r *Repo) SourceObjects(ctx context.Context, run func(*SourceObjects) error
 	defer r.mu.Unlock()
 	r.beginRead(ctx)
 	defer r.endRead(&err)
+	r.storage.buffer = newObjectBuffer()
+	defer func() { r.storage.buffer = nil }()
 	objects := &SourceObjects{repo: r, ctx: ctx}
 	defer func() { objects.closed = true }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return errors.Join(run(objects), ctx.Err())
+	if err := errors.Join(run(objects), ctx.Err()); err != nil {
+		return err
+	}
+	return r.storage.flushBuffer()
 }
 
 func (s *SourceObjects) check() error {
@@ -54,6 +61,24 @@ func (s *SourceObjects) check() error {
 		return fs.ErrClosed
 	}
 	return s.ctx.Err()
+}
+
+// KeepOnly limits the final write to what the roots reach, dropping the
+// intermediate graph nodes this scope wrote and replaced. Only a scope that
+// publishes exactly these roots may call it.
+func (s *SourceObjects) KeepOnly(roots ...model.SHA) error {
+	if err := s.check(); err != nil {
+		return err
+	}
+	hashes := make([]plumbing.Hash, len(roots))
+	for i, root := range roots {
+		if !plumbing.IsHash(string(root)) {
+			return fmt.Errorf("invalid root sha %q", root)
+		}
+		hashes[i] = plumbing.NewHash(string(root))
+	}
+	s.repo.storage.buffer.roots = hashes
+	return nil
 }
 
 // Err reports cancellation or use after the owning callback has returned.
@@ -69,6 +94,9 @@ func (s *SourceObjects) ObjectType(sha model.SHA) (plumbing.ObjectType, error) {
 	}
 	if !plumbing.IsHash(string(sha)) {
 		return plumbing.InvalidObject, fmt.Errorf("invalid object sha %q", sha)
+	}
+	if value, err := s.repo.storage.bufferedObject(plumbing.NewHash(string(sha))); err == nil {
+		return value.Type(), nil
 	}
 	batch, err := s.repo.storage.scope.batch(s.repo.storage.backend)
 	if err != nil {

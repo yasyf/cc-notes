@@ -380,7 +380,10 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 			return err
 		}
 		revision.Token = token
-		return nil
+		if revision.RetentionRoot == "" {
+			return objects.KeepOnly(token)
+		}
+		return objects.KeepOnly(token, revision.RetentionRoot)
 	})
 	if err != nil {
 		return nil, nil, err

@@ -23,17 +23,25 @@ type objectStorage struct {
 	backend gitcmd.Git
 	objects cache.Object
 	scope   *objectReadScope
+	buffer  *objectBuffer
 }
 
 func (s *objectStorage) Reindex() { s.scope.refresh = true }
 
 // SetEncodedObject replaces go-git's loose write, which writes through a shared
-// temp directory and checks for the object only afterwards; one source graph
-// publication writes about ninety objects.
+// temp directory and checks for the object only afterwards. Inside a source
+// scope it buffers instead, since one publication writes about ninety objects.
 func (s *objectStorage) SetEncodedObject(o plumbing.EncodedObject) (plumbing.Hash, error) {
 	if o.Type() == plumbing.OFSDeltaObject || o.Type() == plumbing.REFDeltaObject {
 		return plumbing.ZeroHash, plumbing.ErrInvalidType
 	}
+	if s.buffer != nil {
+		return s.bufferObject(o)
+	}
+	return s.writeLoose(o)
+}
+
+func (s *objectStorage) writeLoose(o plumbing.EncodedObject) (plumbing.Hash, error) {
 	hash := o.Hash()
 	name := hash.String()
 	dir := filepath.Join(s.root, "objects", name[:2])
@@ -79,7 +87,10 @@ func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Has
 	if err := s.scope.ctx.Err(); err != nil {
 		return nil, err
 	}
-	obj, err := s.looseObject(hash)
+	obj, err := s.bufferedObject(hash)
+	if errors.Is(err, plumbing.ErrObjectNotFound) {
+		obj, err = s.looseObject(hash)
+	}
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
 		obj, err = s.packedObject(hash)
 	}
@@ -93,6 +104,15 @@ func (s *objectStorage) EncodedObject(typ plumbing.ObjectType, hash plumbing.Has
 		return nil, plumbing.ErrObjectNotFound
 	}
 	return obj, nil
+}
+
+func (s *objectStorage) bufferedObject(hash plumbing.Hash) (plumbing.EncodedObject, error) {
+	if s.buffer != nil {
+		if value, found := s.buffer.objects[hash]; found {
+			return value, nil
+		}
+	}
+	return nil, plumbing.ErrObjectNotFound
 }
 
 func (s *objectStorage) looseObject(hash plumbing.Hash) (obj plumbing.EncodedObject, resultErr error) {
