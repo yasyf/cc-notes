@@ -46,7 +46,7 @@ func newInitCmd() *cobra.Command {
 			if ci && noCI {
 				return &UsageError{Err: errors.New("--ci and --no-ci are mutually exclusive")}
 			}
-			s, err := openStore(cmd)
+			s, err := openRawStore(cmd)
 			if err != nil {
 				return err
 			}

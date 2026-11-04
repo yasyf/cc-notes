@@ -800,6 +800,26 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 	mustBin(t, dir, actorA, "task", "add", "Second write", "--no-validation-criteria")
 }
 
+// TestFirstCommandImportsAMissingAuthority pins that a repository holding records
+// but no authority, as after an upgrade or a fresh clone, works without a manual
+// reindex and keeps its records.
+func TestFirstCommandImportsAMissingAuthority(t *testing.T) {
+	dir := initRepo(t)
+	id := strings.TrimSpace(mustBin(t, dir, actorA, "note", "add", "Kept across the import", "--json"))
+	authority := filepath.Join(dir, ".git", "cc-notes-managed", "authority-v1.db")
+	if err := os.Remove(authority); err != nil {
+		t.Fatal(err)
+	}
+	listed := mustBin(t, dir, actorA, "note", "list")
+	if !strings.Contains(listed, "Kept across the import") {
+		t.Fatalf("note list after a missing authority = %q (added %s)", listed, id)
+	}
+	if _, err := os.Stat(authority); err != nil {
+		t.Fatalf("authority not imported: %v", err)
+	}
+	mustBin(t, dir, actorA, "note", "add", "Written after the import")
+}
+
 // TestAutoInstallAnnouncesDroppedRefspec pins the drop disclosure: a repo wired
 // with BOTH the pre-fix killer refspec and the new tracking one (an old binary
 // re-ran after a new one) still prunes unsynced refs through the old line, so

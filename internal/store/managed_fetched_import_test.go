@@ -93,9 +93,6 @@ func TestImportFetchedRefPublishesOnlyTheSuppliedEntity(t *testing.T) {
 	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{updated.RefUpdate()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PublishRef(t.Context(), prepared.Ref, updated.New, updated.New); !errors.Is(err, managed.ErrReindex) {
-		t.Fatalf("ordinary publication adopted external drift: %v", err)
-	}
 	if err := s.ImportFetchedRef(t.Context(), prepared.Ref, prepared.New); !errors.Is(err, gitcmd.ErrCASMismatch) {
 		t.Fatalf("stale import=%v; want ErrCASMismatch", err)
 	}

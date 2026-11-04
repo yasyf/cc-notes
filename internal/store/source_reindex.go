@@ -39,6 +39,36 @@ func (s *Store) ReindexWithSourcePolicy(ctx context.Context, policy sourceindex.
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
+	return s.reindexLocked(ctx, lock, policy)
+}
+
+// AuthorityExists reports whether this store's managed authority is present.
+func (s *Store) AuthorityExists() bool { return managed.Exists(s.recordsCommonDir) }
+
+// AuthorityImportLog names the file a background import writes its output to.
+func (s *Store) AuthorityImportLog() (string, error) {
+	path := managed.Path(s.recordsCommonDir) + ".import.log"
+	return path, os.MkdirAll(filepath.Dir(path), 0o750)
+}
+
+// ReindexIfMissing imports current entities when no authority exists, leaving
+// the work to any process already holding the authority lock.
+func (s *Store) ReindexIfMissing(ctx context.Context) (err error) {
+	if err := s.CheckRecords(); err != nil {
+		return err
+	}
+	lock, err := managed.TryLock(s.recordsCommonDir)
+	if err != nil || lock == nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	if s.AuthorityExists() {
+		return nil
+	}
+	return s.reindexLocked(ctx, lock, nil)
+}
+
+func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourceindex.ImportPolicy) (err error) {
 	if ready, err := s.reindexReady(); err != nil {
 		return err
 	} else if ready {

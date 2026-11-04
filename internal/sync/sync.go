@@ -596,10 +596,16 @@ func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (ou
 			return refKept, err
 		}
 		if authoritative, found := managedTips[ref]; found {
-			if authoritative != tip {
+			if authoritative == tip {
+				return refKept, nil
+			}
+			extended, err := s.Repo.IsAncestor(ctx, authoritative, tip)
+			if err != nil {
+				return refKept, err
+			}
+			if !extended {
 				return refKept, fmt.Errorf("canonical ref differs from managed authority: %s: %w", ref, managed.ErrReindex)
 			}
-			return refKept, nil
 		}
 		return refKept, s.ImportFetchedRef(ctx, ref, tip)
 	}

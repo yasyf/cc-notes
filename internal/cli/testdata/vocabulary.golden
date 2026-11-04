@@ -1854,7 +1854,7 @@ command: cc-notes reindex
   short: Import Git entity refs into the managed authority
   hidden: false
   flags:
-    (none)
+    --if-missing shorthand=none type=bool default="false" usage="import only when no authority exists and no other import is running"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
 
