@@ -62,14 +62,18 @@ func openLock(commonDir string) (*os.File, error) {
 	return file, nil
 }
 
-// TryLock takes the exclusive authority lock without waiting, returning a nil
-// file when another process holds it.
-func TryLock(commonDir string) (*os.File, error) {
+// TryLock takes the authority lock without waiting, returning a nil file when
+// another process holds it in a conflicting mode.
+func TryLock(commonDir string, exclusive bool) (*os.File, error) {
 	file, err := openLock(commonDir)
 	if err != nil {
 		return nil, err
 	}
-	err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	mode := syscall.LOCK_SH
+	if exclusive {
+		mode = syscall.LOCK_EX
+	}
+	err = syscall.Flock(int(file.Fd()), mode|syscall.LOCK_NB)
 	if errors.Is(err, syscall.EWOULDBLOCK) {
 		return nil, file.Close()
 	}

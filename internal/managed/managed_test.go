@@ -11,13 +11,15 @@ func TestLockFailsBehindAHeldLock(t *testing.T) {
 	lockWait = 100 * time.Millisecond
 	t.Cleanup(func() { lockWait = previous })
 	dir := t.TempDir()
-	held, err := TryLock(dir)
+	held, err := TryLock(dir, true)
 	if err != nil || held == nil {
 		t.Fatalf("TryLock on a free lock=%v, %v", held, err)
 	}
 	t.Cleanup(func() { _ = held.Close() })
-	if other, err := TryLock(dir); err != nil || other != nil {
-		t.Fatalf("TryLock on a held lock=%v, %v; want nil, nil", other, err)
+	for _, exclusive := range []bool{false, true} {
+		if other, err := TryLock(dir, exclusive); err != nil || other != nil {
+			t.Fatalf("TryLock(exclusive=%t) on a held lock=%v, %v; want nil, nil", exclusive, other, err)
+		}
 	}
 	for _, exclusive := range []bool{false, true} {
 		if file, err := Lock(t.Context(), dir, exclusive); !errors.Is(err, ErrBusy) {
