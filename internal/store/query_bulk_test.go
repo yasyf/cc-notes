@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
 	"testing"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/yasyf/cc-notes/internal/managed"
@@ -45,15 +47,16 @@ func TestBulkQueryMetadataMatchesIncrementalGraph(t *testing.T) {
 			for _, binding := range []string{"binding-0", "binding-1"} {
 				values[binding] = bytes.Clone(queryGenerationBinding(tx, binding).Get(queryCurrentRoot))
 			}
-			for _, name := range [][]byte{queryObjectsBucket, []byte(managed.QueryObjectRefs)} {
-				if err := root.Bucket(name).ForEach(func(key, value []byte) error {
-					values[string(name)+"/"+string(key)] = bytes.Clone(value)
-					return nil
-				}); err != nil {
+			objects := queryObjectStoreAt(root)
+			return objects.ids.ForEach(func(key, id []byte) error {
+				values["objects/"+string(key)] = bytes.Clone(objects.objects.Get(id))
+				count, err := queryObjectRefCount(root, model.SHA(hex.EncodeToString(key)))
+				if err != nil {
 					return err
 				}
-			}
-			return nil
+				values["references/"+string(key)] = binary.BigEndian.AppendUint64(nil, count)
+				return nil
+			})
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -67,11 +70,15 @@ func TestBulkQueryMetadataMatchesIncrementalGraph(t *testing.T) {
 func TestQueryReferenceCountsCancelWithoutDirtyingPages(t *testing.T) {
 	db := newQueryMetadataDB(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
-		bucket, err := tx.CreateBucket([]byte("counts"))
+		bucket, err := createQueryReferenceTestRoot(tx)
 		if err != nil {
 			return err
 		}
-		return bucket.Put([]byte("shared"), binary.BigEndian.AppendUint64(nil, 3))
+		id, err := queryObjectID(bucket.Bucket([]byte(managed.QueryObjectIDs)), queryReferenceTestHash)
+		if err != nil {
+			return err
+		}
+		return bucket.Bucket([]byte(managed.QueryObjectRefs)).Put(binary.BigEndian.AppendUint64(nil, id), binary.BigEndian.AppendUint64(nil, 3))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -87,12 +94,12 @@ func TestQueryReferenceCountsCancelWithoutDirtyingPages(t *testing.T) {
 	before = writes()
 	if err := db.Update(func(tx *bolt.Tx) error {
 		counts := newQueryReferenceCounts(tx.Bucket([]byte("counts")))
-		value, err := counts.get("shared")
+		value, err := counts.get(queryReferenceTestHash)
 		if err != nil {
 			return err
 		}
-		counts.set("shared", value+1)
-		counts.set("shared", value)
+		counts.set(queryReferenceTestHash, value+1)
+		counts.set(queryReferenceTestHash, value)
 		return counts.flush(t.Context())
 	}); err != nil {
 		t.Fatal(err)
@@ -105,19 +112,19 @@ func TestQueryReferenceCountsCancelWithoutDirtyingPages(t *testing.T) {
 func TestQueryReferenceCountsFlushAndCancellation(t *testing.T) {
 	db := newQueryMetadataDB(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
-		bucket, err := tx.CreateBucket([]byte("counts"))
+		bucket, err := createQueryReferenceTestRoot(tx)
 		if err != nil {
 			return err
 		}
 		counts := newQueryReferenceCounts(bucket)
-		if _, err := counts.get("shared"); err != nil {
+		if _, err := counts.get(queryReferenceTestHash); err != nil {
 			return err
 		}
-		counts.set("shared", 3)
+		counts.set(queryReferenceTestHash, 3)
 		if err := counts.flush(t.Context()); err != nil {
 			return err
 		}
-		counts.set("shared", 0)
+		counts.set(queryReferenceTestHash, 0)
 		return counts.flush(t.Context())
 	}); err != nil {
 		t.Fatal(err)
@@ -125,14 +132,14 @@ func TestQueryReferenceCountsFlushAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	err := db.Update(func(tx *bolt.Tx) error {
 		counts := newQueryReferenceCounts(tx.Bucket([]byte("counts")))
-		value, err := counts.get("shared")
+		value, err := counts.get(queryReferenceTestHash)
 		if err != nil {
 			return err
 		}
 		if value != 0 {
 			t.Fatalf("released count = %d", value)
 		}
-		counts.set("shared", 2)
+		counts.set(queryReferenceTestHash, 2)
 		cancel()
 		return counts.flush(ctx)
 	})
@@ -140,11 +147,33 @@ func TestQueryReferenceCountsFlushAndCancellation(t *testing.T) {
 		t.Fatalf("flush = %v", err)
 	}
 	if err := db.View(func(tx *bolt.Tx) error {
-		if value := tx.Bucket([]byte("counts")).Get([]byte("shared")); value != nil {
+		root := tx.Bucket([]byte("counts"))
+		id, err := queryObjectID(root.Bucket([]byte(managed.QueryObjectIDs)), queryReferenceTestHash)
+		if err != nil {
+			return err
+		}
+		if value := root.Bucket([]byte(managed.QueryObjectRefs)).Get(binary.BigEndian.AppendUint64(nil, id)); value != nil {
 			t.Fatalf("canceled count committed: %x", value)
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+var queryReferenceTestHash = model.SHA(plumbing.ComputeHash(plumbing.BlobObject, []byte("shared")).String())
+
+func createQueryReferenceTestRoot(tx *bolt.Tx) (*bolt.Bucket, error) {
+	root, err := tx.CreateBucket([]byte("counts"))
+	if err != nil {
+		return nil, err
+	}
+	store, err := createQueryObjectStore(root)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := root.CreateBucket([]byte(managed.QueryObjectRefs)); err != nil {
+		return nil, err
+	}
+	return root, store.put(queryReferenceTestHash, []byte("shared"))
 }

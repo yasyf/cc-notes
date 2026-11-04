@@ -14,13 +14,16 @@ import (
 )
 
 // Format identifies the managed authority schema and projection contract.
-const Format = "cc-notes-managed-v3"
+const Format = "cc-notes-managed-v4"
 
 // QueryGenerations identifies the required immutable metadata storage.
 const QueryGenerations = "query-generations-v1"
 
 // QueryObjects identifies immutable graph objects shared by metadata generations.
 const QueryObjects = "objects"
+
+// QueryObjectIDs maps content hashes to append-ordered storage locations.
+const QueryObjectIDs = "object-ids"
 
 // QueryObjectRefs counts immutable graph edges and retained generation roots.
 const QueryObjectRefs = "object-refs"
@@ -35,7 +38,7 @@ var lockWait = 30 * time.Second
 
 // Path names the shared records authority database.
 func Path(commonDir string) string {
-	return filepath.Join(commonDir, "cc-notes-managed", "authority-v1.db")
+	return filepath.Join(commonDir, "cc-notes-managed", "authority-v2.db")
 }
 
 // Exists reports whether the authority database is present.
@@ -45,7 +48,7 @@ func Exists(commonDir string) bool {
 }
 
 func openLock(commonDir string) (*os.File, error) {
-	path := Path(commonDir) + ".lock"
+	path := filepath.Join(commonDir, "cc-notes-managed", "authority-v1.db.lock")
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, errors.Join(ErrReindex, err)
 	}
@@ -75,6 +78,7 @@ func TryLock(commonDir string) (*os.File, error) {
 
 // Lock retains the stable authority lock until its returned file is closed,
 // failing with ErrBusy once another holder has kept it for lockWait.
+// Its identity stays fixed across authority cache generations.
 func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, error) {
 	file, err := openLock(commonDir)
 	if err != nil {
@@ -138,6 +142,9 @@ func Initialize(ctx context.Context, commonDir string) (err error) {
 			return err
 		}
 		if _, err = generations.CreateBucket([]byte(QueryObjects)); err != nil {
+			return err
+		}
+		if _, err := generations.CreateBucket([]byte(QueryObjectIDs)); err != nil {
 			return err
 		}
 		_, err = generations.CreateBucket([]byte(QueryObjectRefs))

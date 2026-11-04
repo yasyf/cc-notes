@@ -32,7 +32,7 @@ type managedIntent struct {
 func managedRoot(tx *bolt.Tx) (*bolt.Bucket, error) {
 	root := tx.Bucket([]byte(managed.Format))
 	generations := tx.Bucket([]byte(managed.QueryGenerations))
-	if root == nil || root.Bucket([]byte("refs")) == nil || generations == nil || generations.Bucket([]byte(managed.QueryObjects)) == nil || generations.Bucket([]byte(managed.QueryObjectRefs)) == nil {
+	if root == nil || root.Bucket([]byte("refs")) == nil || generations == nil || generations.Bucket([]byte(managed.QueryObjects)) == nil || generations.Bucket([]byte(managed.QueryObjectRefs)) == nil || generations.Bucket([]byte(managed.QueryObjectIDs)) == nil {
 		return nil, managed.ErrReindex
 	}
 	return root, nil

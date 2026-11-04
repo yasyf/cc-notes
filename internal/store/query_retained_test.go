@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -195,10 +196,16 @@ func TestRetainedMetadataReclaimsRetiredAndTransientObjects(t *testing.T) {
 		total := 0
 		err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
 			root := tx.Bucket(queryGenerationsBucket)
-			objects, counts := root.Bucket(queryObjectsBucket), root.Bucket([]byte(managed.QueryObjectRefs))
-			return objects.ForEach(func(hash, _ []byte) error {
+			objects := queryObjectStoreAt(root)
+			if objects.objects.Stats().KeyN != objects.ids.Stats().KeyN || objects.ids.Stats().KeyN != root.Bucket([]byte(managed.QueryObjectRefs)).Stats().KeyN {
+				t.Fatal("object, identity, and reference indexes differ in cardinality")
+			}
+			return objects.ids.ForEach(func(hash, id []byte) error {
+				if objects.objects.Get(id) == nil {
+					t.Fatalf("missing object data %s", hash)
+				}
 				total++
-				references, err := queryObjectRefCount(counts, model.SHA(hash))
+				references, err := queryObjectRefCount(root, model.SHA(hex.EncodeToString(hash)))
 				if err != nil {
 					return err
 				}

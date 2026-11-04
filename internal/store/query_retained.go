@@ -34,7 +34,7 @@ type queryGeneration struct {
 }
 type queryGraphObjects struct {
 	ctx     context.Context
-	bucket  *bolt.Bucket
+	store   queryObjectStore
 	counts  *queryReferenceCounts
 	created *[]model.SHA
 }
@@ -61,7 +61,10 @@ func (o queryGraphObjects) read(hash model.SHA, kind plumbing.ObjectType) (*plum
 	if err := o.Err(); err != nil {
 		return nil, err
 	}
-	data := o.bucket.Get([]byte(hash))
+	data, err := o.store.get(hash)
+	if err != nil {
+		return nil, err
+	}
 	if len(data) == 0 {
 		return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
 	}
@@ -110,13 +113,17 @@ func (o queryGraphObjects) put(value *plumbing.MemoryObject) (model.SHA, error) 
 		return "", fmt.Errorf("invalid immutable query object type %s", value.Type())
 	}
 	encoded := append([]byte{kind}, data...)
-	if existing := o.bucket.Get([]byte(hash)); existing != nil {
+	existing, err := o.store.get(hash)
+	if err != nil {
+		return "", err
+	}
+	if existing != nil {
 		if !bytes.Equal(existing, encoded) {
 			return "", fmt.Errorf("immutable query object collision %s", hash)
 		}
 		return hash, nil
 	}
-	if err := o.bucket.Put([]byte(hash), encoded); err != nil {
+	if err := o.store.put(hash, encoded); err != nil {
 		return "", err
 	}
 	if value.Type() == plumbing.TreeObject {
@@ -125,7 +132,7 @@ func (o queryGraphObjects) put(value *plumbing.MemoryObject) (model.SHA, error) 
 			return "", err
 		}
 		for _, entry := range tree.Entries {
-			if err := retainQueryObject(o.ctx, o.bucket, o.counts, model.SHA(entry.Hash.String())); err != nil {
+			if err := retainQueryObject(o.ctx, o.store, o.counts, model.SHA(entry.Hash.String())); err != nil {
 				return "", err
 			}
 		}
@@ -243,7 +250,7 @@ func replaceQueryGeneration(ctx context.Context, tx *bolt.Tx, binding string, id
 	if err != nil {
 		return err
 	}
-	objects, err := root.CreateBucketIfNotExists(queryObjectsBucket)
+	objects, err := createQueryObjectStore(root)
 	if err != nil {
 		return err
 	}
@@ -255,13 +262,13 @@ func replaceQueryGeneration(ctx context.Context, tx *bolt.Tx, binding string, id
 	if err != nil {
 		return err
 	}
-	counterBucket, err := root.CreateBucketIfNotExists([]byte(managed.QueryObjectRefs))
+	_, err = root.CreateBucketIfNotExists([]byte(managed.QueryObjectRefs))
 	if err != nil {
 		return err
 	}
-	counts := newQueryReferenceCounts(counterBucket)
+	counts := newQueryReferenceCounts(root)
 	var created []model.SHA
-	index := sourcegraph.New(queryGraphObjects{ctx: ctx, bucket: objects, counts: counts, created: &created})
+	index := sourcegraph.New(queryGraphObjects{ctx: ctx, store: objects, counts: counts, created: &created})
 	previousRoot := generation.Root
 	mutations := make(map[string]sourcegraph.Mutation)
 	if previous != nil {
@@ -329,11 +336,11 @@ func (q queryMetadataSource) retainedAt(ctx context.Context, tx *bolt.Tx, genera
 	if root == nil {
 		return q, false, managed.ErrReindex
 	}
-	objects := root.Bucket(queryObjectsBucket)
-	if objects == nil {
+	objects := queryObjectStoreAt(root)
+	if objects.objects == nil || objects.ids == nil {
 		return q, false, managed.ErrReindex
 	}
-	q.retained = &retainedQuery{index: sourcegraph.New(queryGraphObjects{ctx: ctx, bucket: objects}), generation: generation}
+	q.retained = &retainedQuery{index: sourcegraph.New(queryGraphObjects{ctx: ctx, store: objects}), generation: generation}
 	if uint64(len(q.tips)) != generation.Rows {
 		return q, false, nil
 	}
@@ -511,10 +518,14 @@ func (s *Store) validateManagedQueryGenerations(tx *bolt.Tx, updates []gitcmd.Re
 		}
 		if generation.Root != "" {
 			root := tx.Bucket(queryGenerationsBucket)
-			if root.Bucket(queryObjectsBucket).Get([]byte(generation.Root)) == nil {
+			data, err := queryObjectStoreAt(root).get(generation.Root)
+			if err != nil {
+				return err
+			}
+			if data == nil {
 				return managed.ErrReindex
 			}
-			count, err := queryObjectRefCount(root.Bucket([]byte(managed.QueryObjectRefs)), generation.Root)
+			count, err := queryObjectRefCount(root, generation.Root)
 			if err != nil {
 				return err
 			}

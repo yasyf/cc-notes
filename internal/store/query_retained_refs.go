@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -16,28 +17,34 @@ import (
 )
 
 type queryReferenceCount struct {
+	id     uint64
 	before uint64
 	after  uint64
 }
 
 type queryReferenceCounts struct {
+	root   *bolt.Bucket
 	bucket *bolt.Bucket
 	values map[model.SHA]queryReferenceCount
 }
 
-func newQueryReferenceCounts(bucket *bolt.Bucket) *queryReferenceCounts {
-	return &queryReferenceCounts{bucket: bucket, values: make(map[model.SHA]queryReferenceCount)}
+func newQueryReferenceCounts(root *bolt.Bucket) *queryReferenceCounts {
+	return &queryReferenceCounts{root: root, bucket: root.Bucket([]byte(managed.QueryObjectRefs)), values: make(map[model.SHA]queryReferenceCount)}
 }
 
 func (counts *queryReferenceCounts) get(hash model.SHA) (uint64, error) {
 	if value, found := counts.values[hash]; found {
 		return value.after, nil
 	}
-	value, err := queryObjectRefCount(counts.bucket, hash)
+	id, err := queryObjectID(counts.root.Bucket([]byte(managed.QueryObjectIDs)), hash)
 	if err != nil {
 		return 0, err
 	}
-	counts.values[hash] = queryReferenceCount{before: value, after: value}
+	value, err := readQueryObjectCount(counts.bucket, id, hash)
+	if err != nil {
+		return 0, err
+	}
+	counts.values[hash] = queryReferenceCount{id: id, before: value, after: value}
 	return value, nil
 }
 
@@ -54,26 +61,39 @@ func (counts *queryReferenceCounts) flush(ctx context.Context) error {
 			keys = append(keys, hash)
 		}
 	}
-	slices.Sort(keys)
+	slices.SortFunc(keys, func(a, b model.SHA) int { return cmp.Compare(counts.values[a].id, counts.values[b].id) })
 	for _, hash := range keys {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		value := counts.values[hash].after
+		entry := counts.values[hash]
+		value := entry.after
+		key := binary.BigEndian.AppendUint64(nil, entry.id)
 		if value == 0 {
-			if err := counts.bucket.Delete([]byte(hash)); err != nil {
+			if err := counts.bucket.Delete(key); err != nil {
 				return err
 			}
-		} else if err := counts.bucket.Put([]byte(hash), binary.BigEndian.AppendUint64(nil, value)); err != nil {
+		} else if err := counts.bucket.Put(key, binary.BigEndian.AppendUint64(nil, value)); err != nil {
 			return err
 		}
-		counts.values[hash] = queryReferenceCount{before: value, after: value}
+		counts.values[hash] = queryReferenceCount{id: entry.id, before: value, after: value}
 	}
 	return ctx.Err()
 }
 
-func queryObjectRefCount(counts *bolt.Bucket, hash model.SHA) (uint64, error) {
-	data := counts.Get([]byte(hash))
+func queryObjectRefCount(root *bolt.Bucket, hash model.SHA) (uint64, error) {
+	id, err := queryObjectID(root.Bucket([]byte(managed.QueryObjectIDs)), hash)
+	if err != nil || id == 0 {
+		return 0, err
+	}
+	return readQueryObjectCount(root.Bucket([]byte(managed.QueryObjectRefs)), id, hash)
+}
+
+func readQueryObjectCount(bucket *bolt.Bucket, id uint64, hash model.SHA) (uint64, error) {
+	if id == 0 {
+		return 0, nil
+	}
+	data := bucket.Get(binary.BigEndian.AppendUint64(nil, id))
 	if data == nil {
 		return 0, nil
 	}
@@ -83,11 +103,14 @@ func queryObjectRefCount(counts *bolt.Bucket, hash model.SHA) (uint64, error) {
 	return binary.BigEndian.Uint64(data), nil
 }
 
-func queryObjectChildren(ctx context.Context, objects *bolt.Bucket, hash model.SHA) ([]model.SHA, error) {
+func queryObjectChildren(ctx context.Context, objects queryObjectStore, hash model.SHA) ([]model.SHA, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	data := objects.Get([]byte(hash))
+	data, err := objects.get(hash)
+	if err != nil {
+		return nil, err
+	}
 	if len(data) == 0 {
 		return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
 	}
@@ -95,7 +118,7 @@ func queryObjectChildren(ctx context.Context, objects *bolt.Bucket, hash model.S
 	if err != nil {
 		return nil, err
 	}
-	value, err := (queryGraphObjects{ctx: ctx, bucket: objects}).read(hash, kind)
+	value, err := (queryGraphObjects{ctx: ctx, store: objects}).read(hash, kind)
 	if err != nil || kind == plumbing.BlobObject {
 		return nil, err
 	}
@@ -110,7 +133,7 @@ func queryObjectChildren(ctx context.Context, objects *bolt.Bucket, hash model.S
 	return children, nil
 }
 
-func retainQueryObject(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts, hash model.SHA) error {
+func retainQueryObject(ctx context.Context, objects queryObjectStore, counts *queryReferenceCounts, hash model.SHA) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -128,7 +151,7 @@ func retainQueryObject(ctx context.Context, objects *bolt.Bucket, counts *queryR
 	return nil
 }
 
-func releaseQueryObject(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts, hash model.SHA) error {
+func releaseQueryObject(ctx context.Context, objects queryObjectStore, counts *queryReferenceCounts, hash model.SHA) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -140,7 +163,11 @@ func releaseQueryObject(ctx context.Context, objects *bolt.Bucket, counts *query
 		return fmt.Errorf("unreferenced immutable query object release %s: %w", hash, managed.ErrReindex)
 	}
 	if count > 1 {
-		if objects.Get([]byte(hash)) == nil {
+		data, err := objects.get(hash)
+		if err != nil {
+			return err
+		}
+		if data == nil {
 			return fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
 		}
 		counts.set(hash, count-1)
@@ -149,12 +176,12 @@ func releaseQueryObject(ctx context.Context, objects *bolt.Bucket, counts *query
 	return deleteQueryObject(ctx, objects, counts, hash)
 }
 
-func deleteQueryObject(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts, hash model.SHA) error {
+func deleteQueryObject(ctx context.Context, objects queryObjectStore, counts *queryReferenceCounts, hash model.SHA) error {
 	children, err := queryObjectChildren(ctx, objects, hash)
 	if err != nil {
 		return err
 	}
-	if err := objects.Delete([]byte(hash)); err != nil {
+	if err := objects.delete(hash); err != nil {
 		return err
 	}
 	counts.set(hash, 0)
@@ -166,7 +193,7 @@ func deleteQueryObject(ctx context.Context, objects *bolt.Bucket, counts *queryR
 	return ctx.Err()
 }
 
-func pruneQueryObjects(ctx context.Context, objects *bolt.Bucket, counts *queryReferenceCounts, created []model.SHA) error {
+func pruneQueryObjects(ctx context.Context, objects queryObjectStore, counts *queryReferenceCounts, created []model.SHA) error {
 	for _, hash := range created {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -175,7 +202,11 @@ func pruneQueryObjects(ctx context.Context, objects *bolt.Bucket, counts *queryR
 		if err != nil {
 			return err
 		}
-		if objects.Get([]byte(hash)) == nil {
+		data, err := objects.get(hash)
+		if err != nil {
+			return err
+		}
+		if data == nil {
 			if count != 0 {
 				return fmt.Errorf("missing referenced immutable query object %s: %w", hash, managed.ErrReindex)
 			}

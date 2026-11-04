@@ -340,7 +340,7 @@ func TestManagedAuthorityGuardianRetainsLockThroughCallerExit(t *testing.T) {
 	if len(pending.Updates) != 1 || pending.Updates[0] != updates[0] {
 		t.Fatalf("caller exit discarded durable intent=%+v", pending)
 	}
-	lock, err := os.OpenFile(managed.Path(s.recordsCommonDir)+".lock", os.O_RDWR, 0o600)
+	lock, err := os.OpenFile(filepath.Join(s.recordsCommonDir, "cc-notes-managed", "authority-v1.db.lock"), os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

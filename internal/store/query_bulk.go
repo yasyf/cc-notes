@@ -57,22 +57,22 @@ func buildQueryMetadata(ctx context.Context, tx *bolt.Tx, rows []queryMetadata) 
 	if err != nil {
 		return err
 	}
-	objects, err := root.CreateBucketIfNotExists(queryObjectsBucket)
+	objects, err := createQueryObjectStore(root)
 	if err != nil {
 		return err
 	}
-	counterBucket, err := root.CreateBucketIfNotExists([]byte(managed.QueryObjectRefs))
+	_, err = root.CreateBucketIfNotExists([]byte(managed.QueryObjectRefs))
 	if err != nil {
 		return err
 	}
-	counts := newQueryReferenceCounts(counterBucket)
+	counts := newQueryReferenceCounts(root)
 	var created []model.SHA
 	for binding, build := range builds {
 		entries := make([]sourcegraph.Entry, 0, len(build.entries))
 		for key, value := range build.entries {
 			entries = append(entries, sourcegraph.Entry{Key: key, Value: value})
 		}
-		index := sourcegraph.New(queryGraphObjects{ctx: ctx, bucket: objects, counts: counts, created: &created})
+		index := sourcegraph.New(queryGraphObjects{ctx: ctx, store: objects, counts: counts, created: &created})
 		hash, err := index.Build(entries)
 		if err != nil {
 			return err
