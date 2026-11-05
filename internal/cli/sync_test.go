@@ -48,7 +48,7 @@ func TestWiredWriteReadsLocalConfigOnce(t *testing.T) {
 	var lists, perKey, remotes []string
 	for _, call := range trace.of(t, dir, "note", "add", "Second") {
 		switch {
-		case strings.Contains(call, "\x1fconfig\x1f--local\x1f--list\x1f"):
+		case strings.Contains(call, "\x1fconfig\x1f--list\x1f"):
 			lists = append(lists, call)
 		case strings.Contains(call, "\x1f--get-all\x1f"):
 			perKey = append(perKey, call)
