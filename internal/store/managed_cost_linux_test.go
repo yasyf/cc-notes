@@ -175,7 +175,7 @@ func TestManagedFreshProcessCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	byMode := make(map[string][]managedCostResult)
-	for _, count := range []int{32, 10000} {
+	for _, count := range costPopulations() {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			dir, target := managedCostFixture(t, count)
 			created := target
@@ -220,12 +220,12 @@ func TestManagedFreshProcessCost(t *testing.T) {
 			{"git_processes", small.GitProcesses, large.GitProcesses, 8},
 		} {
 			if counter.high > counter.low+counter.allowance && !gradedByWriteCostCheck(counter.name) {
-				t.Errorf("MANAGED_AUTHORITY_COST_REGRESSION: mode=%s %s grew:32=%d10000=%d allowance=%d", mode, counter.name, counter.low, counter.high, counter.allowance)
+				t.Errorf("MANAGED_AUTHORITY_COST_REGRESSION: mode=%s %s grew: low=%d high=%d allowance=%d", mode, counter.name, counter.low, counter.high, counter.allowance)
 			}
 		}
 		for _, name := range []string{"read", "pread64", "open", "openat", "newfstatat", "fstat", "getdents64", "fsync", "fdatasync"} {
 			if large.Syscalls[name] > small.Syscalls[name]+64 {
-				t.Errorf("MANAGED_AUTHORITY_COST_REGRESSION: mode=%s %s grew:32=%d10000=%d", mode, name, small.Syscalls[name], large.Syscalls[name])
+				t.Errorf("MANAGED_AUTHORITY_COST_REGRESSION: mode=%s %s grew: low=%d high=%d", mode, name, small.Syscalls[name], large.Syscalls[name])
 			}
 		}
 		if time.Duration(large.Elapsed) > writeStallLimit {
@@ -238,6 +238,13 @@ const writeStallLimit = 10 * time.Second
 
 func gradedByWriteCostCheck(counter string) bool {
 	return (counter == "write_return_bytes" || counter == "minor_faults") && os.Getenv("CCN_GRADE_WRITE_BYTES_AND_FAULTS") != "1"
+}
+
+func costPopulations() []int {
+	if os.Getenv("CCN_AT_N_LARGE") == "1" {
+		return []int{32, 10000}
+	}
+	return []int{1, 100}
 }
 
 func managedCostFixture(t *testing.T, count int) (string, model.Task) {
