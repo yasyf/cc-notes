@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -29,7 +30,8 @@ type bridge struct {
 	message func(error) string
 	hint    func(error) string
 
-	retained *store.Retained
+	retained  *store.Retained
+	successor func() string
 }
 
 // run executes argv in-process and returns the tool result: stdout (the JSON
@@ -42,6 +44,11 @@ type bridge struct {
 func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, any, error) {
 	if repo, ok := repoFrom(ctx); ok {
 		argv = append([]string{"--repo=" + repo}, argv...)
+	}
+	if b.successor != nil {
+		if installed := b.successor(); installed != "" {
+			return runInstalled(ctx, installed, argv)
+		}
 	}
 	if b.retained != nil {
 		ctx = store.WithRetained(ctx, b.retained)
@@ -61,13 +68,32 @@ func (b *bridge) run(ctx context.Context, argv ...string) (*mcp.CallToolResult, 
 		}
 		return nil, nil, errors.New(text)
 	}
+	return toolResult(out.String(), errBuf.String()), nil, nil
+}
+
+func runInstalled(ctx context.Context, installed string, argv []string) (*mcp.CallToolResult, any, error) {
+	//nolint:gosec // G204: installed is the binary this server's own argv[0] resolves to, and argv is a tool's CLI argv.
+	cmd := exec.CommandContext(ctx, installed, argv...)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errBuf
+	var exit *exec.ExitError
+	switch err := cmd.Run(); {
+	case errors.As(err, &exit):
+		return nil, nil, errors.New(strings.TrimSpace(errBuf.String()))
+	case err != nil:
+		return nil, nil, err
+	}
+	return toolResult(out.String(), errBuf.String()), nil, nil
+}
+
+func toolResult(out, notices string) *mcp.CallToolResult {
 	// The JSON DTO is the primary block so it stays parseable; stderr notices
 	// (one-time git config installs, sync reports) ride as a separate block.
-	contents := []mcp.Content{&mcp.TextContent{Text: strings.TrimRight(out.String(), "\n")}}
-	if notices := strings.TrimSpace(errBuf.String()); notices != "" {
+	contents := []mcp.Content{&mcp.TextContent{Text: strings.TrimRight(out, "\n")}}
+	if notices = strings.TrimSpace(notices); notices != "" {
 		contents = append(contents, &mcp.TextContent{Text: notices})
 	}
-	return &mcp.CallToolResult{Content: contents}, nil, nil
+	return &mcp.CallToolResult{Content: contents}
 }
 
 // argvFor assembles a command invocation: the fixed subcommand path, the built

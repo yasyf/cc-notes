@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,6 +29,10 @@ type Config struct {
 	// unset, each call opens the repository itself. The caller closes a supplied
 	// retained owner after the server finishes.
 	Store *store.Retained
+	// Successor, when set, names the installed binary each call runs as a
+	// subprocess instead of in-process, or "" while that binary is still the
+	// one the server started as.
+	Successor func() string
 }
 
 // New builds the MCP server with every tool table registered.
@@ -36,7 +41,7 @@ func New(cfg Config) *mcp.Server {
 		&mcp.Implementation{Name: "cc-notes", Version: cfg.Version},
 		&mcp.ServerOptions{Instructions: instructions},
 	)
-	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message, hint: cfg.Hint, retained: cfg.Store}
+	b := &bridge{newRoot: cfg.NewRoot, label: cfg.Label, message: cfg.Message, hint: cfg.Hint, retained: cfg.Store, successor: cfg.Successor}
 	ts := &toolset{srv: srv, props: map[string]toolProps{}}
 	registerAll(ts, b)
 	srv.AddReceivingMiddleware(didYouMeanMiddleware(ts.props), repoMiddleware())
@@ -94,11 +99,40 @@ func Serve(ctx context.Context, dir string, cfg Config) error {
 		defer RemoveMarker(markerDir)
 		cfg.Store = retained
 	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if cfg.Successor, err = successor(self, os.Args[0]); err != nil {
+		return err
+	}
 	err = New(cfg).Run(ctx, &mcp.StdioTransport{})
 	if ctx.Err() != nil {
 		return nil
 	}
 	return err
+}
+
+// successor reports the binary arg0 resolves to once it is no longer self as
+// this server started, so a server outliving an upgrade serves every call with
+// the installed binary instead of refusing the store that binary now owns.
+func successor(self, arg0 string) (func() string, error) {
+	started, err := os.Stat(self)
+	if err != nil {
+		return nil, err
+	}
+	return func() string {
+		installed, err := exec.LookPath(arg0)
+		if err != nil {
+			return ""
+		}
+		//nolint:gosec // G703: installed is this server's own argv[0] resolved on PATH, only compared with the running binary.
+		now, err := os.Stat(installed)
+		if err != nil || os.SameFile(started, now) {
+			return ""
+		}
+		return installed
+	}, nil
 }
 
 func liveMarkerDir(ctx context.Context, retained *store.Retained) (string, error) {
