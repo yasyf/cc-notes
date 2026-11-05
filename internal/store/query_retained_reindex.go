@@ -22,7 +22,7 @@ func copyQueryGraph(ctx context.Context, source, objects queryObjectStore, root 
 	if err != nil {
 		return "", nil, err
 	}
-	entries, err := index.Range(root, 0, int(count))
+	entries, err := index.Range(root, 0, int(count)) //nolint:gosec // G115: every entry already sits in this authority.
 	if err != nil {
 		return "", nil, err
 	}
