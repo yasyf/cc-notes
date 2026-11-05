@@ -2,7 +2,6 @@ package gitobj
 
 import (
 	"bytes"
-	"compress/zlib"
 	"crypto/sha1" //nolint:gosec // G505: git's pack and index trailers are SHA-1.
 	"encoding/binary"
 	"errors"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	gitsync "github.com/go-git/go-git/v5/utils/sync"
 )
 
 // managedPacks serves objects from the packs source scopes wrote, in process.
@@ -216,7 +216,8 @@ func (p *managedPack) object(offset int64) (plumbing.EncodedObject, error) {
 		}
 		size |= int64(first&0x7f) << shift
 	}
-	inflater, err := zlib.NewReader(reader)
+	inflater, err := gitsync.GetZlibReader(reader)
+	defer gitsync.PutZlibReader(inflater)
 	if err != nil {
 		return nil, err
 	}
@@ -225,10 +226,12 @@ func (p *managedPack) object(offset int64) (plumbing.EncodedObject, error) {
 	value.SetSize(size)
 	writer, err := value.Writer()
 	if err != nil {
-		return nil, errors.Join(err, inflater.Close())
+		return nil, err
 	}
-	written, copyErr := io.Copy(writer, io.LimitReader(inflater, size+1))
-	if err := errors.Join(copyErr, inflater.Close(), writer.Close()); err != nil {
+	buffer := gitsync.GetByteSlice()
+	defer gitsync.PutByteSlice(buffer)
+	written, copyErr := io.CopyBuffer(writer, io.LimitReader(inflater.Reader, size+1), *buffer)
+	if err := errors.Join(copyErr, writer.Close()); err != nil {
 		return nil, err
 	}
 	if written != size {
