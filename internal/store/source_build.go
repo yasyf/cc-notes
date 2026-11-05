@@ -388,30 +388,15 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 			projected = append(projected, next)
 		}
 		for _, key := range slices.Sorted(maps.Keys(retired)) {
-			entry := retired[key]
-			if fresh, found := emitted[key]; found && sameObjectName(fresh, entry) {
+			if _, found := emitted[key]; found {
 				continue
 			}
-			if err := graph.deleteObject(entry); err != nil {
+			if err := graph.deleteObject(retired[key]); err != nil {
 				return err
 			}
 		}
 		for _, key := range slices.Sorted(maps.Keys(emitted)) {
-			entry := emitted[key]
-			old, found := retired[key]
-			if found && old == entry {
-				continue
-			}
-			if found && sameObjectName(old, entry) {
-				if sourceview.ValidateObject(old) != nil {
-					graph.revision.ProjectionErrors--
-				}
-				if err := graph.writeObject(entry); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := graph.putObject(entry); err != nil {
+			if err := graph.replaceObject(retired[key], emitted[key]); err != nil {
 				return err
 			}
 		}
@@ -554,8 +539,25 @@ func (g *projectionGraph) writeObject(entry sourceview.Object) error {
 	return nil
 }
 
-func sameObjectName(a, b sourceview.Object) bool {
-	return a.Parent == b.Parent && a.Name == b.Name
+func (g *projectionGraph) replaceObject(old, entry sourceview.Object) error {
+	if old == entry {
+		return nil
+	}
+	if old.Key == "" {
+		return g.putObject(entry)
+	}
+	if old.Parent != entry.Parent || old.Name != entry.Name {
+		if err := g.replaceName(old, true); err != nil {
+			return err
+		}
+		if err := g.replaceName(entry, false); err != nil {
+			return err
+		}
+	}
+	if sourceview.ValidateObject(old) != nil {
+		g.revision.ProjectionErrors--
+	}
+	return g.writeObject(entry)
 }
 
 func (g *projectionGraph) updateLFS(s *Store, old, next sourceview.Entity) error {
