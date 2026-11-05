@@ -244,8 +244,6 @@ func TestMemoizedHeadMatchesGit(t *testing.T) {
 	linked := filepath.Join(t.TempDir(), "linked")
 	gittest.Git(t, dir, "worktree", "add", "-q", "-b", "linked", linked)
 	assertSame(linked)
-	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/custom/head")
-	assertSame(dir)
 	gittest.Git(t, dir, "branch", "-q", "real", "linked")
 	gittest.Git(t, dir, "symbolic-ref", "refs/heads/alias", "refs/heads/real")
 	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/alias")
@@ -255,4 +253,6 @@ func TestMemoizedHeadMatchesGit(t *testing.T) {
 	if _, err := memoHead(dir); !errors.Is(err, gitcmd.ErrDetachedHead) {
 		t.Fatalf("detached HEAD = %v", err)
 	}
+	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/custom/head")
+	assertSame(dir)
 }
