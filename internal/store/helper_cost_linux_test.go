@@ -248,7 +248,7 @@ func helperCostRun(t *testing.T, input managedCostInput, count int) helperCostRe
 	}
 	trace := filepath.Join(dir, "syscalls")
 	cmd := exec.CommandContext(t.Context(), "strace", "--seccomp-bpf", "-ff", "-q", "-ttt", "-s", "8192", "-e", "trace=read,pread64,readv,preadv,preadv2,write,pwrite64,writev,pwritev,pwritev2,open,openat,openat2,fstat,newfstatat,statx,getdents64,fsync,fdatasync,close,mmap,mremap,munmap,%process", "-o", trace, os.Args[0], "-test.run=^TestHelperFreshProcessCostChild$", "-test.count=1")
-	cmd.Env = append(os.Environ(), "CCN_HELPER_COST_INPUT="+path)
+	cmd.Env = append(os.Environ(), "CCN_HELPER_COST_INPUT="+path, "GOMAXPROCS=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
