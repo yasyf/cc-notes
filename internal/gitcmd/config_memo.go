@@ -145,20 +145,21 @@ func (g Git) memoizedConfigRegexp(ctx context.Context, pattern string) ([][2]str
 }
 
 // memoizedConfigLocal returns the entries of exactly the repository's config
-// file, or false when the listing's paths cannot show which entries those are.
-// Includes share the file's scope, so only the path tells them apart.
-func (g Git) memoizedConfigLocal(ctx context.Context) ([][2]string, bool, error) {
+// file. Includes share the file's scope, so only the path tells them apart: git
+// prints that file relative to its working directory as ".git/config", or
+// "config" in a bare repository, and an include beside it under its own name.
+func (g Git) memoizedConfigLocal(ctx context.Context) ([][2]string, error) {
 	entries, err := g.configEntries(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	commonDir, err := g.memoCommonDir(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	want, err := os.Stat(filepath.Join(commonDir, "config"))
 	if err != nil {
-		return nil, false, fmt.Errorf("config list --local: %w", err)
+		return nil, fmt.Errorf("config list --local: %w", err)
 	}
 	same := make(map[string]bool)
 	var pairs [][2]string
@@ -169,14 +170,12 @@ func (g Git) memoizedConfigLocal(ctx context.Context) ([][2]string, bool, error)
 		local, found := same[entry.path]
 		if !found {
 			switch {
-			case entry.path == ".git/config":
-				local = true
 			case !filepath.IsAbs(entry.path):
-				return nil, false, nil
+				local = entry.path == ".git/config" || entry.path == "config"
 			default:
 				info, err := os.Stat(entry.path)
 				if err != nil {
-					return nil, false, fmt.Errorf("config list --local: %w", err)
+					return nil, fmt.Errorf("config list --local: %w", err)
 				}
 				local = os.SameFile(want, info)
 			}
@@ -186,7 +185,7 @@ func (g Git) memoizedConfigLocal(ctx context.Context) ([][2]string, bool, error)
 			pairs = append(pairs, [2]string{entry.key, entry.value})
 		}
 	}
-	return pairs, true, nil
+	return pairs, nil
 }
 
 func (g Git) memoCommonDir(ctx context.Context) (string, error) {

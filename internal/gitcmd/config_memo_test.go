@@ -27,7 +27,8 @@ func writeMemoConfig(t *testing.T, commonDir string) {
 		"[cc-notes]\n\tlocalLabel = one\n\tlocalLabel = two\n" +
 		"[http \"https://example.com\"]\n\textraHeader = local\n" +
 		"[memo]\n\tbarekey\n" +
-		"[include]\n\tpath = " + included + "\n"
+		"[include]\n\tpath = " + included + "\n" +
+		"[include]\n\tpath = relative.config\n"
 	file, err := os.OpenFile(filepath.Join(commonDir, "config"), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +37,9 @@ func writeMemoConfig(t *testing.T, commonDir string) {
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "relative.config"), []byte("[remote \"relative\"]\n\tfetch = +refs/g/*:refs/h/*\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(included, []byte("[remote \"included\"]\n\tfetch = +refs/e/*:refs/f/*\n[cc-notes]\n\tlocalLabel = included\n"), 0o600); err != nil {
