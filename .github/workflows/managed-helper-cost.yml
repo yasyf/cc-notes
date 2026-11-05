@@ -29,6 +29,8 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -run '^(TestQueryRetirement.*|TestRetainedQuery.*|TestRetainedMetadata.*)$' ./internal/store
       - name: Validate query allocation locality
         run: ./scripts/test.sh -race -count=1 -v -run '^TestQueryAllocation' ./internal/store
+      - name: Validate object hash-index bulk fill
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestQueryObjectBulkFill' ./internal/store
       - name: Prepare immutable helper baseline
         if: matrix.lane == 'baseline'
         run: |
