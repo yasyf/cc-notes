@@ -14,6 +14,10 @@ func TestTaskAddStartsThreeGitProcesses(t *testing.T) {
 	dir := gittest.InitRepo(t)
 	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	gittest.Git(t, dir, "remote", "add", "origin", "https://example.invalid/none.git")
+	if err := os.WriteFile(filepath.Join(dir, ".git", "relative.config"), []byte("[memo]\n\tkey = value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, dir, "config", "--add", "include.path", "relative.config")
 	mustRun(t, dir, "task", "add", "wires the remote")
 	trace := filepath.Join(t.TempDir(), "trace")
 	t.Setenv("GIT_TRACE", trace)

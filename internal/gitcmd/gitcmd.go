@@ -910,9 +910,7 @@ func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
 // an empty value. It is the single-read form of ConfigGetAll over every key.
 func (g Git) ConfigLocal(ctx context.Context) ([][2]string, error) {
 	if g.memoizes(ctx) {
-		if pairs, known, err := g.memoizedConfigLocal(ctx); known || err != nil {
-			return pairs, err
-		}
+		return g.memoizedConfigLocal(ctx)
 	}
 	out, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--list", "-z")
 	if err != nil {
