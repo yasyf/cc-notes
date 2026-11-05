@@ -169,6 +169,11 @@ func newSyncCmd() *cobra.Command {
 			if syncErr != nil && report.Rounds == 0 {
 				return syncErr
 			}
+			if report.Absent > 0 {
+				if _, perr := fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d referenced attachments are absent on the remote's LFS server and were not downloaded; run `cc-notes sync` where they were written\n", report.Absent); perr != nil {
+					return perr
+				}
+			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
 				if perr := printJSON(out, syncDTO{
@@ -182,6 +187,7 @@ func newSyncCmd() *cobra.Command {
 					Defaulted:     defaultedDTOs(report.Defaulted),
 					Held:          report.Held,
 					Deferred:      report.Deferred,
+					Absent:        report.Absent,
 					Rounds:        report.Rounds,
 				}); perr != nil {
 					return perr
@@ -252,6 +258,7 @@ type syncDTO struct {
 	Defaulted     []defaultedDTO `json:"defaulted,omitempty"`
 	Held          int            `json:"held"`
 	Deferred      int            `json:"deferred"`
+	Absent        int            `json:"absent"`
 	Rounds        int            `json:"rounds"`
 }
 

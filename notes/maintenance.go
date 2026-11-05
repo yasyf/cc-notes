@@ -33,7 +33,8 @@ type SyncOptions struct {
 // a local default kept off it, which no remote has; Held counts the
 // local refs left unpushed because an attachment they reference failed to
 // upload; Deferred counts
-// the remote refs left unfolded because the remote did not send their objects.
+// the remote refs left unfolded because the remote did not send their objects;
+// Absent counts referenced attachment objects the remote's LFS server lacks.
 // When Sync fans out over several remotes, every field is the sum across them.
 type SyncReport struct {
 	Created       int
@@ -48,6 +49,7 @@ type SyncReport struct {
 	Defaulted     []WithheldEntity
 	Held          int
 	Deferred      int
+	Absent        int
 }
 
 // Sync converges the repository's refs/cc-notes/* namespace with one or more
@@ -88,6 +90,7 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		report.Withheld += rep.Withheld
 		report.Held += rep.Held
 		report.Deferred += rep.Deferred
+		report.Absent += rep.Absent
 		if err != nil && syncErr == nil {
 			syncErr = err
 		}
