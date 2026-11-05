@@ -120,12 +120,6 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 		if _, err := generations.CreateBucket([]byte(managed.QueryObjects)); err != nil {
 			return err
 		}
-		if _, err := generations.CreateBucket([]byte(managed.QueryObjectIDs)); err != nil {
-			return err
-		}
-		if _, err := generations.CreateBucket([]byte(managed.QueryObjectRefs)); err != nil {
-			return err
-		}
 		return applySource(tx, &sourcePublication{})
 	}); err != nil {
 		return err

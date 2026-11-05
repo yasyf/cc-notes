@@ -14,22 +14,16 @@ import (
 )
 
 // Format identifies the managed authority schema and projection contract.
-const Format = "cc-notes-managed-v4"
+const Format = "cc-notes-managed-v5"
 
 // PageSize keeps authority writes independent of the host memory page size.
 const PageSize = 4096
 
 // QueryGenerations identifies the required immutable metadata storage.
-const QueryGenerations = "query-generations-v1"
+const QueryGenerations = "query-generations-v2"
 
 // QueryObjects identifies immutable graph objects shared by metadata generations.
 const QueryObjects = "objects"
-
-// QueryObjectIDs maps content hashes to append-ordered storage locations.
-const QueryObjectIDs = "object-ids"
-
-// QueryObjectRefs counts immutable graph edges and retained generation roots.
-const QueryObjectRefs = "object-refs"
 
 // ErrReindex requires an explicit import before ordinary managed operations.
 var ErrReindex = errors.New("managed authority unavailable; run cc-notes reindex")
@@ -45,7 +39,7 @@ const LockWaitEnv = "CCN_LOCK_WAIT"
 
 // Path names the shared records authority database.
 func Path(commonDir string) string {
-	return filepath.Join(commonDir, "cc-notes-managed", "authority-v2.db")
+	return filepath.Join(commonDir, "cc-notes-managed", "authority-v3.db")
 }
 
 // Exists reports whether the authority database is present.
@@ -170,13 +164,7 @@ func Initialize(ctx context.Context, commonDir string) (err error) {
 		if err != nil {
 			return err
 		}
-		if _, err = generations.CreateBucket([]byte(QueryObjects)); err != nil {
-			return err
-		}
-		if _, err := generations.CreateBucket([]byte(QueryObjectIDs)); err != nil {
-			return err
-		}
-		_, err = generations.CreateBucket([]byte(QueryObjectRefs))
+		_, err = generations.CreateBucket([]byte(QueryObjects))
 		return err
 	})
 }

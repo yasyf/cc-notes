@@ -5,18 +5,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/go-git/go-git/v5/plumbing"
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/model"
 )
 
-func TestQueryObjectStorageKeepsIdentityAcrossOrderedAllocationAndRollback(t *testing.T) {
+func TestQueryObjectHandlesNeverReuseAnIDAcrossDeleteAndRollback(t *testing.T) {
 	db := newQueryMetadataDB(t)
-	firstHash := model.SHA(plumbing.ComputeHash(plumbing.BlobObject, []byte("first payload")).String())
-	secondHash := model.SHA(plumbing.ComputeHash(plumbing.BlobObject, []byte("second payload")).String())
-	rolledHash := model.SHA(plumbing.ComputeHash(plumbing.BlobObject, []byte("uncommitted")).String())
-	var first uint64
+	var first, second, rolled model.SHA
 	if err := db.Update(func(tx *bolt.Tx) error {
 		root, err := tx.CreateBucket(queryGenerationsBucket)
 		if err != nil {
@@ -26,23 +23,37 @@ func TestQueryObjectStorageKeepsIdentityAcrossOrderedAllocationAndRollback(t *te
 		if err != nil {
 			return err
 		}
-		if err := store.put(firstHash, []byte("first payload")); err != nil {
+		if first, err = store.allocate(); err != nil {
 			return err
 		}
-		first, err = queryObjectID(store.ids, firstHash)
+		if err := store.put(first, []byte("first payload")); err != nil {
+			return err
+		}
+		key, err := queryObjectKey(first)
 		if err != nil {
 			return err
 		}
-		if err := store.delete(firstHash); err != nil {
+		if err := store.objects.Delete(key); err != nil {
 			return err
 		}
-		return store.put(secondHash, []byte("second payload"))
+		if second, err = store.allocate(); err != nil {
+			return err
+		}
+		return store.put(second, []byte("second payload"))
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if second <= first {
+		t.Fatalf("deleted ID reused: first=%s second=%s", first, second)
+	}
 	rollback := errors.New("rollback")
 	if err := db.Update(func(tx *bolt.Tx) error {
-		if err := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket)).put(rolledHash, []byte("uncommitted")); err != nil {
+		store := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
+		var err error
+		if rolled, err = store.allocate(); err != nil {
+			return err
+		}
+		if err := store.put(rolled, []byte("uncommitted")); err != nil {
 			return err
 		}
 		return rollback
@@ -51,24 +62,25 @@ func TestQueryObjectStorageKeepsIdentityAcrossOrderedAllocationAndRollback(t *te
 	}
 	if err := db.View(func(tx *bolt.Tx) error {
 		store := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
-		id, err := queryObjectID(store.ids, secondHash)
-		if err != nil {
-			return err
-		}
-		if id <= first {
-			t.Fatalf("deleted ID reused: first=%d second=%d", first, id)
-		}
-		for hash, expected := range map[model.SHA][]byte{firstHash: nil, secondHash: []byte("second payload"), rolledHash: nil} {
-			got, err := store.get(hash)
+		for handle, expected := range map[model.SHA][]byte{first: nil, second: []byte("second payload"), rolled: nil} {
+			got, err := store.get(handle)
 			if err != nil || !bytes.Equal(got, expected) {
-				t.Fatalf("get(%s)=%q, %v; want %q", hash, got, err, expected)
+				t.Fatalf("get(%s)=%q, %v; want %q", handle, got, err, expected)
 			}
 		}
-		if store.objects.Stats().KeyN != 1 || store.ids.Stats().KeyN != 1 {
+		if store.objects.Stats().KeyN != 1 {
 			t.Fatal("deleted or rolled-back object leaked")
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQueryObjectKeyRejectsAMalformedHandle(t *testing.T) {
+	for _, handle := range []model.SHA{"", "abc", "zz34567890123456789012345678901234567890"} {
+		if _, err := queryObjectKey(handle); !errors.Is(err, managed.ErrReindex) {
+			t.Errorf("queryObjectKey(%q) = %v, want ErrReindex", handle, err)
+		}
 	}
 }

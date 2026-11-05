@@ -3,11 +3,10 @@ package store
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -86,19 +85,22 @@ func TestRetainedQueryActivationRollsBackAndIsolatesKinds(t *testing.T) {
 	}
 }
 
-func TestRetainedQueryGraphUsesCanonicalSourceMap(t *testing.T) {
+func TestRetainedQueryGraphMatchesCanonicalSourceMap(t *testing.T) {
 	s := initStore(t)
 	create(t, s, docOps("a"))
 	source, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var generation queryGeneration
+	var stored []sourcegraph.Entry
 	var mutations []sourcegraph.Mutation
 	err = s.managedView(t.Context(), func(tx *bolt.Tx) error {
-		var err error
-		generation, err = readQueryGeneration(queryGenerationBinding(tx, source.binding), queryCurrentRoot)
+		generation, err := readQueryGeneration(queryGenerationBinding(tx, source.binding), queryCurrentRoot)
 		if err != nil {
+			return err
+		}
+		objects := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
+		if stored, err = queryGraphEntries(sourcegraph.New(queryGraphObjects{ctx: t.Context(), store: objects}), generation.Root); err != nil {
 			return err
 		}
 		rows := queryMetadataBinding(tx, source.binding).Bucket(queryMetadataRowsBucket)
@@ -116,18 +118,74 @@ func TestRetainedQueryGraphUsesCanonicalSourceMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = s.Repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
-		root, err := sourcegraph.New(objects).Apply("", mutations)
+		index := sourcegraph.New(objects)
+		root, err := index.Apply("", mutations)
 		if err != nil {
 			return err
 		}
-		if root != generation.Root {
-			t.Fatalf("Bolt root %s differs from Git root %s", generation.Root, root)
+		canonical, err := queryGraphEntries(index, root)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(stored, canonical) {
+			t.Fatalf("Bolt graph holds %d entries, Git graph %d, and they differ", len(stored), len(canonical))
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func queryGraphEntries(index *sourcegraph.Map, root model.SHA) ([]sourcegraph.Entry, error) {
+	count, err := index.Count(root)
+	if err != nil {
+		return nil, err
+	}
+	return index.Range(root, 0, int(count))
+}
+
+// assertQueryObjectsExactlyReachable fails on a stored node no retained generation
+// reaches, a leak, and on a reachable node missing from the store.
+func assertQueryObjectsExactlyReachable(t *testing.T, tx *bolt.Tx, bindings ...*bolt.Bucket) int {
+	t.Helper()
+	objects := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
+	reachable := make(map[model.SHA]struct{})
+	for _, binding := range bindings {
+		for _, slot := range [][]byte{queryCurrentRoot, queryActiveRoot, queryRetiredRoot} {
+			generation, err := readQueryGeneration(binding, slot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stack := []model.SHA{}
+			if generation.Root != "" {
+				stack = append(stack, generation.Root)
+			}
+			for len(stack) > 0 {
+				handle := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				if _, seen := reachable[handle]; seen {
+					continue
+				}
+				reachable[handle] = struct{}{}
+				children, err := queryObjectChildren(t.Context(), objects, handle)
+				if err != nil {
+					t.Fatalf("retained node %s: %v", handle, err)
+				}
+				stack = append(stack, children...)
+			}
+		}
+	}
+	if err := objects.objects.ForEach(func(key, _ []byte) error {
+		handle := queryObjectHandle(queryObjectKeyID(key))
+		if _, found := reachable[handle]; !found {
+			t.Errorf("stored node %s is unreachable from every retained generation", handle)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return len(reachable)
 }
 
 func TestRetainedMetadataMissingStorageRejectsBeforePublication(t *testing.T) {
@@ -194,49 +252,16 @@ func TestRetainedMetadataReclaimsRetiredAndTransientObjects(t *testing.T) {
 	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, id); err != nil || !hit {
 		t.Fatalf("initial = %v %v", hit, err)
 	}
+	source, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	count := func() int {
 		t.Helper()
 		total := 0
 		err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
-			root := tx.Bucket(queryGenerationsBucket)
-			objects := queryObjectStoreAt(root)
-			if objects.objects.Stats().KeyN != objects.ids.Stats().KeyN {
-				t.Fatal("object, identity, and reference indexes differ in cardinality")
-			}
-			references := 0
-			if err := root.Bucket([]byte(managed.QueryObjectRefs)).ForEach(func(key, data []byte) error {
-				block := binary.BigEndian.Uint64(key)
-				for i := range queryReferenceBlockEntries {
-					if binary.BigEndian.Uint64(data[i*8:i*8+8]) == 0 {
-						continue
-					}
-					references++
-					id := block*queryReferenceBlockEntries + uint64(i) + 1
-					if objects.objects.Get(binary.BigEndian.AppendUint64(nil, id)) == nil {
-						t.Fatal("orphaned reference count")
-					}
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-			if references != objects.ids.Stats().KeyN {
-				t.Fatal("reference and identity cardinalities differ")
-			}
-			return objects.ids.ForEach(func(hash, id []byte) error {
-				if objects.objects.Get(id) == nil {
-					t.Fatalf("missing object data %s", hash)
-				}
-				total++
-				references, err := queryObjectRefCount(root, model.SHA(hex.EncodeToString(hash)))
-				if err != nil {
-					return err
-				}
-				if references == 0 {
-					t.Fatalf("unreachable immutable object %s", hash)
-				}
-				return nil
-			})
+			total = assertQueryObjectsExactlyReachable(t, tx, queryGenerationBinding(tx, source.binding))
+			return nil
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -252,6 +277,92 @@ func TestRetainedMetadataReclaimsRetiredAndTransientObjects(t *testing.T) {
 	}
 	if after := count(); after > before+32 {
 		t.Fatalf("retired graphs grew object count from %d to %d", before, after)
+	}
+}
+
+func TestReindexCarriesTheActiveGenerationUntilItRetires(t *testing.T) {
+	s := initStore(t)
+	id := create(t, s, docOps("a")).EntityID()
+	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, id); err != nil || !hit {
+		t.Fatalf("initial = %v %v", hit, err)
+	}
+	source, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspect := func() (active []sourcegraph.Entry) {
+		t.Helper()
+		if err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
+			binding := queryGenerationBinding(tx, source.binding)
+			assertQueryObjectsExactlyReachable(t, tx, binding)
+			generation, err := readQueryGeneration(binding, queryActiveRoot)
+			if err != nil {
+				return err
+			}
+			objects := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
+			active, err = queryGraphEntries(sourcegraph.New(queryGraphObjects{ctx: t.Context(), store: objects}), generation.Root)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return active
+	}
+	before := inspect()
+	if len(before) == 0 {
+		t.Fatal("fixture has no active entries")
+	}
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if after := inspect(); !reflect.DeepEqual(before, after) {
+		t.Fatalf("reindex changed the active generation: %d entries, was %d", len(after), len(before))
+	}
+	for i := range 3 {
+		appendOps(t, s, refs.For(model.KindDoc, id), model.SetTitle{Title: fmt.Sprintf("after reindex %d", i)})
+		if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, id); err != nil || !hit {
+			t.Fatalf("current = %v %v", hit, err)
+		}
+		inspect()
+	}
+}
+
+func TestWritesWithoutReadersFreeIntermediateGraphsAtOnce(t *testing.T) {
+	db := newQueryMetadataDB(t)
+	row := projectQueryMetadata("binding", "first", model.Doc{ID: "doc", Title: "first", Tags: []string{"stable"}})
+	write := func() {
+		t.Helper()
+		if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, row) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	if err := db.Update(func(tx *bolt.Tx) error {
+		binding := queryGenerationBinding(tx, "binding")
+		return binding.Put(queryActiveRoot, bytes.Clone(binding.Get(queryCurrentRoot)))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored := func() int {
+		t.Helper()
+		total := 0
+		if err := db.View(func(tx *bolt.Tx) error {
+			total = queryObjectStoreAt(tx.Bucket(queryGenerationsBucket)).objects.Stats().KeyN
+			assertQueryObjectsExactlyReachable(t, tx, queryGenerationBinding(tx, "binding"))
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return total
+	}
+	row.Tip = "second"
+	write()
+	afterOne := stored()
+	for i := range 16 {
+		row.Tip = model.SHA(fmt.Sprintf("later %d", i))
+		write()
+	}
+	if after := stored(); after != afterOne {
+		t.Fatalf("writes past the active generation kept their replaced nodes: %d stored, was %d", after, afterOne)
 	}
 }
 
@@ -274,22 +385,26 @@ func TestQueryGenerationBatchMatchesPerRowReplacement(t *testing.T) {
 		if err := db.View(func(tx *bolt.Tx) error {
 			root := tx.Bucket(queryGenerationsBucket)
 			objects := queryObjectStoreAt(root)
-			if err := objects.ids.ForEach(func(key, id []byte) error {
-				hash := model.SHA(hex.EncodeToString(key))
-				state[managed.QueryObjects+"/"+string(hash)] = string(objects.objects.Get(id))
-				count, err := queryObjectRefCount(root, hash)
+			index := sourcegraph.New(queryGraphObjects{ctx: t.Context(), store: objects})
+			var bindings []*bolt.Bucket
+			for i := range 3 {
+				name := fmt.Sprintf("binding-%d", i)
+				binding := root.Bucket(queryMetadataAtom(name))
+				bindings = append(bindings, binding)
+				generation, err := readQueryGeneration(binding, queryCurrentRoot)
 				if err != nil {
 					return err
 				}
-				state[managed.QueryObjectRefs+"/"+string(hash)] = string(binary.BigEndian.AppendUint64(nil, count))
-				return nil
-			}); err != nil {
-				return err
+				entries, err := queryGraphEntries(index, generation.Root)
+				if err != nil {
+					return err
+				}
+				state[name] = fmt.Sprint(generation.Rows)
+				for _, entry := range entries {
+					state[name+"/"+entry.Key] = string(entry.Value)
+				}
 			}
-			for i := range 3 {
-				binding := fmt.Sprintf("binding-%d", i)
-				state[binding] = string(root.Bucket(queryMetadataAtom(binding)).Get(queryCurrentRoot))
-			}
+			assertQueryObjectsExactlyReachable(t, tx, bindings...)
 			return nil
 		}); err != nil {
 			t.Fatal(err)
@@ -379,13 +494,13 @@ func TestQueryRetirementCoalescesWithWriter(t *testing.T) {
 						return err
 					}
 					objects := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
-					pages = [2]uint64{uint64(objects.objects.Root()), uint64(objects.ids.Root())}
+					pages = [2]uint64{uint64(objects.objects.Root()), uint64(binding.Root())}
 					return nil
 				}); err != nil {
 					t.Fatal(err)
 				}
-				if pages[0] == 0 || pages[1] == 0 {
-					t.Fatal("fixture requires non-inline object and identity pages")
+				if pages[0] == 0 {
+					t.Fatal("fixture requires non-inline object pages")
 				}
 				return current, active, retired, pages
 			}
@@ -410,7 +525,7 @@ func TestQueryRetirementCoalescesWithWriter(t *testing.T) {
 			second, _, _, beforePages := state()
 			promote()
 			current, active, retired, afterPages := state()
-			if current != second || active != second || retired != first || beforePages != afterPages || !present(first.Root) {
+			if current != second || active != second || retired != first || beforePages[0] != afterPages[0] || !present(first.Root) {
 				t.Fatalf("promotion current=%v active=%v retired=%v pages=%v->%v", current, active, retired, beforePages, afterPages)
 			}
 			rows[1].Tip = "second change"
@@ -462,7 +577,7 @@ func TestQueryRetirementReducesCombinedPageAllocation(t *testing.T) {
 	type result struct {
 		allocated       int64
 		current, active queryGeneration
-		references      map[model.SHA]uint64
+		entries         []sourcegraph.Entry
 	}
 	measure := func(immediate bool) result {
 		db := newQueryMetadataDB(t)
@@ -497,16 +612,7 @@ func TestQueryRetirementReducesCombinedPageAllocation(t *testing.T) {
 				if err := binding.Put(queryActiveRoot, bytes.Clone(binding.Get(queryCurrentRoot))); err != nil || !immediate {
 					return err
 				}
-				retired, err := popRetiredQueryGeneration(binding)
-				if err != nil || retired == "" {
-					return err
-				}
-				root := tx.Bucket(queryGenerationsBucket)
-				counts := newQueryReferenceCounts(root)
-				if err := releaseQueryObject(t.Context(), queryObjectStoreAt(root), counts, retired); err != nil {
-					return err
-				}
-				return counts.flush(t.Context())
+				return reclaimRetiredQueryGeneration(t.Context(), queryObjectStoreAt(tx.Bucket(queryGenerationsBucket)), binding)
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -523,7 +629,7 @@ func TestQueryRetirementReducesCombinedPageAllocation(t *testing.T) {
 			}
 		}
 		after := db.Stats()
-		measured := result{allocated: after.TxStats.GetPageAlloc() - before.TxStats.GetPageAlloc(), references: make(map[model.SHA]uint64)}
+		measured := result{allocated: after.TxStats.GetPageAlloc() - before.TxStats.GetPageAlloc()}
 		if err := db.View(func(tx *bolt.Tx) error {
 			binding := queryGenerationBinding(tx, "binding")
 			if binding.Get(queryRetiredRoot) != nil {
@@ -536,21 +642,18 @@ func TestQueryRetirementReducesCombinedPageAllocation(t *testing.T) {
 			if measured.active, err = readQueryGeneration(binding, queryActiveRoot); err != nil {
 				return err
 			}
-			root := tx.Bucket(queryGenerationsBucket)
-			return queryObjectStoreAt(root).ids.ForEach(func(key, _ []byte) error {
-				hash := model.SHA(hex.EncodeToString(key))
-				count, err := queryObjectRefCount(root, hash)
-				measured.references[hash] = count
-				return err
-			})
+			objects := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
+			assertQueryObjectsExactlyReachable(t, tx, binding)
+			measured.entries, err = queryGraphEntries(sourcegraph.New(queryGraphObjects{ctx: t.Context(), store: objects}), measured.current.Root)
+			return err
 		}); err != nil {
 			t.Fatal(err)
 		}
 		return measured
 	}
 	deferred, immediate := measure(false), measure(true)
-	if deferred.current != immediate.current || deferred.active != immediate.active || !maps.Equal(deferred.references, immediate.references) {
-		t.Fatal("coalesced and immediate reclamation ended with different graphs or reference counts")
+	if deferred.current != immediate.current || deferred.active != immediate.active || !reflect.DeepEqual(deferred.entries, immediate.entries) {
+		t.Fatal("coalesced and immediate reclamation ended with different graphs")
 	}
 	if deferred.allocated >= immediate.allocated {
 		t.Fatalf("coalesced allocation %d >= immediate allocation %d", deferred.allocated, immediate.allocated)
