@@ -27,6 +27,6 @@ func newReindexCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&ifMissing, "if-missing", false, "import only when no authority exists and no other import is running")
+	cmd.Flags().BoolVar(&ifMissing, "if-missing", false, "import only when no authority exists, after any import already running finishes")
 	return cmd
 }

@@ -63,7 +63,7 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureAuthority(cmd.Context(), s); err != nil {
+	if err := ensureAuthority(cmd.Context(), s, cmd.ErrOrStderr()); err != nil {
 		return nil, err
 	}
 	return s, nil

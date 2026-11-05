@@ -93,7 +93,34 @@ func TestBusyNamesTheHolder(t *testing.T) {
 		t.Fatalf("LockRebuild beside a reader: %v", err)
 	}
 	t.Cleanup(func() { _ = rebuild.Close() })
-	if other, err := TryLockRebuild(dir); err != nil || other != nil {
-		t.Fatalf("TryLockRebuild behind a rebuild=%v, %v; want nil, nil", other, err)
+}
+
+func TestAwaitRebuildWaitsOutTheRunningRebuild(t *testing.T) {
+	previous := lockWait
+	lockWait = 10 * time.Millisecond
+	t.Cleanup(func() { lockWait = previous })
+	dir := t.TempDir()
+	running, err := LockRebuild(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaited := make(chan error, 1)
+	go func() {
+		file, err := AwaitRebuild(t.Context(), dir)
+		if err == nil {
+			err = file.Close()
+		}
+		awaited <- err
+	}()
+	select {
+	case err := <-awaited:
+		t.Fatalf("AwaitRebuild behind a running rebuild returned %v before it finished", err)
+	case <-time.After(20 * lockWait):
+	}
+	if err := running.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-awaited; err != nil {
+		t.Fatalf("AwaitRebuild after the rebuild finished: %v", err)
 	}
 }

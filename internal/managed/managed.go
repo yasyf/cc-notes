@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,9 @@ var ErrReindex = errors.New("managed authority unavailable; run cc-notes reindex
 var ErrBusy = errors.New("managed authority busy")
 
 var lockWait = 30 * time.Second
+
+// Unbounded is a wait that lasts as long as the holder takes.
+const Unbounded = time.Duration(math.MaxInt64)
 
 // LockWaitEnv names a duration that shortens how long this process waits on the
 // authority, for a caller such as a hook read that would rather hear "busy" now.
@@ -81,12 +85,6 @@ func TryLock(commonDir string, exclusive bool) (*os.File, error) {
 	return tryLockAt(authorityLockPath(commonDir), exclusive)
 }
 
-// TryLockRebuild takes the rebuild lock without waiting, returning a nil file
-// when another rebuild holds it.
-func TryLockRebuild(commonDir string) (*os.File, error) {
-	return tryLockAt(rebuildLockPath(commonDir), true)
-}
-
 func tryLockAt(path string, exclusive bool) (*os.File, error) {
 	file, err := openLock(path)
 	if err != nil {
@@ -120,17 +118,23 @@ func Wait(within time.Duration) (time.Duration, error) {
 // failing with ErrBusy once another holder has kept it past Wait(lockWait).
 // Its identity stays fixed across authority cache generations.
 func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, error) {
-	return lockAt(ctx, authorityLockPath(commonDir), exclusive)
+	return lockAt(ctx, authorityLockPath(commonDir), exclusive, lockWait)
 }
 
 // LockRebuild serializes authority rebuilds, which build without the authority
 // lock, failing with ErrBusy once another rebuild has kept it past Wait(lockWait).
 func LockRebuild(ctx context.Context, commonDir string) (*os.File, error) {
-	return lockAt(ctx, rebuildLockPath(commonDir), true)
+	return lockAt(ctx, rebuildLockPath(commonDir), true, lockWait)
 }
 
-func lockAt(ctx context.Context, path string, exclusive bool) (*os.File, error) {
-	wait, err := Wait(lockWait)
+// AwaitRebuild takes the rebuild lock once any rebuild holding it finishes,
+// however long that rebuild runs, unless LockWaitEnv asks for less.
+func AwaitRebuild(ctx context.Context, commonDir string) (*os.File, error) {
+	return lockAt(ctx, rebuildLockPath(commonDir), true, Unbounded)
+}
+
+func lockAt(ctx context.Context, path string, exclusive bool, within time.Duration) (*os.File, error) {
+	wait, err := Wait(within)
 	if err != nil {
 		return nil, err
 	}

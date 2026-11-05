@@ -821,6 +821,43 @@ func TestFirstCommandImportsAMissingAuthority(t *testing.T) {
 	mustBin(t, dir, actorA, "note", "add", "Written after the import")
 }
 
+// TestReadDuringARunningImportWaitsForIt pins that a command arriving while
+// another import holds the rebuild waits for the authority instead of failing
+// with a request to retry, and imports it itself when that import left none.
+func TestReadDuringARunningImportWaitsForIt(t *testing.T) {
+	dir := initRepo(t)
+	mustBin(t, dir, actorA, "note", "add", "Kept across the import")
+	common := filepath.Join(dir, ".git")
+	if err := os.Remove(managed.Path(common)); err != nil {
+		t.Fatal(err)
+	}
+	running, err := managed.LockRebuild(t.Context(), common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		res binResult
+		err error
+	}
+	listed := make(chan outcome, 1)
+	go func() {
+		res, err := execBin(dir, actorA, "note", "list")
+		listed <- outcome{res, err}
+	}()
+	select {
+	case got := <-listed:
+		t.Fatalf("note list returned while the import ran: %+v, %v", got.res, got.err)
+	case <-time.After(time.Second):
+	}
+	if err := running.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got := <-listed
+	if got.err != nil || got.res.Code != 0 || got.res.Stderr != "" || !strings.Contains(got.res.Stdout, "Kept across the import") {
+		t.Fatalf("note list after the import = %+v, %v", got.res, got.err)
+	}
+}
+
 // TestAutoInstallAnnouncesDroppedRefspec pins the drop disclosure: a repo wired
 // with BOTH the pre-fix killer refspec and the new tracking one (an old binary
 // re-ran after a new one) still prunes unsynced refs through the old line, so
