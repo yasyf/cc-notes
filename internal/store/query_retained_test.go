@@ -3,8 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,10 +12,8 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
-	"github.com/yasyf/cc-notes/internal/sourcegraph"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -86,50 +83,6 @@ func TestRetainedQueryActivationRollsBackAndIsolatesKinds(t *testing.T) {
 	}
 }
 
-func TestRetainedQueryGraphUsesCanonicalSourceMap(t *testing.T) {
-	s := initStore(t)
-	create(t, s, docOps("a"))
-	source, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var generation queryGeneration
-	var mutations []sourcegraph.Mutation
-	err = s.managedView(t.Context(), func(tx *bolt.Tx) error {
-		var err error
-		generation, err = readQueryGeneration(queryGenerationBinding(tx, source.binding), queryCurrentRoot)
-		if err != nil {
-			return err
-		}
-		rows := queryMetadataBinding(tx, source.binding).Bucket(queryMetadataRowsBucket)
-		return rows.ForEach(func(_, data []byte) error {
-			row, err := decodeQueryMetadata(tx, source, data)
-			if err != nil {
-				return err
-			}
-			mutations = append(mutations, sourcegraph.Mutation{Key: queryRowKey(row.ID), Value: slices.Clone(data)})
-			mutations = append(mutations, queryRowPostings(row)...)
-			return nil
-		})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = s.Repo.SourceObjects(t.Context(), func(objects *gitobj.SourceObjects) error {
-		root, err := sourcegraph.New(objects).Apply("", mutations)
-		if err != nil {
-			return err
-		}
-		if root != generation.Root {
-			t.Fatalf("Bolt root %s differs from Git root %s", generation.Root, root)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestRetainedMetadataMissingStorageRejectsBeforePublication(t *testing.T) {
 	s := initStore(t)
 	id := create(t, s, docOps("a")).EntityID()
@@ -188,70 +141,61 @@ func TestRetainedMetadataSurvivesExplicitReindexUntilLiveQuery(t *testing.T) {
 	}
 }
 
-func TestRetainedMetadataReclaimsRetiredAndTransientObjects(t *testing.T) {
+func TestRetainedMetadataPrunesVersionsNoGenerationSees(t *testing.T) {
 	s := initStore(t)
 	id := create(t, s, docOps("a")).EntityID()
 	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, id); err != nil || !hit {
 		t.Fatalf("initial = %v %v", hit, err)
 	}
-	count := func() int {
+	source, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := func() (live, dead, deaths int, keys map[string]bool) {
 		t.Helper()
-		total := 0
+		keys = make(map[string]bool)
 		err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
-			root := tx.Bucket(queryGenerationsBucket)
-			objects := queryObjectStoreAt(root)
-			if objects.objects.Stats().KeyN != objects.ids.Stats().KeyN {
-				t.Fatal("object, identity, and reference indexes differ in cardinality")
-			}
-			references := 0
-			if err := root.Bucket([]byte(managed.QueryObjectRefs)).ForEach(func(key, data []byte) error {
-				block := binary.BigEndian.Uint64(key)
-				for i := range queryReferenceBlockEntries {
-					if binary.BigEndian.Uint64(data[i*8:i*8+8]) == 0 {
-						continue
-					}
-					references++
-					id := block*queryReferenceBlockEntries + uint64(i) + 1
-					if objects.objects.Get(binary.BigEndian.AppendUint64(nil, id)) == nil {
-						t.Fatal("orphaned reference count")
+			binding := queryGenerationBinding(tx, source.binding)
+			deaths = binding.Bucket(queryDeathsBucket).Stats().KeyN
+			return binding.Bucket(queryVersionsBucket).ForEach(func(key, data []byte) error {
+				versions, err := decodeQueryVersions(data)
+				for _, version := range versions {
+					if version.died == 0 {
+						live++
+					} else {
+						dead++
 					}
 				}
-				return nil
-			}); err != nil {
+				keys[string(key)] = true
 				return err
-			}
-			if references != objects.ids.Stats().KeyN {
-				t.Fatal("reference and identity cardinalities differ")
-			}
-			return objects.ids.ForEach(func(hash, id []byte) error {
-				if objects.objects.Get(id) == nil {
-					t.Fatalf("missing object data %s", hash)
-				}
-				total++
-				references, err := queryObjectRefCount(root, model.SHA(hex.EncodeToString(hash)))
-				if err != nil {
-					return err
-				}
-				if references == 0 {
-					t.Fatalf("unreachable immutable object %s", hash)
-				}
-				return nil
 			})
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return total
+		return live, dead, deaths, keys
 	}
-	before := count()
+	beforeLive, _, _, _ := count()
+	ref := refs.For(model.KindDoc, id)
 	for i := range 12 {
-		appendOps(t, s, refs.For(model.KindDoc, id), model.SetTitle{Title: fmt.Sprintf("title %d", i)})
+		appendOps(t, s, ref, model.SetTitle{Title: fmt.Sprintf("title %d", i)})
 		if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, id); err != nil || !hit {
 			t.Fatalf("current = %v %v", hit, err)
 		}
 	}
-	if after := count(); after > before+32 {
-		t.Fatalf("retired graphs grew object count from %d to %d", before, after)
+	live, dead, deaths, _ := count()
+	if live != beforeLive || dead != deaths || dead > 8 {
+		t.Fatalf("after 12 writes: %d live versions (was %d), %d dead, %d deaths", live, beforeLive, dead, deaths)
+	}
+	tag := queryPostingKey(queryMetadataLabelsBucket, queryMetadataLabelPrefix(model.KindDoc, "transient"))
+	appendOps(t, s, ref, model.AddTag{Tag: "transient"})
+	appendOps(t, s, ref, model.RemoveTag{Tag: "transient"})
+	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, id); err != nil || !hit {
+		t.Fatalf("after tag = %v %v", hit, err)
+	}
+	appendOps(t, s, ref, model.SetTitle{Title: "settled"})
+	if _, _, _, keys := count(); slices.ContainsFunc(slices.Collect(maps.Keys(keys)), func(key string) bool { return bytes.HasPrefix([]byte(key), []byte(tag)) }) {
+		t.Fatal("a removed posting outlived every generation that could see it")
 	}
 }
 
@@ -272,23 +216,21 @@ func TestQueryGenerationBatchMatchesPerRowReplacement(t *testing.T) {
 		t.Helper()
 		state := make(map[string]string)
 		if err := db.View(func(tx *bolt.Tx) error {
-			root := tx.Bucket(queryGenerationsBucket)
-			objects := queryObjectStoreAt(root)
-			if err := objects.ids.ForEach(func(key, id []byte) error {
-				hash := model.SHA(hex.EncodeToString(key))
-				state[managed.QueryObjects+"/"+string(hash)] = string(objects.objects.Get(id))
-				count, err := queryObjectRefCount(root, hash)
+			for i := range 3 {
+				name := fmt.Sprintf("binding-%d", i)
+				binding := queryGenerationBinding(tx, name)
+				current, err := readQueryGeneration(binding, queryCurrentRoot)
 				if err != nil {
 					return err
 				}
-				state[managed.QueryObjectRefs+"/"+string(hash)] = string(binary.BigEndian.AppendUint64(nil, count))
-				return nil
-			}); err != nil {
-				return err
-			}
-			for i := range 3 {
-				binding := fmt.Sprintf("binding-%d", i)
-				state[binding] = string(root.Bucket(queryMetadataAtom(binding)).Get(queryCurrentRoot))
+				state[name] = fmt.Sprint(current.Rows)
+				retained := &retainedQuery{versions: binding.Bucket(queryVersionsBucket), generation: current}
+				if err := retained.each(func(key, value []byte) error {
+					state[name+"/"+string(key)] = string(value)
+					return nil
+				}); err != nil {
+					return err
+				}
 			}
 			return nil
 		}); err != nil {
@@ -325,235 +267,107 @@ func TestQueryGenerationBatchMatchesPerRowReplacement(t *testing.T) {
 	}
 }
 
-func TestQueryRetirementCoalescesWithWriter(t *testing.T) {
-	for _, rotate := range []bool{false, true} {
-		t.Run(fmt.Sprintf("rotate=%t", rotate), func(t *testing.T) {
-			db := newQueryMetadataDB(t)
-			rows := make([]queryMetadata, 256)
-			if err := db.Update(func(tx *bolt.Tx) error {
-				batch := make(queryGenerationBatch)
-				for i := range rows {
-					rows[i] = projectQueryMetadata("binding", "before", model.Doc{ID: model.EntityID(fmt.Sprintf("doc-%03d", i)), Title: "before", Tags: []string{"stable"}})
-					if err := batch.replaceMetadata(tx, rows[i]); err != nil {
-						return err
-					}
-				}
-				return batch.flush(t.Context(), tx)
-			}); err != nil {
-				t.Fatal(err)
+func TestQueryActivationLeavesPruningToWriter(t *testing.T) {
+	db := newQueryMetadataDB(t)
+	rows := make([]queryMetadata, 256)
+	if err := db.Update(func(tx *bolt.Tx) error {
+		batch := make(queryGenerationBatch)
+		for i := range rows {
+			rows[i] = projectQueryMetadata("binding", "before", model.Doc{ID: model.EntityID(fmt.Sprintf("doc-%03d", i)), Title: "before", Tags: []string{"stable"}})
+			if err := batch.replaceMetadata(tx, rows[i]); err != nil {
+				return err
 			}
-			promote := func() {
-				t.Helper()
-				if err := db.Update(func(tx *bolt.Tx) error {
-					binding := queryGenerationBinding(tx, "binding")
-					current, err := readQueryGeneration(binding, queryCurrentRoot)
-					if err != nil {
-						return err
-					}
-					active, err := readQueryGeneration(binding, queryActiveRoot)
-					if err != nil {
-						return err
-					}
-					if err := activateQueryGeneration(t.Context(), tx, binding, current, active); err != nil {
-						return err
-					}
-					return binding.Put(queryActiveRoot, bytes.Clone(binding.Get(queryCurrentRoot)))
-				}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			state := func() (queryGeneration, queryGeneration, queryGeneration, [2]uint64) {
-				t.Helper()
-				var current, active, retired queryGeneration
-				var pages [2]uint64
-				if err := db.View(func(tx *bolt.Tx) error {
-					binding := queryGenerationBinding(tx, "binding")
-					var err error
-					if current, err = readQueryGeneration(binding, queryCurrentRoot); err != nil {
-						return err
-					}
-					if active, err = readQueryGeneration(binding, queryActiveRoot); err != nil {
-						return err
-					}
-					if retired, err = readQueryGeneration(binding, queryRetiredRoot); err != nil {
-						return err
-					}
-					objects := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
-					pages = [2]uint64{uint64(objects.objects.Root()), uint64(objects.ids.Root())}
-					return nil
-				}); err != nil {
-					t.Fatal(err)
-				}
-				if pages[0] == 0 || pages[1] == 0 {
-					t.Fatal("fixture requires non-inline object and identity pages")
-				}
-				return current, active, retired, pages
-			}
-			present := func(hash model.SHA) bool {
-				t.Helper()
-				var found bool
-				if err := db.View(func(tx *bolt.Tx) error {
-					data, err := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket)).get(hash)
-					found = data != nil
-					return err
-				}); err != nil {
-					t.Fatal(err)
-				}
-				return found
-			}
-			promote()
-			first, _, _, _ := state()
-			rows[0].Tip = "first change"
-			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, rows[0]) }); err != nil {
-				t.Fatal(err)
-			}
-			second, _, _, beforePages := state()
-			promote()
-			current, active, retired, afterPages := state()
-			if current != second || active != second || retired != first || beforePages != afterPages || !present(first.Root) {
-				t.Fatalf("promotion current=%v active=%v retired=%v pages=%v->%v", current, active, retired, beforePages, afterPages)
-			}
-			rows[1].Tip = "second change"
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(ctx, tx, rows[1]) }); !errors.Is(err, context.Canceled) {
-				t.Fatalf("canceled writer = %v", err)
-			}
-			if _, _, retired, _ := state(); retired != first || !present(first.Root) {
-				t.Fatalf("canceled writer lost retirement %v", retired)
-			}
-			if err := db.Update(func(tx *bolt.Tx) error {
-				binding := queryGenerationBinding(tx, "binding")
-				var saved []byte
-				if rotate {
-					saved = bytes.Clone(binding.Get(queryRetiredRoot))
-					if err := binding.Delete(queryRetiredRoot); err != nil {
-						return err
-					}
-				}
-				if err := replaceQueryMetadata(t.Context(), tx, rows[1]); err != nil {
-					return err
-				}
-				if rotate {
-					return binding.Put(queryRetiredRoot, saved)
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			third, _, pending, _ := state()
-			if rotate {
-				if pending != first || !present(first.Root) {
-					t.Fatalf("occupied retirement slot = %v", pending)
-				}
-			} else if pending.Root != "" || present(first.Root) {
-				t.Fatalf("writer did not reclaim retirement %v", pending)
-			}
-			promote()
-			current, active, retired, _ = state()
-			if current != third || active != third || retired != second || present(first.Root) {
-				t.Fatalf("next promotion current=%v active=%v retired=%v", current, active, retired)
-			}
-		})
+		}
+		return batch.flush(t.Context(), tx)
+	}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestQueryRetirementReducesCombinedPageAllocation(t *testing.T) {
-	type result struct {
-		allocated       int64
-		current, active queryGeneration
-		references      map[model.SHA]uint64
-	}
-	measure := func(immediate bool) result {
-		db := newQueryMetadataDB(t)
-		rows := make([]queryMetadata, 1024)
+	promote := func() {
+		t.Helper()
 		if err := db.Update(func(tx *bolt.Tx) error {
-			batch := make(queryGenerationBatch)
-			for i := range rows {
-				rows[i] = projectQueryMetadata("binding", "before", model.Doc{ID: model.EntityID(fmt.Sprintf("doc-%04d", i)), Title: "stable", Tags: []string{"stable"}})
-				if err := batch.replaceMetadata(tx, rows[i]); err != nil {
-					return err
-				}
-			}
-			return batch.flush(t.Context(), tx)
+			binding := queryGenerationBinding(tx, "binding")
+			return binding.Put(queryActiveRoot, bytes.Clone(binding.Get(queryCurrentRoot)))
 		}); err != nil {
 			t.Fatal(err)
 		}
-		promote := func() {
-			t.Helper()
-			if err := db.Update(func(tx *bolt.Tx) error {
-				binding := queryGenerationBinding(tx, "binding")
-				current, err := readQueryGeneration(binding, queryCurrentRoot)
-				if err != nil {
-					return err
-				}
-				active, err := readQueryGeneration(binding, queryActiveRoot)
-				if err != nil {
-					return err
-				}
-				if err := activateQueryGeneration(t.Context(), tx, binding, current, active); err != nil {
-					return err
-				}
-				if err := binding.Put(queryActiveRoot, bytes.Clone(binding.Get(queryCurrentRoot))); err != nil || !immediate {
-					return err
-				}
-				retired, err := popRetiredQueryGeneration(binding)
-				if err != nil || retired == "" {
-					return err
-				}
-				root := tx.Bucket(queryGenerationsBucket)
-				counts := newQueryReferenceCounts(root)
-				if err := releaseQueryObject(t.Context(), queryObjectStoreAt(root), counts, retired); err != nil {
-					return err
-				}
-				return counts.flush(t.Context())
-			}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		promote()
-		before := db.Stats()
-		for i := range 3 {
-			rows[i].Tip = "changed"
-			if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, rows[i]) }); err != nil {
-				t.Fatal(err)
-			}
-			if i < 2 {
-				promote()
-			}
-		}
-		after := db.Stats()
-		measured := result{allocated: after.TxStats.GetPageAlloc() - before.TxStats.GetPageAlloc(), references: make(map[model.SHA]uint64)}
+	}
+	type state struct {
+		current, active queryGeneration
+		versionsPage    uint64
+		deaths          int
+	}
+	read := func() state {
+		t.Helper()
+		var got state
 		if err := db.View(func(tx *bolt.Tx) error {
 			binding := queryGenerationBinding(tx, "binding")
-			if binding.Get(queryRetiredRoot) != nil {
-				t.Fatal("combined measurement left reclamation outside its window")
-			}
 			var err error
-			if measured.current, err = readQueryGeneration(binding, queryCurrentRoot); err != nil {
+			if got.current, err = readQueryGeneration(binding, queryCurrentRoot); err != nil {
 				return err
 			}
-			if measured.active, err = readQueryGeneration(binding, queryActiveRoot); err != nil {
+			if got.active, err = readQueryGeneration(binding, queryActiveRoot); err != nil {
 				return err
 			}
-			root := tx.Bucket(queryGenerationsBucket)
-			return queryObjectStoreAt(root).ids.ForEach(func(key, _ []byte) error {
-				hash := model.SHA(hex.EncodeToString(key))
-				count, err := queryObjectRefCount(root, hash)
-				measured.references[hash] = count
-				return err
-			})
+			got.versionsPage = uint64(binding.Bucket(queryVersionsBucket).Root())
+			got.deaths = binding.Bucket(queryDeathsBucket).Stats().KeyN
+			return nil
 		}); err != nil {
 			t.Fatal(err)
 		}
-		return measured
+		if got.versionsPage == 0 {
+			t.Fatal("fixture requires a non-inline versions bucket")
+		}
+		return got
 	}
-	deferred, immediate := measure(false), measure(true)
-	if deferred.current != immediate.current || deferred.active != immediate.active || !maps.Equal(deferred.references, immediate.references) {
-		t.Fatal("coalesced and immediate reclamation ended with different graphs or reference counts")
+	visible := func(generation queryGeneration, id model.EntityID) queryMetadata {
+		t.Helper()
+		var row queryMetadata
+		if err := db.View(func(tx *bolt.Tx) error {
+			retained := &retainedQuery{versions: queryGenerationBinding(tx, "binding").Bucket(queryVersionsBucket), generation: generation}
+			data, err := retained.get(queryRowKey(id))
+			if err != nil || data == nil {
+				return errors.Join(err, fmt.Errorf("no version of %s at %d", id, generation.Number))
+			}
+			return json.Unmarshal(data, &row)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return row
 	}
-	if deferred.allocated >= immediate.allocated {
-		t.Fatalf("coalesced allocation %d >= immediate allocation %d", deferred.allocated, immediate.allocated)
+	promote()
+	first := read().current
+	rows[0].Tip = "first change"
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, rows[0]) }); err != nil {
+		t.Fatal(err)
 	}
-	t.Logf("query retirement allocated bytes: coalesced=%d immediate=%d", deferred.allocated, immediate.allocated)
+	written := read()
+	promote()
+	promoted := read()
+	if promoted.active != written.current || promoted.versionsPage != written.versionsPage || promoted.deaths != 1 {
+		t.Fatalf("promotion = %+v after %+v", promoted, written)
+	}
+	if row := visible(first, rows[0].ID); row.Tip != "before" {
+		t.Fatalf("promotion pruned the version the retired generation saw: %q", row.Tip)
+	}
+	rows[1].Tip = "second change"
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(ctx, tx, rows[1]) }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled writer = %v", err)
+	}
+	if got := read(); got != promoted {
+		t.Fatalf("canceled writer changed %+v to %+v", promoted, got)
+	}
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, rows[1]) }); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.deaths != 1 {
+		t.Fatalf("writer left %d deaths, want only its own", got.deaths)
+	}
+	if row := visible(promoted.active, rows[1].ID); row.Tip != "before" {
+		t.Fatalf("writer pruned a version the active generation sees: %q", row.Tip)
+	}
+	if row := visible(promoted.active, rows[0].ID); row.Tip != "first change" {
+		t.Fatalf("active generation reads %q", row.Tip)
+	}
 }

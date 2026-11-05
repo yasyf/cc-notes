@@ -58,9 +58,10 @@ func (s *Store) AuthorityImportLog() (string, error) {
 	return path, os.MkdirAll(filepath.Dir(path), 0o750)
 }
 
-// ReindexIfMissing imports current entities when no authority exists, first
-// waiting out any rebuild already running, so it returns only once the
-// authority exists or the import failed.
+// ReindexIfMissing imports current entities when no authority exists, copying
+// the previous format's authority when one is present, first waiting out any
+// rebuild already running, so it returns only once the authority exists or the
+// import failed.
 func (s *Store) ReindexIfMissing(ctx context.Context) (err error) {
 	if err := s.CheckRecords(); err != nil {
 		return err
@@ -72,6 +73,9 @@ func (s *Store) ReindexIfMissing(ctx context.Context) (err error) {
 	defer func() { err = errors.Join(err, rebuild.Close()) }()
 	if s.AuthorityExists() {
 		return nil
+	}
+	if _, err := os.Stat(managed.LegacyPath(s.recordsCommonDir)); err == nil {
+		return s.importLegacyAuthority(ctx)
 	}
 	return s.rebuildAuthority(ctx, nil)
 }
@@ -196,17 +200,7 @@ func (s *Store) buildReindex(ctx context.Context, snapshot reindexSnapshot, poli
 		if _, err := root.CreateBucket([]byte("refs")); err != nil {
 			return err
 		}
-		generations, err := tx.CreateBucket([]byte(managed.QueryGenerations))
-		if err != nil {
-			return err
-		}
-		if _, err := generations.CreateBucket([]byte(managed.QueryObjects)); err != nil {
-			return err
-		}
-		if _, err := generations.CreateBucket([]byte(managed.QueryObjectIDs)); err != nil {
-			return err
-		}
-		if _, err := generations.CreateBucket([]byte(managed.QueryObjectRefs)); err != nil {
+		if _, err := tx.CreateBucket([]byte(managed.QueryGenerations)); err != nil {
 			return err
 		}
 		return applySource(tx, &sourcePublication{})

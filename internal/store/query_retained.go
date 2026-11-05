@@ -7,13 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"slices"
-	"sort"
 
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -25,170 +21,20 @@ import (
 
 var (
 	queryGenerationsBucket = []byte(managed.QueryGenerations)
-	queryObjectsBucket     = []byte(managed.QueryObjects)
+	queryVersionsBucket    = []byte("versions")
+	queryDeathsBucket      = []byte("deaths")
 	queryCurrentRoot       = []byte("current")
 	queryActiveRoot        = []byte("active")
-	queryRetiredRoot       = []byte("retired")
 )
 
 type queryGeneration struct {
-	Root model.SHA
-	Rows uint64
+	Number uint64
+	Rows   uint64
 }
-type queryGraphObjects struct {
-	ctx    context.Context
-	store  queryObjectStore
-	writes *queryObjectWrites
-}
+
 type retainedQuery struct {
-	index      *sourcegraph.Map
+	versions   *bolt.Bucket
 	generation queryGeneration
-}
-
-func (o queryGraphObjects) Context() context.Context { return o.ctx }
-func (o queryGraphObjects) Err() error               { return o.ctx.Err() }
-
-func queryObjectKind(data byte) (plumbing.ObjectType, error) {
-	switch data {
-	case byte(plumbing.BlobObject):
-		return plumbing.BlobObject, nil
-	case byte(plumbing.TreeObject):
-		return plumbing.TreeObject, nil
-	default:
-		return plumbing.InvalidObject, fmt.Errorf("invalid immutable query object type %d: %w", data, managed.ErrReindex)
-	}
-}
-
-func (o queryGraphObjects) read(hash model.SHA, kind plumbing.ObjectType) (*plumbing.MemoryObject, error) {
-	if err := o.Err(); err != nil {
-		return nil, err
-	}
-	data, err := o.store.get(hash)
-	if err != nil {
-		return nil, err
-	}
-	if data == nil && o.writes != nil {
-		data = o.writes.objects[hash]
-	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
-	}
-	actual, err := queryObjectKind(data[0])
-	if err != nil {
-		return nil, err
-	}
-	if actual != kind {
-		return nil, fmt.Errorf("missing immutable query object %s: %w", hash, managed.ErrReindex)
-	}
-	if plumbing.ComputeHash(kind, data[1:]).String() != string(hash) {
-		return nil, fmt.Errorf("corrupt immutable query object %s", hash)
-	}
-	value := &plumbing.MemoryObject{}
-	value.SetType(kind)
-	writer, err := value.Writer()
-	if err != nil {
-		return nil, err
-	}
-	_, err = writer.Write(data[1:])
-	err = errors.Join(err, writer.Close())
-	return value, err
-}
-
-func (o queryGraphObjects) put(value *plumbing.MemoryObject, children []object.TreeEntry) (model.SHA, error) {
-	if err := o.Err(); err != nil {
-		return "", err
-	}
-	reader, err := value.Reader()
-	if err != nil {
-		return "", err
-	}
-	data, err := io.ReadAll(reader)
-	err = errors.Join(err, reader.Close())
-	if err != nil {
-		return "", err
-	}
-	hash := model.SHA(value.Hash().String())
-	var kind byte
-	switch value.Type() {
-	case plumbing.BlobObject:
-		kind = byte(plumbing.BlobObject)
-	case plumbing.TreeObject:
-		kind = byte(plumbing.TreeObject)
-	default:
-		return "", fmt.Errorf("invalid immutable query object type %s", value.Type())
-	}
-	encoded := append([]byte{kind}, data...)
-	existing, err := o.store.get(hash)
-	if err != nil {
-		return "", err
-	}
-	if existing == nil {
-		existing = o.writes.objects[hash]
-	}
-	if existing != nil {
-		if !bytes.Equal(existing, encoded) {
-			return "", fmt.Errorf("immutable query object collision %s", hash)
-		}
-		return hash, nil
-	}
-	o.writes.objects[hash] = encoded
-	o.writes.order = append(o.writes.order, hash)
-	for _, entry := range children {
-		child := model.SHA(entry.Hash.String())
-		o.writes.refs[child]++
-		o.writes.children[hash] = append(o.writes.children[hash], child)
-	}
-	return hash, nil
-}
-
-func (o queryGraphObjects) ReadBlob(hash model.SHA) ([]byte, error) {
-	value, err := o.read(hash, plumbing.BlobObject)
-	if err != nil {
-		return nil, err
-	}
-	reader, err := value.Reader()
-	if err != nil {
-		return nil, err
-	}
-	data, err := io.ReadAll(reader)
-	return data, errors.Join(err, reader.Close())
-}
-
-func (o queryGraphObjects) WriteBlob(data []byte) (model.SHA, error) {
-	value := &plumbing.MemoryObject{}
-	value.SetType(plumbing.BlobObject)
-	writer, err := value.Writer()
-	if err != nil {
-		return "", err
-	}
-	_, err = writer.Write(data)
-	err = errors.Join(err, writer.Close())
-	if err != nil {
-		return "", err
-	}
-	return o.put(value, nil)
-}
-
-func (o queryGraphObjects) ReadTree(hash model.SHA) ([]object.TreeEntry, error) {
-	value, err := o.read(hash, plumbing.TreeObject)
-	if err != nil {
-		return nil, err
-	}
-	tree := &object.Tree{}
-	if err := tree.Decode(value); err != nil {
-		return nil, err
-	}
-	return tree.Entries, nil
-}
-
-func (o queryGraphObjects) WriteTree(entries []object.TreeEntry) (model.SHA, error) {
-	entries = slices.Clone(entries)
-	sort.Sort(object.TreeEntrySorter(entries))
-	value := &plumbing.MemoryObject{}
-	if err := (&object.Tree{Entries: entries}).Encode(value); err != nil {
-		return "", err
-	}
-	return o.put(value, entries)
 }
 
 func queryGenerationBinding(tx *bolt.Tx, binding string) *bolt.Bucket {
@@ -208,24 +54,7 @@ func readQueryGeneration(bucket *bolt.Bucket, key []byte) (queryGeneration, erro
 	if data == nil {
 		return generation, nil
 	}
-	if err := json.Unmarshal(data, &generation); err != nil {
-		return generation, err
-	}
-	if (generation.Root == "") != (generation.Rows == 0) {
-		return generation, managed.ErrReindex
-	}
-	return generation, nil
-}
-
-func popRetiredQueryGeneration(bucket *bolt.Bucket) (model.SHA, error) {
-	retired, err := readQueryGeneration(bucket, queryRetiredRoot)
-	if err != nil {
-		return "", err
-	}
-	if err := bucket.Delete(queryRetiredRoot); err != nil {
-		return "", err
-	}
-	return retired.Root, nil
+	return generation, json.Unmarshal(data, &generation)
 }
 
 func queryRowKey(id model.EntityID) string     { return "rows/" + string(id) }
@@ -333,93 +162,33 @@ func (b queryGenerationBatch) flush(ctx context.Context, tx *bolt.Tx) error {
 	if err != nil {
 		return err
 	}
-	objects, err := createQueryObjectStore(root)
-	if err != nil {
-		return err
-	}
-	_, err = root.CreateBucketIfNotExists([]byte(managed.QueryObjectRefs))
-	if err != nil {
-		return err
-	}
-	counts := newQueryReferenceCounts(root)
-	writes := &queryObjectWrites{objects: make(map[model.SHA][]byte), refs: make(map[model.SHA]uint64), children: make(map[model.SHA][]model.SHA)}
-	index := sourcegraph.New(queryGraphObjects{ctx: ctx, store: objects, writes: writes})
-	var released []model.SHA
-	var roots []model.SHA
 	for _, binding := range slices.Sorted(maps.Keys(b)) {
-		delta := b[binding]
 		bucket, err := root.CreateBucketIfNotExists(queryMetadataAtom(binding))
 		if err != nil {
 			return err
 		}
-		generation, err := readQueryGeneration(bucket, queryCurrentRoot)
-		if err != nil {
-			return err
-		}
-		retired, err := popRetiredQueryGeneration(bucket)
-		if err != nil {
-			return err
-		}
-		if retired != "" {
-			released = append(released, retired)
-		}
-		previousRoot := generation.Root
-		generation.Root, err = index.Apply(previousRoot, slices.Collect(maps.Values(delta.mutations)))
-		if err != nil {
-			return err
-		}
-		generation.Rows = generation.Rows + delta.added - delta.removed
-		if generation.Root != previousRoot {
-			if generation.Root != "" {
-				writes.refs[generation.Root]++
-			}
-			if previousRoot != "" {
-				released = append(released, previousRoot)
-			}
-		}
-		data, err := json.Marshal(generation)
-		if err != nil {
-			return err
-		}
-		if err := bucket.Put(queryCurrentRoot, data); err != nil {
-			return err
-		}
-		roots = append(roots, generation.Root)
-	}
-	created, err := writes.flush(ctx, objects, counts, roots)
-	if err != nil {
-		return err
-	}
-	for _, hash := range released {
-		if err := releaseQueryObject(ctx, objects, counts, hash); err != nil {
+		delta := b[binding]
+		if err := advanceQueryGeneration(ctx, bucket, slices.Collect(maps.Values(delta.mutations)), delta.added, delta.removed); err != nil {
 			return err
 		}
 	}
-	if err := pruneQueryObjects(ctx, objects, counts, created); err != nil {
-		return err
-	}
-	return counts.flush(ctx)
+	return ctx.Err()
 }
 
 func (q queryMetadataSource) retainedAt(ctx context.Context, tx *bolt.Tx, generation queryGeneration) (queryMetadataSource, bool, error) {
-	root := tx.Bucket(queryGenerationsBucket)
-	if root == nil {
-		return q, false, managed.ErrReindex
-	}
-	objects := queryObjectStoreAt(root)
-	if objects.objects == nil || objects.ids == nil {
-		return q, false, managed.ErrReindex
-	}
-	q.retained = &retainedQuery{index: sourcegraph.New(queryGraphObjects{ctx: ctx, store: objects}), generation: generation}
+	q.retained = &retainedQuery{versions: queryGenerationBinding(tx, q.binding).Bucket(queryVersionsBucket), generation: generation}
 	if uint64(len(q.tips)) != generation.Rows {
 		return q, false, nil
 	}
 	for id, tip := range q.tips {
-		data, found, err := q.retained.index.Get(generation.Root, queryRowKey(id))
+		if err := ctx.Err(); err != nil {
+			return q, false, err
+		}
+		data, err := q.retained.get(queryRowKey(id))
 		if err != nil {
 			return q, false, err
 		}
-		if !found {
+		if data == nil {
 			return q, false, nil
 		}
 		var row queryMetadata
@@ -437,8 +206,7 @@ func (q queryMetadataSource) row(tx *bolt.Tx, id model.EntityID) ([]byte, error)
 	if q.retained == nil {
 		return readQueryMetadata(tx, q.binding, id), nil
 	}
-	data, _, err := q.retained.index.Get(q.retained.generation.Root, queryRowKey(id))
-	return data, err
+	return q.retained.get(queryRowKey(id))
 }
 
 func (q queryMetadataSource) walk(tx *bolt.Tx, index, prefix []byte, includeDeleted bool, matches func(queryMetadata) bool, visit func(queryMetadata) error) error {
@@ -448,8 +216,8 @@ func (q queryMetadataSource) walk(tx *bolt.Tx, index, prefix []byte, includeDele
 	if !includeDeleted {
 		prefix = append(bytes.Clone(prefix), 0)
 	}
-	return q.retained.index.Prefix(q.retained.generation.Root, queryPostingKey(index, prefix), func(entry sourcegraph.Entry) error {
-		data, err := q.row(tx, model.EntityID(entry.Value))
+	return q.retained.prefix(queryPostingKey(index, prefix), func(id []byte) error {
+		data, err := q.row(tx, model.EntityID(id))
 		if err != nil {
 			return err
 		}
@@ -519,9 +287,6 @@ func readIndexedQuery[T any](ctx context.Context, q queryMetadataSource, read fu
 			return err
 		}
 		if advance {
-			if err := activateQueryGeneration(ctx, tx, bucket, current, active); err != nil {
-				return err
-			}
 			if err := bucket.Put(queryActiveRoot, bucket.Get(queryCurrentRoot)); err != nil {
 				return err
 			}
@@ -585,23 +350,6 @@ func (s *Store) validateManagedQueryGenerations(tx *bolt.Tx, updates []gitcmd.Re
 		}
 		if generation.Rows != count {
 			return managed.ErrReindex
-		}
-		if generation.Root != "" {
-			root := tx.Bucket(queryGenerationsBucket)
-			data, err := queryObjectStoreAt(root).get(generation.Root)
-			if err != nil {
-				return err
-			}
-			if data == nil {
-				return managed.ErrReindex
-			}
-			count, err := queryObjectRefCount(root, generation.Root)
-			if err != nil {
-				return err
-			}
-			if count == 0 {
-				return managed.ErrReindex
-			}
 		}
 	}
 	return nil

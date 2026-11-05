@@ -5,87 +5,14 @@ import (
 	"context"
 	"errors"
 
-	"github.com/go-git/go-git/v5/plumbing"
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/yasyf/cc-notes/internal/managed"
-	"github.com/yasyf/cc-notes/model"
 )
 
-func activateQueryGeneration(ctx context.Context, tx *bolt.Tx, binding *bolt.Bucket, current, active queryGeneration) error {
-	if current.Root == active.Root {
-		return nil
-	}
-	root := tx.Bucket(queryGenerationsBucket)
-	objects := queryObjectStoreAt(root)
-	counts := newQueryReferenceCounts(root)
-	retired, err := popRetiredQueryGeneration(binding)
-	if err != nil {
-		return err
-	}
-	if retired != "" {
-		if err := releaseQueryObject(ctx, objects, counts, retired); err != nil {
-			return err
-		}
-	}
-	if current.Root != "" {
-		if err := retainQueryObject(ctx, objects, counts, current.Root); err != nil {
-			return err
-		}
-	}
-	if active.Root != "" {
-		if err := binding.Put(queryRetiredRoot, bytes.Clone(binding.Get(queryActiveRoot))); err != nil {
-			return err
-		}
-	}
-	return counts.flush(ctx)
-}
-
-func copyQueryObject(ctx context.Context, source, objects queryObjectStore, counts *queryReferenceCounts, hash model.SHA) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	existing, err := objects.get(hash)
-	if err != nil {
-		return err
-	}
-	if existing != nil {
-		return nil
-	}
-	originalData, err := source.get(hash)
-	if err != nil {
-		return err
-	}
-	data := bytes.Clone(originalData)
-	if len(data) == 0 {
-		return managed.ErrReindex
-	}
-	if data[0] == byte(plumbing.TreeObject) {
-		original := queryGraphObjects{ctx: ctx, store: source}
-		entries, err := original.ReadTree(hash)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if err := copyQueryObject(ctx, source, objects, counts, model.SHA(entry.Hash.String())); err != nil {
-				return err
-			}
-		}
-		if err := objects.put(hash, data); err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if err := retainQueryObject(ctx, objects, counts, model.SHA(entry.Hash.String())); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if data[0] != byte(plumbing.BlobObject) || plumbing.ComputeHash(plumbing.BlobObject, data[1:]).String() != string(hash) {
-		return managed.ErrReindex
-	}
-	return objects.put(hash, data)
-}
+// preservedQueryGeneration numbers an active generation a reindex carries over:
+// it precedes the first generation the reindex builds, so its versions die there.
+const preservedQueryGeneration = 0
 
 func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination *bolt.Tx) (err error) {
 	db, err := s.openManaged(true)
@@ -101,44 +28,54 @@ func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination 
 			return nil
 		}
 		next := destination.Bucket(queryGenerationsBucket)
-		objects := queryObjectStoreAt(next)
-		counts := newQueryReferenceCounts(next)
-		err := old.ForEach(func(key, value []byte) error {
-			if value != nil || string(key) == managed.QueryObjects || string(key) == managed.QueryObjectRefs {
-				return nil
-			}
+		return old.ForEach(func(key, _ []byte) error {
 			binding := old.Bucket(key)
-			data := bytes.Clone(binding.Get(queryActiveRoot))
-			if data == nil {
+			if binding.Get(queryActiveRoot) == nil {
 				return nil
 			}
-			generation, err := readQueryGeneration(binding, queryActiveRoot)
+			active, err := readQueryGeneration(binding, queryActiveRoot)
 			if err != nil {
 				return err
-			}
-			if generation.Root != "" {
-				if err := copyQueryObject(ctx, queryObjectStoreAt(old), objects, counts, generation.Root); err != nil {
-					return err
-				}
-				if err := retainQueryObject(ctx, objects, counts, generation.Root); err != nil {
-					return err
-				}
 			}
 			target, err := next.CreateBucketIfNotExists(bytes.Clone(key))
 			if err != nil {
 				return err
 			}
+			versions, err := target.CreateBucketIfNotExists(queryVersionsBucket)
+			if err != nil {
+				return err
+			}
+			deaths, err := target.CreateBucketIfNotExists(queryDeathsBucket)
+			if err != nil {
+				return err
+			}
+			retained := &retainedQuery{versions: binding.Bucket(queryVersionsBucket), generation: active}
+			if err := retained.each(func(key, value []byte) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return preserveQueryVersion(versions, deaths, key, value)
+			}); err != nil {
+				return err
+			}
 			if target.Get(queryCurrentRoot) == nil {
-				empty := []byte(`{"Root":"","Rows":0}`)
-				if err := target.Put(queryCurrentRoot, empty); err != nil {
+				if err := putQueryGeneration(target, queryCurrentRoot, queryGeneration{Number: preservedQueryGeneration + 1}); err != nil {
 					return err
 				}
 			}
-			return target.Put(queryActiveRoot, data)
+			return putQueryGeneration(target, queryActiveRoot, queryGeneration{Number: preservedQueryGeneration, Rows: active.Rows})
 		})
-		if err != nil {
-			return err
-		}
-		return counts.flush(ctx)
 	})
+}
+
+func preserveQueryVersion(versions, deaths *bolt.Bucket, key, value []byte) error {
+	list, err := decodeQueryVersions(versions.Get(key))
+	if err != nil {
+		return err
+	}
+	list = append([]queryVersion{{born: preservedQueryGeneration, died: preservedQueryGeneration + 1, value: value}}, list...)
+	if err := deaths.Put(queryDeathKey(preservedQueryGeneration+1, key), nil); err != nil {
+		return err
+	}
+	return versions.Put(bytes.Clone(key), encodeQueryVersions(list))
 }
