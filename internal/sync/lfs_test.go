@@ -568,7 +568,7 @@ func TestSyncRemoveLastAttachmentUnbricksLFSlessRemote(t *testing.T) {
 // failed contract: the run's own refs publish (the report says so), the
 // error is non-nil, and it names the entity, the oid, the remediation, and
 // the plain-git-push hole that strands content.
-func TestSyncDownloadMissingObjectNamesEntity(t *testing.T) {
+func TestSyncSucceedsAndCountsAnAttachmentTheServerLacks(t *testing.T) {
 	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
@@ -583,25 +583,17 @@ func TestSyncDownloadMissingObjectNamesEntity(t *testing.T) {
 
 	own := createNote(t, b, "b's own note")
 	report, err := ccsync.Sync(t.Context(), b, "origin", false)
-	if err == nil {
-		t.Fatal("sync with server-lost object succeeded, want download error")
+	if err != nil {
+		t.Fatalf("sync whose push landed but whose attachment the server lacks = %v, want success", err)
 	}
-	if want := (ccsync.Report{Created: 1, Pushed: 1, Reconciled: 1, Rounds: 1}); report != want {
-		t.Fatalf("report = %+v, want %+v (pushes still reported alongside the error)", report, want)
+	if want := (ccsync.Report{Created: 1, Pushed: 1, Reconciled: 1, Rounds: 1, Absent: 1}); report != want {
+		t.Fatalf("report = %+v, want %+v", report, want)
 	}
 	if got := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, own.ID)); got == "" {
-		t.Errorf("B's own ref never published despite the download failure")
+		t.Errorf("B's own ref never published")
 	}
-	for _, fragment := range []string{
-		att.OID,
-		note.ID.Short(),
-		"--rm-attachment \"gone.bin\"",
-		"git push",
-		"cc-notes sync",
-	} {
-		if !strings.Contains(err.Error(), fragment) {
-			t.Errorf("error %q missing %q", err, fragment)
-		}
+	if hasObject(t, b, att.OID) {
+		t.Errorf("object %s present locally though the server lacks it", att.OID)
 	}
 }
 

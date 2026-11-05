@@ -96,6 +96,10 @@ type Report struct {
 	// Held counts the local refs the final round left unpushed because an
 	// attachment they reference failed to upload; every other ref pushed.
 	Held int
+	// Absent counts the referenced attachment objects the remote's LFS
+	// server does not hold, which the run could not download and does not
+	// fail on.
+	Absent int
 	// Deferred counts the remote refs the final round left unfolded and
 	// unpushed because the remote did not send objects their chains lack.
 	Deferred int
@@ -133,6 +137,7 @@ type engine struct {
 	clients    map[string]*lfs.Client
 	uploaded   int
 	downloaded int
+	absent     int
 	withheld   int
 	// blocked holds the refs referencing an attachment the current round
 	// failed to upload, uploadErr that failure, and held how many pending
@@ -222,6 +227,7 @@ func (r Report) plus(o Report) Report {
 		Withheld:      o.Withheld,
 		Held:          o.Held,
 		Deferred:      o.Deferred,
+		Absent:        o.Absent,
 	}
 }
 
@@ -324,6 +330,7 @@ func (e *engine) report(rounds, pushed int) Report {
 		Withheld:      e.withheld,
 		Held:          e.held,
 		Deferred:      len(e.deferred),
+		Absent:        e.absent,
 	}
 }
 
