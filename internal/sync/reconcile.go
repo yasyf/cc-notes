@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	stdsync "sync"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -169,13 +170,14 @@ func foldTracking(ctx context.Context, s *store.Store) error {
 	if err != nil {
 		return fmt.Errorf("fold tracking refs: %w", err)
 	}
+	var authority stdsync.Mutex
 	for _, remote := range remotes {
 		view, err := trackingView(ctx, s, syncNamespace+remote+"/")
 		if err != nil {
 			return fmt.Errorf("fold tracking refs: %w", err)
 		}
 		for ref, tip := range view {
-			if _, err := ensureContains(ctx, s, ref, tip); err != nil {
+			if _, err := ensureContains(ctx, s, &authority, ref, tip); err != nil {
 				return fmt.Errorf("fold tracking refs: %w", err)
 			}
 		}

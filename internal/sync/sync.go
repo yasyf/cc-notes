@@ -22,6 +22,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	stdsync "sync"
 	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
@@ -127,6 +128,11 @@ type engine struct {
 	remote string
 	full   bool
 	prefix string
+
+	// authority serializes the reconcile workers' authority reads and writes,
+	// so a worker waits on a sibling for as long as it takes instead of failing
+	// with managed.ErrBusy behind its own process.
+	authority stdsync.Mutex
 
 	created       atomic.Int64
 	fastForwarded atomic.Int64
@@ -631,7 +637,7 @@ func pushBatches(pending []string) [][]string {
 
 // ensure folds tip into ref and tallies what it took.
 func (e *engine) ensure(ctx context.Context, ref string, tip model.SHA) error {
-	result, err := ensureContains(ctx, e.store, ref, tip)
+	result, err := ensureContains(ctx, e.store, &e.authority, ref, tip)
 	if err != nil {
 		return err
 	}
@@ -650,7 +656,7 @@ func (e *engine) ensure(ctx context.Context, ref string, tip model.SHA) error {
 // ensureContains retries advance under compare-and-swap contention, with
 // jittered backoff between attempts, until ref's chain contains tip, failing
 // with ErrSyncContended when the ref never settles.
-func ensureContains(ctx context.Context, s *store.Store, ref string, tip model.SHA) (outcome, error) {
+func ensureContains(ctx context.Context, s *store.Store, authority *stdsync.Mutex, ref string, tip model.SHA) (outcome, error) {
 	var lastErr error
 	for attempt := range maxRefAttempts {
 		if attempt > 0 {
@@ -658,7 +664,7 @@ func ensureContains(ctx context.Context, s *store.Store, ref string, tip model.S
 				return refKept, err
 			}
 		}
-		result, err := advance(ctx, s, ref, tip)
+		result, err := advance(ctx, s, authority, ref, tip)
 		switch {
 		case err == nil:
 			return result, nil
@@ -673,11 +679,14 @@ func ensureContains(ctx context.Context, s *store.Store, ref string, tip model.S
 
 // advance makes one attempt at folding tip into ref: it creates a missing
 // ref at tip, keeps a ref already containing tip, fast-forwards a ref tip
-// descends from, and union-merges a diverged ref. A concurrent writer
-// surfaces as gitcmd.ErrCASMismatch for the caller to retry.
-func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (outcome, error) {
+// descends from, and union-merges a diverged ref, holding authority across
+// every authority read and write. A concurrent writer surfaces as
+// gitcmd.ErrCASMismatch for the caller to retry.
+func advance(ctx context.Context, s *store.Store, authority *stdsync.Mutex, ref string, tip model.SHA) (outcome, error) {
 	current, err := s.Repo.Tip(ctx, ref)
 	if errors.Is(err, gitobj.ErrRefNotFound) {
+		authority.Lock()
+		defer authority.Unlock()
 		if err := s.PublishRef(ctx, ref, tip, ""); err != nil {
 			return refKept, err
 		}
@@ -687,6 +696,8 @@ func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (ou
 		return refKept, err
 	}
 	if current == tip {
+		authority.Lock()
+		defer authority.Unlock()
 		managedTips, err := s.ManagedTips(ctx, ref)
 		if err != nil {
 			return refKept, err
@@ -716,6 +727,8 @@ func advance(ctx context.Context, s *store.Store, ref string, tip model.SHA) (ou
 	if err != nil {
 		return refKept, err
 	}
+	authority.Lock()
+	defer authority.Unlock()
 	if behind {
 		if err := s.PublishRef(ctx, ref, tip, current); err != nil {
 			return refKept, err
