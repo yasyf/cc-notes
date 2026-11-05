@@ -58,9 +58,6 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 		return err
 	}
 	if lock == nil {
-		if served, err := s.managedViewDuringReindex(read); served || err != nil {
-			return errors.Join(err, s.CheckRecords(), ctx.Err())
-		}
 		if lock, err = managed.Lock(ctx, s.recordsCommonDir, false); err != nil {
 			return err
 		}
@@ -80,7 +77,7 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 		if ready, err := s.reindexReady(); err != nil {
 			return errors.Join(err, lock.Close())
 		} else if ready {
-			if err := s.finishReindex(ctx, lock); err != nil {
+			if _, err := s.finishReindex(ctx, lock); err != nil {
 				return errors.Join(err, lock.Close())
 			}
 		}
@@ -123,25 +120,6 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 	}
 	err = db.View(read)
 	return errors.Join(err, s.CheckRecords(), ctx.Err())
-}
-
-func (s *Store) managedViewDuringReindex(read func(*bolt.Tx) error) (served bool, err error) {
-	if _, err := os.Stat(s.reindexBuildingPath()); err != nil {
-		return false, nil
-	}
-	db, err := s.openManaged(true)
-	if err != nil {
-		return false, nil
-	}
-	err = db.View(func(tx *bolt.Tx) error {
-		root, err := managedRoot(tx)
-		if err != nil || root.Get(managedPendingKey) != nil {
-			return err
-		}
-		served = true
-		return read(tx)
-	})
-	return served, errors.Join(err, db.Close())
 }
 
 // ManagedTips selects managed entity refs by prefix from one authority snapshot.
@@ -364,7 +342,7 @@ func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (
 	if ready, err := s.reindexReady(); err != nil {
 		return err
 	} else if ready {
-		if err := s.finishReindex(ctx, lock); err != nil {
+		if _, err := s.finishReindex(ctx, lock); err != nil {
 			return err
 		}
 	}

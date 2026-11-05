@@ -194,8 +194,11 @@ func OperationRef(id string) (string, error) {
 	return OperationPrefix + id, nil
 }
 
+// OperationPinPrefix holds the existing Git-LFS receipt retention branches.
+const OperationPinPrefix = "refs/heads/cc-notes-receipt-pins/"
+
 // OperationPinRef is the existing Git-LFS receipt retention branch.
-func OperationPinRef(id string) string { return "refs/heads/cc-notes-receipt-pins/" + id }
+func OperationPinRef(id string) string { return OperationPinPrefix + id }
 
 // StaleRevisionError carries the actual committed source fence.
 type StaleRevisionError struct{ Expected, Actual model.SHA }

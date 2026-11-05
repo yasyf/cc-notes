@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt names its topic.
 
 ### Fixed
+- **A reindex no longer blocks writers while it builds.** `cc-notes reindex`
+  builds the replacement authority from one snapshot of the refs without the
+  authority lock, then takes it only to adopt what writers published meanwhile
+  and swap the replacement in. A writer or reader that still times out names the
+  holder: `held for 30s by pid 4242 (cc-notes reindex) since <time>`, or
+  `by readers`. Two reindexes serialize on their own `rebuild.lock`. A rebuild
+  that mints a new source revision (drifted refs, a legacy import) and finds the
+  head moved discards its build and builds once more under the lock.
 - **A full listing no longer re-folds what it just cached.** The fold cache held
   16,384 entries, and a repository with about 14,000 live records filled its
   hint index so far that listing them evicted entries the same listing had

@@ -43,37 +43,17 @@ type importedSource struct {
 	live         model.SHA
 }
 
-func (s *Store) importSourceMetadata(ctx context.Context, publications *foldPublicationBatch, current map[string]model.SHA) (*importedSource, error) {
-	result := &importedSource{publications: publications, current: current, rows: make(map[string]queryMetadata), revisions: make(map[model.SHA]sourceindex.Revision), manifests: make(map[model.SHA]gitobj.SourceManifest), operations: make(map[string]sourceindex.Operation), applied: make(map[model.SHA][]string), legacyProofs: make(map[string]gitobj.SourceOperationProof), legacy: make(map[model.SHA]bool)}
+func (s *Store) importSourceMetadata(ctx context.Context, publications *foldPublicationBatch, snapshot reindexSnapshot) (*importedSource, error) {
+	result := &importedSource{publications: publications, current: snapshot.entities, rows: make(map[string]queryMetadata), revisions: make(map[model.SHA]sourceindex.Revision), manifests: make(map[model.SHA]gitobj.SourceManifest), operations: make(map[string]sourceindex.Operation), applied: make(map[model.SHA][]string), legacyProofs: make(map[string]gitobj.SourceOperationProof), legacy: make(map[model.SHA]bool)}
 	queue := make([]model.SHA, 0)
-	tip := func(ref string) (model.SHA, error) {
-		sha, err := s.Repo.Tip(ctx, ref)
-		if errors.Is(err, gitobj.ErrRefNotFound) {
-			return "", nil
-		}
-		return sha, err
-	}
-	var err error
-	result.head, err = tip(sourceindex.Ref)
-	if err != nil {
-		return nil, err
-	}
-	result.catalog, err = tip(sourceindex.CatalogRef)
-	if err != nil {
-		return nil, err
-	}
-	result.live, err = tip(sourceindex.LiveRef)
-	if err != nil {
-		return nil, err
-	}
+	result.head = snapshot.source[sourceindex.Ref]
+	result.catalog = snapshot.source[sourceindex.CatalogRef]
+	result.live = snapshot.source[sourceindex.LiveRef]
 	modernHead := result.head
 	if result.live != "" && modernHead == "" {
 		return nil, fmt.Errorf("reserved live source ref has no owned v2 head: %s", sourceindex.LiveRef)
 	}
-	legacyHead, err := tip(sourceindex.LegacyRef)
-	if err != nil {
-		return nil, err
-	}
+	legacyHead := snapshot.source[sourceindex.LegacyRef]
 	if result.head != "" {
 		queue = append(queue, result.head)
 	} else {
@@ -82,9 +62,12 @@ func (s *Store) importSourceMetadata(ctx context.Context, publications *foldPubl
 	if legacyHead != "" {
 		queue = append(queue, legacyHead)
 	}
-	operations, err := s.Repo.ListPrefix(ctx, sourceindex.OperationPrefix)
-	if err != nil {
-		return nil, err
+	var err error
+	operations := make(map[string]model.SHA)
+	for ref, sha := range snapshot.source {
+		if strings.HasPrefix(ref, sourceindex.OperationPrefix) {
+			operations[ref] = sha
+		}
 	}
 	operationRefs := make([]string, 0, len(operations))
 	for ref := range operations {
@@ -112,10 +95,7 @@ func (s *Store) importSourceMetadata(ctx context.Context, publications *foldPubl
 			result.legacyProofs[id] = proof
 			operation = sourceindex.Operation{Proof: sha, Previous: proof.Expected, Token: proof.Committed, Result: proof.Result, RequestDigest: proof.RequestDigest, ReceiptDigest: proof.ReceiptDigest, State: proof.State}
 		}
-		pin, err := tip(sourceindex.OperationPinRef(id))
-		if err != nil {
-			return nil, err
-		}
+		pin := snapshot.source[sourceindex.OperationPinRef(id)]
 		if operation.State == gitobj.SourceOperationApplied {
 			if pin != sha {
 				return nil, fmt.Errorf("import Applied receipt %s token %s: content pin differs", id, operation.Token)
