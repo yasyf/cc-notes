@@ -87,8 +87,8 @@ type Report struct {
 	// Downloaded counts attachment objects fetched from the remote LFS
 	// endpoint after the push loop converged.
 	Downloaded int
-	// Withheld counts the local entity refs the final round kept off the
-	// remote.
+	// Withheld counts the refs in this run's scope that exist on this clone and
+	// that the final round kept off the remote.
 	Withheld int
 	// Held counts the local refs the final round left unpushed because an
 	// attachment they reference failed to upload; every other ref pushed.
@@ -216,7 +216,6 @@ func Prefixed(ctx context.Context, s *store.Store, remote string, full bool, pre
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		e.withheld = len(secluded)
 		if err := e.uploadAttachments(ctx, secluded); err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
@@ -493,6 +492,12 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 	if len(add) > 0 {
 		if err := e.store.Seclude(ctx, add, nil); err != nil {
 			return nil, nil, err
+		}
+	}
+	e.withheld = 0
+	for ref := range local {
+		if secluded[ref] {
+			e.withheld++
 		}
 	}
 	slices.Sort(pending)

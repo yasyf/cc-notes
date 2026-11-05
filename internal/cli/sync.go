@@ -11,6 +11,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/version"
+	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
 
@@ -178,6 +179,7 @@ func newSyncCmd() *cobra.Command {
 					Uploaded:      report.Uploaded,
 					Downloaded:    report.Downloaded,
 					Withheld:      report.Withheld,
+					Defaulted:     defaultedDTOs(report.Defaulted),
 					Held:          report.Held,
 					Deferred:      report.Deferred,
 					Rounds:        report.Rounds,
@@ -204,6 +206,11 @@ func newSyncCmd() *cobra.Command {
 					continue
 				}
 				if _, perr := fmt.Fprintf(out, "%s: %d\n", line.verb, line.count); perr != nil {
+					return perr
+				}
+			}
+			for _, one := range report.Defaulted {
+				if _, perr := fmt.Fprintf(out, "kept local by default: %s %s, %s; publish it with `ccn local unmark %s`\n", one.Kind, shortID(one.ID), one.Reason, shortID(one.ID)); perr != nil {
 					return perr
 				}
 			}
@@ -235,14 +242,29 @@ func newVersionCmd() *cobra.Command {
 
 // syncDTO fixes the JSON field order for a sync report.
 type syncDTO struct {
-	Created       int `json:"created"`
-	FastForwarded int `json:"fast_forwarded"`
-	Merged        int `json:"merged"`
-	Pushed        int `json:"pushed"`
-	Uploaded      int `json:"uploaded"`
-	Downloaded    int `json:"downloaded"`
-	Withheld      int `json:"withheld"`
-	Held          int `json:"held"`
-	Deferred      int `json:"deferred"`
-	Rounds        int `json:"rounds"`
+	Created       int            `json:"created"`
+	FastForwarded int            `json:"fast_forwarded"`
+	Merged        int            `json:"merged"`
+	Pushed        int            `json:"pushed"`
+	Uploaded      int            `json:"uploaded"`
+	Downloaded    int            `json:"downloaded"`
+	Withheld      int            `json:"withheld"`
+	Defaulted     []defaultedDTO `json:"defaulted,omitempty"`
+	Held          int            `json:"held"`
+	Deferred      int            `json:"deferred"`
+	Rounds        int            `json:"rounds"`
+}
+
+type defaultedDTO struct {
+	Kind   model.Kind `json:"kind"`
+	ID     string     `json:"id"`
+	Reason string     `json:"reason"`
+}
+
+func defaultedDTOs(entities []notes.WithheldEntity) []defaultedDTO {
+	dtos := make([]defaultedDTO, len(entities))
+	for i, e := range entities {
+		dtos[i] = defaultedDTO{Kind: e.Kind, ID: string(e.ID), Reason: e.Reason}
+	}
+	return dtos
 }

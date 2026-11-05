@@ -29,7 +29,8 @@ type SyncOptions struct {
 // Reconciled counts the refs handed to the fold across every round; Rounds
 // counts fetch-reconcile-push rounds run, 1 being a clean pass; Uploaded and
 // Downloaded count attachment objects moved to and from the remote LFS endpoint;
-// Withheld counts the local entity refs kept off the remote; Held counts the
+// Withheld counts the refs in scope kept off the remote; Defaulted lists those
+// a local default kept off it, which no remote has; Held counts the
 // local refs left unpushed because an attachment they reference failed to
 // upload; Deferred counts
 // the remote refs left unfolded because the remote did not send their objects.
@@ -44,6 +45,7 @@ type SyncReport struct {
 	Uploaded      int
 	Downloaded    int
 	Withheld      int
+	Defaulted     []WithheldEntity
 	Held          int
 	Deferred      int
 }
@@ -90,6 +92,11 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 			syncErr = err
 		}
 	}
+	defaulted, err := c.defaultedEntities(ctx, cmp.Or(opts.Prefix, ccsync.Namespace))
+	if err != nil {
+		return report, errors.Join(syncErr, adoptErr, err)
+	}
+	report.Defaulted = defaulted
 	if syncErr == nil && report.Created+report.FastForwarded+report.Merged+report.Pushed > 0 {
 		if _, err := c.tidy(ctx); err != nil {
 			return report, fmt.Errorf("tidy after sync: %w", err)

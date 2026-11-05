@@ -40,15 +40,9 @@ func (c *Client) LocalEntities(ctx context.Context) ([]LocalEntity, error) {
 	if err != nil {
 		return nil, err
 	}
-	tracked, err := c.s.RecordsGit.Refs(ctx, "refs/cc-notes-sync/")
+	published, err := c.publishedRefs(ctx)
 	if err != nil {
 		return nil, err
-	}
-	published := map[string]bool{}
-	for name := range tracked {
-		if _, canonical, err := refs.ParseTracking(name); err == nil {
-			published[canonical] = true
-		}
 	}
 	var out []LocalEntity
 	for ref := range tips {
@@ -70,6 +64,64 @@ func (c *Client) LocalEntities(ctx context.Context) ([]LocalEntity, error) {
 		}
 	}
 	slices.SortFunc(out, func(a, b LocalEntity) int {
+		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.ID, b.ID))
+	})
+	return out, nil
+}
+
+// WithheldEntity is one entity a local default keeps off every remote, and why.
+type WithheldEntity struct {
+	Kind   model.Kind
+	ID     model.EntityID
+	Reason string
+}
+
+func (c *Client) publishedRefs(ctx context.Context) (map[string]bool, error) {
+	tracked, err := c.s.RecordsGit.Refs(ctx, "refs/cc-notes-sync/")
+	if err != nil {
+		return nil, err
+	}
+	published := map[string]bool{}
+	for name := range tracked {
+		if _, canonical, err := refs.ParseTracking(name); err == nil {
+			published[canonical] = true
+		}
+	}
+	return published, nil
+}
+
+func (c *Client) defaultedEntities(ctx context.Context, prefix string) ([]WithheldEntity, error) {
+	secluded, err := c.s.Secluded()
+	if err != nil {
+		return nil, err
+	}
+	tips, err := c.s.ManagedTips(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	published, err := c.publishedRefs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []WithheldEntity
+	for ref := range tips {
+		if !secluded[ref] || published[ref] {
+			continue
+		}
+		reason, err := c.s.LocalReason(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		if !store.Defaulted(reason) {
+			continue
+		}
+		parsed, err := refs.Parse(ref)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, WithheldEntity{Kind: parsed.Kind, ID: parsed.ID, Reason: reason})
+	}
+	slices.SortFunc(out, func(a, b WithheldEntity) int {
 		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.ID, b.ID))
 	})
 	return out, nil
