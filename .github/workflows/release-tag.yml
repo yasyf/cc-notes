@@ -1,0 +1,30 @@
+name: Release tag
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  release:
+    uses: yasyf/cc-skills/.github/workflows/plugin-release-tag.yml@25d2bccaf0d1d1f19aad8847ab824d54b7578534
+    with:
+      release-workflow: release.yml
+      script-ref: 25d2bccaf0d1d1f19aad8847ab824d54b7578534
+      paths: |
+        cmd
+        internal
+        model
+        notes
+        web
+        plugin/*.go
+        plugin/workflows
+        go.mod
+        go.sum
+        :(exclude,glob)**/*_test.go
+        :(exclude,glob)**/testdata/**
