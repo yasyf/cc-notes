@@ -100,6 +100,10 @@ type Report struct {
 	// server does not hold, which the run could not download and does not
 	// fail on.
 	Absent int
+	// Stalled names the attachment object whose download moved no bytes for
+	// the stall bound; the run downloaded nothing after it and does not fail on
+	// it, and the next sync downloads it and the rest.
+	Stalled string
 	// Deferred counts the remote refs the final round left unfolded and
 	// unpushed because the remote did not send objects their chains lack.
 	Deferred int
@@ -138,6 +142,7 @@ type engine struct {
 	uploaded   int
 	downloaded int
 	absent     int
+	stalled    string
 	withheld   int
 	// blocked holds the refs referencing an attachment the current round
 	// failed to upload, uploadErr that failure, and held how many pending
@@ -228,6 +233,7 @@ func (r Report) plus(o Report) Report {
 		Held:          o.Held,
 		Deferred:      o.Deferred,
 		Absent:        o.Absent,
+		Stalled:       o.Stalled,
 	}
 }
 
@@ -331,6 +337,7 @@ func (e *engine) report(rounds, pushed int) Report {
 		Held:          e.held,
 		Deferred:      len(e.deferred),
 		Absent:        e.absent,
+		Stalled:       e.stalled,
 	}
 }
 

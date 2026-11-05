@@ -34,7 +34,8 @@ type SyncOptions struct {
 // local refs left unpushed because an attachment they reference failed to
 // upload; Deferred counts
 // the remote refs left unfolded because the remote did not send their objects;
-// Absent counts referenced attachment objects the remote's LFS server lacks.
+// Absent counts referenced attachment objects the remote's LFS server lacks;
+// Stalled names an attachment whose download stalled, the first remote's.
 // When Sync fans out over several remotes, every field is the sum across them.
 type SyncReport struct {
 	Created       int
@@ -50,6 +51,7 @@ type SyncReport struct {
 	Held          int
 	Deferred      int
 	Absent        int
+	Stalled       string
 }
 
 // Sync converges the repository's refs/cc-notes/* namespace with one or more
@@ -91,6 +93,7 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		report.Held += rep.Held
 		report.Deferred += rep.Deferred
 		report.Absent += rep.Absent
+		report.Stalled = cmp.Or(report.Stalled, rep.Stalled)
 		if err != nil && syncErr == nil {
 			syncErr = err
 		}

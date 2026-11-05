@@ -169,6 +169,11 @@ func newSyncCmd() *cobra.Command {
 			if syncErr != nil && report.Rounds == 0 {
 				return syncErr
 			}
+			if report.Stalled != "" {
+				if _, perr := fmt.Fprintf(cmd.ErrOrStderr(), "warning: the download of attachment %s stalled, so this sync downloaded no more attachments after its push; the next `cc-notes sync` downloads the rest\n", report.Stalled); perr != nil {
+					return perr
+				}
+			}
 			if report.Absent > 0 {
 				if _, perr := fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d referenced attachments are absent on the remote's LFS server and were not downloaded; run `cc-notes sync` where they were written\n", report.Absent); perr != nil {
 					return perr
@@ -188,6 +193,7 @@ func newSyncCmd() *cobra.Command {
 					Held:          report.Held,
 					Deferred:      report.Deferred,
 					Absent:        report.Absent,
+					Stalled:       report.Stalled,
 					Rounds:        report.Rounds,
 				}); perr != nil {
 					return perr
@@ -259,6 +265,7 @@ type syncDTO struct {
 	Held          int            `json:"held"`
 	Deferred      int            `json:"deferred"`
 	Absent        int            `json:"absent"`
+	Stalled       string         `json:"stalled,omitempty"`
 	Rounds        int            `json:"rounds"`
 }
 
