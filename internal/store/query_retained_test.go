@@ -147,9 +147,19 @@ func queryGraphEntries(index *sourcegraph.Map, root model.SHA) ([]sourcegraph.En
 
 // assertQueryObjectsExactlyReachable fails on a stored node no retained generation
 // reaches, a leak, and on a reachable node missing from the store.
-func assertQueryObjectsExactlyReachable(t *testing.T, tx *bolt.Tx, bindings ...*bolt.Bucket) int {
+func assertQueryObjectsExactlyReachable(t *testing.T, tx *bolt.Tx) int {
 	t.Helper()
-	objects := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
+	root := tx.Bucket(queryGenerationsBucket)
+	objects := queryObjectStoreAt(root)
+	var bindings []*bolt.Bucket
+	if err := root.ForEach(func(key, value []byte) error {
+		if value == nil && string(key) != managed.QueryObjects {
+			bindings = append(bindings, root.Bucket(key))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	reachable := make(map[model.SHA]struct{})
 	for _, binding := range bindings {
 		for _, slot := range [][]byte{queryCurrentRoot, queryActiveRoot, queryRetiredRoot} {
@@ -252,15 +262,11 @@ func TestRetainedMetadataReclaimsRetiredAndTransientObjects(t *testing.T) {
 	if _, _, hit, err := s.IndexedSupersession(t.Context(), model.KindDoc, id); err != nil || !hit {
 		t.Fatalf("initial = %v %v", hit, err)
 	}
-	source, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
 	count := func() int {
 		t.Helper()
 		total := 0
 		err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
-			total = assertQueryObjectsExactlyReachable(t, tx, queryGenerationBinding(tx, source.binding))
+			total = assertQueryObjectsExactlyReachable(t, tx)
 			return nil
 		})
 		if err != nil {
@@ -294,7 +300,7 @@ func TestReindexCarriesTheActiveGenerationUntilItRetires(t *testing.T) {
 		t.Helper()
 		if err := s.managedView(t.Context(), func(tx *bolt.Tx) error {
 			binding := queryGenerationBinding(tx, source.binding)
-			assertQueryObjectsExactlyReachable(t, tx, binding)
+			assertQueryObjectsExactlyReachable(t, tx)
 			generation, err := readQueryGeneration(binding, queryActiveRoot)
 			if err != nil {
 				return err
@@ -347,7 +353,7 @@ func TestWritesWithoutReadersFreeIntermediateGraphsAtOnce(t *testing.T) {
 		total := 0
 		if err := db.View(func(tx *bolt.Tx) error {
 			total = queryObjectStoreAt(tx.Bucket(queryGenerationsBucket)).objects.Stats().KeyN
-			assertQueryObjectsExactlyReachable(t, tx, queryGenerationBinding(tx, "binding"))
+			assertQueryObjectsExactlyReachable(t, tx)
 			return nil
 		}); err != nil {
 			t.Fatal(err)
@@ -386,11 +392,9 @@ func TestQueryGenerationBatchMatchesPerRowReplacement(t *testing.T) {
 			root := tx.Bucket(queryGenerationsBucket)
 			objects := queryObjectStoreAt(root)
 			index := sourcegraph.New(queryGraphObjects{ctx: t.Context(), store: objects})
-			var bindings []*bolt.Bucket
 			for i := range 3 {
 				name := fmt.Sprintf("binding-%d", i)
 				binding := root.Bucket(queryMetadataAtom(name))
-				bindings = append(bindings, binding)
 				generation, err := readQueryGeneration(binding, queryCurrentRoot)
 				if err != nil {
 					return err
@@ -404,7 +408,7 @@ func TestQueryGenerationBatchMatchesPerRowReplacement(t *testing.T) {
 					state[name+"/"+entry.Key] = string(entry.Value)
 				}
 			}
-			assertQueryObjectsExactlyReachable(t, tx, bindings...)
+			assertQueryObjectsExactlyReachable(t, tx)
 			return nil
 		}); err != nil {
 			t.Fatal(err)
@@ -643,7 +647,7 @@ func TestQueryRetirementReducesCombinedPageAllocation(t *testing.T) {
 				return err
 			}
 			objects := queryObjectStoreAt(tx.Bucket(queryGenerationsBucket))
-			assertQueryObjectsExactlyReachable(t, tx, binding)
+			assertQueryObjectsExactlyReachable(t, tx)
 			measured.entries, err = queryGraphEntries(sourcegraph.New(queryGraphObjects{ctx: t.Context(), store: objects}), measured.current.Root)
 			return err
 		}); err != nil {
