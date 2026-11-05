@@ -52,6 +52,35 @@ func TestLocalEntitiesStayOffTheRemote(t *testing.T) {
 	}
 }
 
+func TestWithheldCountsLiveRefsInScope(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, a.Git.Dir, "commit", "-q", "--allow-empty", "-m", "init")
+	if _, err := ccsync.Install(t.Context(), a.Git, "origin"); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	appendOps(t, a, refs.For(model.KindNote, createNote(t, a, "brief").ID), model.AddTag{Tag: "lane-brief"})
+	chosen := refs.For(model.KindNote, createNote(t, a, "chosen").ID)
+	appendOps(t, a, chosen, model.AddTag{Tag: store.LocalLabel})
+	gone := refs.For(model.KindNote, "0123456789012345678901234567890123456789")
+	if err := a.Seclude(t.Context(), []string{gone}, nil); err != nil {
+		t.Fatalf("Seclude: %v", err)
+	}
+
+	report := sync(t, a)
+	if report.Withheld != 2 {
+		t.Errorf("Withheld = %d, want the 2 live local refs, not the entry naming no ref", report.Withheld)
+	}
+
+	scoped, err := ccsync.Prefixed(t.Context(), a, "origin", false, chosen)
+	if err != nil {
+		t.Fatalf("Prefixed: %v", err)
+	}
+	if scoped.Withheld != 1 {
+		t.Errorf("scoped sync withheld %d, want only its own ref", scoped.Withheld)
+	}
+}
+
 func TestPublishedEntityRefusesLocalAttachment(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")

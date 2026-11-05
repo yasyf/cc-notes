@@ -3,6 +3,8 @@ package notes_test
 import (
 	"context"
 	"errors"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
@@ -67,6 +69,42 @@ func TestSyncSingleRemotePushes(t *testing.T) {
 	}
 }
 
+func TestSyncNamesOnlyTheRefsADefaultKeptOffEveryRemote(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	gittest.Git(t, dir, "remote", "add", "origin", gittest.InitBare(t))
+
+	if _, err := c.Sync(ctx, notes.SyncOptions{Remote: "origin"}); err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	published := storeCreate(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "published"}).(model.Note)
+	if _, err := c.Sync(ctx, notes.SyncOptions{Remote: "origin"}); err != nil {
+		t.Fatalf("publishing Sync: %v", err)
+	}
+	defaulted := storeCreate(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "brief", Tags: []string{"lane-brief"}}).(model.Note)
+	chosen := storeCreate(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "chosen", Tags: []string{store.LocalLabel}}).(model.Note)
+
+	report, err := c.Sync(ctx, notes.SyncOptions{Remote: "origin"})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	want := []notes.WithheldEntity{{Kind: model.KindNote, ID: defaulted.ID, Reason: "label lane-brief"}}
+	if !slices.Equal(report.Defaulted, want) {
+		t.Errorf("Defaulted = %+v, want %+v; published %s and explicit %s stay unnamed", report.Defaulted, want, published.ID, chosen.ID)
+	}
+	if report.Withheld != 2 {
+		t.Errorf("Withheld = %d, want the default and the explicit local", report.Withheld)
+	}
+
+	scoped, err := c.Sync(ctx, notes.SyncOptions{Remote: "origin", Prefix: refs.For(model.KindNote, chosen.ID)})
+	if err != nil {
+		t.Fatalf("scoped Sync: %v", err)
+	}
+	if len(scoped.Defaulted) != 0 {
+		t.Errorf("scoped Defaulted = %+v, want none outside its prefix", scoped.Defaulted)
+	}
+}
+
 func TestSyncDefaultFansOutOverWiredRemotes(t *testing.T) {
 	c, dir := newClient(t)
 	ctx := t.Context()
@@ -106,7 +144,7 @@ func TestSyncUnknownRemote(t *testing.T) {
 	if !errors.Is(err, ccsync.ErrRemoteNotFound) {
 		t.Fatalf("Sync(ghost) err = %v, want ErrRemoteNotFound", err)
 	}
-	if (report != notes.SyncReport{}) {
+	if !reflect.DeepEqual(report, notes.SyncReport{}) {
 		t.Errorf("report = %+v, want zero when the remote never resolved", report)
 	}
 }
