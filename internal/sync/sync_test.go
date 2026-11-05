@@ -1480,3 +1480,23 @@ func TestSyncPushesEveryRefButOneTheRemoteRefuses(t *testing.T) {
 		t.Fatalf("remote holds %s after refusing it", refused)
 	}
 }
+
+func TestSyncReconcileWorkersNeverWaitOutTheirOwnProcess(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	const notes = 24
+	for i := range notes {
+		createNote(t, a, fmt.Sprintf("note %d", i))
+	}
+	sync(t, a)
+	t.Setenv(managed.LockWaitEnv, "1ms")
+
+	report, err := ccsync.Sync(t.Context(), b, "origin", false)
+	if err != nil {
+		t.Fatalf("Sync folding %d new refs with an authority wait of 1ms = %v, want its reconcile workers to queue on each other", notes, err)
+	}
+	if report.Created != notes {
+		t.Fatalf("Sync created %d refs, want %d", report.Created, notes)
+	}
+}
