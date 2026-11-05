@@ -134,7 +134,9 @@ func (o queryGraphObjects) put(value *plumbing.MemoryObject, children []object.T
 	o.writes.objects[hash] = encoded
 	o.writes.order = append(o.writes.order, hash)
 	for _, entry := range children {
-		o.writes.refs[model.SHA(entry.Hash.String())]++
+		child := model.SHA(entry.Hash.String())
+		o.writes.refs[child]++
+		o.writes.children[hash] = append(o.writes.children[hash], child)
 	}
 	return hash, nil
 }
@@ -340,9 +342,10 @@ func (b queryGenerationBatch) flush(ctx context.Context, tx *bolt.Tx) error {
 		return err
 	}
 	counts := newQueryReferenceCounts(root)
-	writes := &queryObjectWrites{objects: make(map[model.SHA][]byte), refs: make(map[model.SHA]uint64)}
+	writes := &queryObjectWrites{objects: make(map[model.SHA][]byte), refs: make(map[model.SHA]uint64), children: make(map[model.SHA][]model.SHA)}
 	index := sourcegraph.New(queryGraphObjects{ctx: ctx, store: objects, writes: writes})
 	var released []model.SHA
+	var roots []model.SHA
 	for _, binding := range slices.Sorted(maps.Keys(b)) {
 		delta := b[binding]
 		bucket, err := root.CreateBucketIfNotExists(queryMetadataAtom(binding))
@@ -381,8 +384,9 @@ func (b queryGenerationBatch) flush(ctx context.Context, tx *bolt.Tx) error {
 		if err := bucket.Put(queryCurrentRoot, data); err != nil {
 			return err
 		}
+		roots = append(roots, generation.Root)
 	}
-	created, err := writes.flush(ctx, objects, counts)
+	created, err := writes.flush(ctx, objects, counts, roots)
 	if err != nil {
 		return err
 	}

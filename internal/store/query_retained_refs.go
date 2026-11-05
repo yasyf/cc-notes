@@ -114,13 +114,44 @@ func (counts *queryReferenceCounts) flush(ctx context.Context) error {
 }
 
 type queryObjectWrites struct {
-	objects map[model.SHA][]byte
-	refs    map[model.SHA]uint64
-	order   []model.SHA
+	objects  map[model.SHA][]byte
+	refs     map[model.SHA]uint64
+	order    []model.SHA
+	children map[model.SHA][]model.SHA
 }
 
-func (w *queryObjectWrites) flush(ctx context.Context, objects queryObjectStore, counts *queryReferenceCounts) ([]model.SHA, error) {
-	if err := objects.putBatch(ctx, w.order, w.objects); err != nil {
+func (w *queryObjectWrites) breadthFirst(ctx context.Context, roots []model.SHA) ([]model.SHA, error) {
+	order := make([]model.SHA, 0, len(w.order))
+	seen := make(map[model.SHA]bool, len(w.order))
+	add := func(hash model.SHA) {
+		if !seen[hash] && w.objects[hash] != nil {
+			seen[hash] = true
+			order = append(order, hash)
+		}
+	}
+	for _, hash := range roots {
+		add(hash)
+	}
+	for i := 0; i < len(order); i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		for _, child := range w.children[order[i]] {
+			add(child)
+		}
+	}
+	for _, hash := range w.order {
+		add(hash)
+	}
+	return order, ctx.Err()
+}
+
+func (w *queryObjectWrites) flush(ctx context.Context, objects queryObjectStore, counts *queryReferenceCounts, roots []model.SHA) ([]model.SHA, error) {
+	order, err := w.breadthFirst(ctx, roots)
+	if err != nil {
+		return nil, err
+	}
+	if err := objects.putBatch(ctx, order, w.objects); err != nil {
 		return nil, err
 	}
 	for hash, refs := range w.refs {
