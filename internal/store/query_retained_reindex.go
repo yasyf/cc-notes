@@ -3,90 +3,63 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 
-	"github.com/go-git/go-git/v5/plumbing"
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/yasyf/cc-notes/internal/managed"
+	"github.com/yasyf/cc-notes/internal/sourcegraph"
 	"github.com/yasyf/cc-notes/model"
 )
 
-func activateQueryGeneration(ctx context.Context, tx *bolt.Tx, binding *bolt.Bucket, current, active queryGeneration) error {
-	if current.Root == active.Root {
-		return nil
-	}
-	root := tx.Bucket(queryGenerationsBucket)
-	objects := queryObjectStoreAt(root)
-	counts := newQueryReferenceCounts(root)
-	retired, err := popRetiredQueryGeneration(binding)
+// copyQueryGraph rebuilds a graph in a new authority and returns its root with the
+// packed IDs of its nodes. Nodes name their children by ID, so a graph moves
+// between authorities by its entries rather than by its bytes.
+func copyQueryGraph(ctx context.Context, source, objects queryObjectStore, root model.SHA) (model.SHA, []byte, error) {
+	index := sourcegraph.New(queryGraphObjects{ctx: ctx, store: source})
+	count, err := index.Count(root)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	if retired != "" {
-		if err := releaseQueryObject(ctx, objects, counts, retired); err != nil {
-			return err
-		}
-	}
-	if current.Root != "" {
-		if err := retainQueryObject(ctx, objects, counts, current.Root); err != nil {
-			return err
-		}
-	}
-	if active.Root != "" {
-		if err := binding.Put(queryRetiredRoot, bytes.Clone(binding.Get(queryActiveRoot))); err != nil {
-			return err
-		}
-	}
-	return counts.flush(ctx)
-}
-
-func copyQueryObject(ctx context.Context, source, objects queryObjectStore, counts *queryReferenceCounts, hash model.SHA) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	existing, err := objects.get(hash)
+	entries, err := index.Range(root, 0, int(count)) //nolint:gosec // G115: every entry already sits in this authority.
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	if existing != nil {
-		return nil
+	mutations := make([]sourcegraph.Mutation, len(entries))
+	for i, entry := range entries {
+		mutations[i] = sourcegraph.Mutation{Key: entry.Key, Value: entry.Value}
 	}
-	originalData, err := source.get(hash)
+	writes := newQueryObjectWrites()
+	copied, err := sourcegraph.New(queryGraphObjects{ctx: ctx, store: objects, writes: writes}).Apply("", mutations)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	data := bytes.Clone(originalData)
-	if len(data) == 0 {
-		return managed.ErrReindex
+	if _, err := writes.flush(ctx, objects, []model.SHA{copied}); err != nil {
+		return "", nil, err
 	}
-	if data[0] == byte(plumbing.TreeObject) {
-		original := queryGraphObjects{ctx: ctx, store: source}
-		entries, err := original.ReadTree(hash)
+	var ids []byte
+	stack := []model.SHA{copied}
+	for len(stack) > 0 {
+		handle := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		children, err := queryObjectChildren(ctx, objects, handle)
 		if err != nil {
-			return err
+			return "", nil, err
 		}
-		for _, entry := range entries {
-			if err := copyQueryObject(ctx, source, objects, counts, model.SHA(entry.Hash.String())); err != nil {
-				return err
-			}
+		stack = append(stack, children...)
+		key, err := queryObjectKey(handle)
+		if err != nil {
+			return "", nil, err
 		}
-		if err := objects.put(hash, data); err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if err := retainQueryObject(ctx, objects, counts, model.SHA(entry.Hash.String())); err != nil {
-				return err
-			}
-		}
-		return nil
+		ids = append(ids, key...)
 	}
-	if data[0] != byte(plumbing.BlobObject) || plumbing.ComputeHash(plumbing.BlobObject, data[1:]).String() != string(hash) {
-		return managed.ErrReindex
-	}
-	return objects.put(hash, data)
+	return copied, ids, nil
 }
 
+// preserveActiveQueryGenerations carries each pinned generation across a reindex.
+// Its nodes go straight on the dead list, since no later graph shares them, and
+// are freed when the generation retires.
 func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination *bolt.Tx) (err error) {
 	db, err := s.openManaged(true)
 	if errors.Is(err, managed.ErrReindex) {
@@ -102,27 +75,25 @@ func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination 
 		}
 		next := destination.Bucket(queryGenerationsBucket)
 		objects := queryObjectStoreAt(next)
-		counts := newQueryReferenceCounts(next)
-		err := old.ForEach(func(key, value []byte) error {
-			if value != nil || string(key) == managed.QueryObjects || string(key) == managed.QueryObjectRefs {
+		return old.ForEach(func(key, value []byte) error {
+			if value != nil || string(key) == managed.QueryObjects {
 				return nil
 			}
 			binding := old.Bucket(key)
-			data := bytes.Clone(binding.Get(queryActiveRoot))
-			if data == nil {
+			if binding.Get(queryActiveRoot) == nil {
 				return nil
 			}
 			generation, err := readQueryGeneration(binding, queryActiveRoot)
 			if err != nil {
 				return err
 			}
+			var ids []byte
 			if generation.Root != "" {
-				if err := copyQueryObject(ctx, queryObjectStoreAt(old), objects, counts, generation.Root); err != nil {
+				generation.Root, ids, err = copyQueryGraph(ctx, queryObjectStoreAt(old), objects, generation.Root)
+				if err != nil {
 					return err
 				}
-				if err := retainQueryObject(ctx, objects, counts, generation.Root); err != nil {
-					return err
-				}
+				generation.NextID = objects.objects.Sequence() + 1
 			}
 			target, err := next.CreateBucketIfNotExists(bytes.Clone(key))
 			if err != nil {
@@ -134,11 +105,14 @@ func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination 
 					return err
 				}
 			}
-			return target.Put(queryActiveRoot, data)
+			data, err := json.Marshal(generation)
+			if err != nil {
+				return err
+			}
+			if err := target.Put(queryActiveRoot, data); err != nil {
+				return err
+			}
+			return appendQueryDeadObjects(target, ids)
 		})
-		if err != nil {
-			return err
-		}
-		return counts.flush(ctx)
 	})
 }
