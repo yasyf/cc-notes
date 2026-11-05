@@ -5,6 +5,7 @@ name: Release
 # it to the tap through the shared homebrew-tap actions.
 
 on:
+  workflow_dispatch:
   push:
     tags: ["v*"]
 
