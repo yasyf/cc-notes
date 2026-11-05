@@ -4998,7 +4998,7 @@ def prompt_event(
     *, state: Path | None = None, trunk: str | None = None,
 ):
     monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
-    monkeypatch.setenv("CAPTAIN_HOOK_STATE_DIR", str(state or tmp_path / "state"))
+    monkeypatch.setattr(common, "state_root", lambda: state or tmp_path / "state")
     evt = mock_event("UserPromptSubmit", prompt=prompt, session_dir=tmp_path)
     evt._raw["session_id"] = tmp_path.name
     listings = {BRANCH_ANSWER_LIST: json.dumps(candidates), ANSWER_LIST: json.dumps([*(foreign or []), *candidates])}
