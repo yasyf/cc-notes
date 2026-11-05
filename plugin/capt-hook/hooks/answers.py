@@ -43,6 +43,7 @@ from .common import (
     parse_answers,
     remember_answer_lines,
     remember_answers,
+    repeats_recent_prompts,
     run_cc_notes,
     seen_answer_ids,
     short_id,
@@ -369,12 +370,12 @@ def title_line(answer: dict[str, Any]) -> str:
     return f"{short_id(answer['id'])} {answer.get('title', '')}"
 
 
-def pick_prompt_answer(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, str]:
+def pick_prompt_answer(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, Any] | None:
     asked = {"answer": Label(PROMPT_ANSWER_INSTRUCTIONS, answer_options(fresh, "The prompt bears on none of these answers."))}
     match (decision := evt.decide((evt.user_prompt or "")[:LLM_INPUT_CAP], asked)) and decision.answers["answer"]:
         case LabelAnswer(choice=choice) if choice != NO_ANSWER:
-            return {a["id"]: title_line(a) for a in fresh if a["id"] == choice}
-    return {}
+            return next((a for a in fresh if a["id"] == choice), None)
+    return None
 
 
 @on(
@@ -384,13 +385,16 @@ def pick_prompt_answer(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) 
     async_=True,
 )
 def stage_prompt_answers(evt: UserPromptSubmitEvent) -> None:
-    named = matched_answers(evt, evt.user_prompt or "")
+    prompt = evt.user_prompt or ""
+    if repeats_recent_prompts(evt, prompt):
+        return
+    named = matched_answers(evt, prompt)
     if not (fresh := unseen_answers(evt, list({a["id"]: a for a in [*branch_answers(evt), *named]}.values()))):
         return
     if not (picked := pick_prompt_answer(evt, fresh)):
         return
     with evt.ctx.s[PromptAnswerPicks].mutate() as state:
-        state.lines.update(picked)
+        state.lines[picked["id"]] = title_line(picked)
 
 
 @on(
