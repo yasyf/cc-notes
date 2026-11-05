@@ -2,6 +2,9 @@ package managed
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -59,5 +62,38 @@ func TestLockWaitEnvShortensTheWait(t *testing.T) {
 	t.Setenv(LockWaitEnv, "soon")
 	if file, err := Lock(t.Context(), dir, false); err == nil || errors.Is(err, ErrBusy) {
 		t.Fatalf("Lock with an invalid wait=%v, %v; want a parse error", file, err)
+	}
+}
+
+func TestBusyNamesTheHolder(t *testing.T) {
+	previous := lockWait
+	lockWait = 50 * time.Millisecond
+	t.Cleanup(func() { lockWait = previous })
+	dir := t.TempDir()
+	writer, err := Lock(t.Context(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Lock(t.Context(), dir, true); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), fmt.Sprintf("by pid %d (", os.Getpid())) {
+		t.Fatalf("Lock behind a writer=%v; want ErrBusy naming pid %d", err, os.Getpid())
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := Lock(t.Context(), dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	if _, err := Lock(t.Context(), dir, true); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "by readers") {
+		t.Fatalf("Lock behind a reader=%v; want ErrBusy naming readers", err)
+	}
+	rebuild, err := LockRebuild(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("LockRebuild beside a reader: %v", err)
+	}
+	t.Cleanup(func() { _ = rebuild.Close() })
+	if other, err := TryLockRebuild(dir); err != nil || other != nil {
+		t.Fatalf("TryLockRebuild behind a rebuild=%v, %v; want nil, nil", other, err)
 	}
 }

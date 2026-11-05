@@ -1,11 +1,9 @@
 package store
 
 import (
-	"context"
 	"errors"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/managed"
@@ -67,27 +65,5 @@ func TestPublicationRefusesSourceHeadThatDoesNotDescend(t *testing.T) {
 	}
 	if tip, err := s.Repo.Tip(t.Context(), sourceindex.Ref); err != nil || tip != earlier {
 		t.Fatalf("refused publish moved the source ref to %s, %v; want %s", tip, err, earlier)
-	}
-}
-
-func TestManagedReadsServeWhileAReindexHoldsTheAuthority(t *testing.T) {
-	s := initStore(t)
-	note := create(t, s, noteOps("read during reindex"))
-	ref := refs.For(model.KindNote, note.EntityID())
-	lock, err := managed.Lock(t.Context(), s.recordsCommonDir, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lock.Close() })
-	if err := os.WriteFile(s.reindexBuildingPath(), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if tip, err := s.managedTip(ctx, ref); err != nil || tip != note.Meta().Head {
-		t.Fatalf("managed tip during a reindex=%s, %v; want %s", tip, err, note.Meta().Head)
-	}
-	if _, err := s.SourceHead(ctx); err != nil {
-		t.Fatalf("source head during a reindex: %v", err)
 	}
 }

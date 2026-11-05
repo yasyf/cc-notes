@@ -3,10 +3,12 @@ package managed
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,7 +36,7 @@ const QueryObjectRefs = "object-refs"
 // ErrReindex requires an explicit import before ordinary managed operations.
 var ErrReindex = errors.New("managed authority unavailable; run cc-notes reindex")
 
-// ErrBusy reports a lock held past lockWait, in practice by a full import.
+// ErrBusy reports a lock held past lockWait, naming its holder.
 var ErrBusy = errors.New("managed authority busy")
 
 var lockWait = 30 * time.Second
@@ -54,8 +56,15 @@ func Exists(commonDir string) bool {
 	return err == nil
 }
 
-func openLock(commonDir string) (*os.File, error) {
-	path := filepath.Join(commonDir, "cc-notes-managed", "authority-v1.db.lock")
+func authorityLockPath(commonDir string) string {
+	return filepath.Join(commonDir, "cc-notes-managed", "authority-v1.db.lock")
+}
+
+func rebuildLockPath(commonDir string) string {
+	return filepath.Join(commonDir, "cc-notes-managed", "rebuild.lock")
+}
+
+func openLock(path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, errors.Join(ErrReindex, err)
 	}
@@ -69,22 +78,28 @@ func openLock(commonDir string) (*os.File, error) {
 // TryLock takes the authority lock without waiting, returning a nil file when
 // another process holds it in a conflicting mode.
 func TryLock(commonDir string, exclusive bool) (*os.File, error) {
-	file, err := openLock(commonDir)
+	return tryLockAt(authorityLockPath(commonDir), exclusive)
+}
+
+// TryLockRebuild takes the rebuild lock without waiting, returning a nil file
+// when another rebuild holds it.
+func TryLockRebuild(commonDir string) (*os.File, error) {
+	return tryLockAt(rebuildLockPath(commonDir), true)
+}
+
+func tryLockAt(path string, exclusive bool) (*os.File, error) {
+	file, err := openLock(path)
 	if err != nil {
 		return nil, err
 	}
-	mode := syscall.LOCK_SH
-	if exclusive {
-		mode = syscall.LOCK_EX
-	}
-	err = syscall.Flock(int(file.Fd()), mode|syscall.LOCK_NB)
+	err = syscall.Flock(int(file.Fd()), lockMode(exclusive)|syscall.LOCK_NB)
 	if errors.Is(err, syscall.EWOULDBLOCK) {
 		return nil, file.Close()
 	}
 	if err != nil {
 		return nil, errors.Join(err, file.Close())
 	}
-	return file, nil
+	return file, recordHolder(file, exclusive)
 }
 
 // Wait returns the time to wait on the authority: within, or less when
@@ -105,17 +120,23 @@ func Wait(within time.Duration) (time.Duration, error) {
 // failing with ErrBusy once another holder has kept it past Wait(lockWait).
 // Its identity stays fixed across authority cache generations.
 func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, error) {
+	return lockAt(ctx, authorityLockPath(commonDir), exclusive)
+}
+
+// LockRebuild serializes authority rebuilds, which build without the authority
+// lock, failing with ErrBusy once another rebuild has kept it past Wait(lockWait).
+func LockRebuild(ctx context.Context, commonDir string) (*os.File, error) {
+	return lockAt(ctx, rebuildLockPath(commonDir), true)
+}
+
+func lockAt(ctx context.Context, path string, exclusive bool) (*os.File, error) {
 	wait, err := Wait(lockWait)
 	if err != nil {
 		return nil, err
 	}
-	file, err := openLock(commonDir)
+	file, err := openLock(path)
 	if err != nil {
 		return nil, err
-	}
-	mode := syscall.LOCK_SH
-	if exclusive {
-		mode = syscall.LOCK_EX
 	}
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
@@ -124,21 +145,68 @@ func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, erro
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, file.Close())
 		}
-		err := syscall.Flock(int(file.Fd()), mode|syscall.LOCK_NB)
+		err := syscall.Flock(int(file.Fd()), lockMode(exclusive)|syscall.LOCK_NB)
 		if err == nil {
-			return file, nil
+			return file, recordHolder(file, exclusive)
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, errors.Join(err, file.Close())
 		}
 		if time.Now().After(deadline) {
-			return nil, errors.Join(fmt.Errorf("%w: %s held for %s", ErrBusy, file.Name(), wait), file.Close())
+			return nil, errors.Join(fmt.Errorf("%w: %s held for %s %s", ErrBusy, file.Name(), wait, describeHolder(file, exclusive)), file.Close())
 		}
 		select {
 		case <-ctx.Done():
 		case <-ticker.C:
 		}
 	}
+}
+
+func lockMode(exclusive bool) int {
+	if exclusive {
+		return syscall.LOCK_EX
+	}
+	return syscall.LOCK_SH
+}
+
+type holder struct {
+	PID     int       `json:"pid"`
+	Command string    `json:"command"`
+	Since   time.Time `json:"since"`
+}
+
+func recordHolder(file *os.File, exclusive bool) error {
+	if !exclusive {
+		return nil
+	}
+	data, err := json.Marshal(holder{PID: os.Getpid(), Command: strings.Join(os.Args, " "), Since: time.Now().UTC()})
+	if err == nil {
+		err = file.Truncate(0)
+	}
+	if err == nil {
+		_, err = file.WriteAt(data, 0)
+	}
+	if err != nil {
+		return errors.Join(err, file.Close())
+	}
+	return nil
+}
+
+func describeHolder(file *os.File, exclusive bool) string {
+	if exclusive && syscall.Flock(int(file.Fd()), syscall.LOCK_SH|syscall.LOCK_NB) == nil {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		return "by readers"
+	}
+	data, err := os.ReadFile(file.Name())
+	var held holder
+	if err != nil || json.Unmarshal(data, &held) != nil {
+		return "by a holder that left no record"
+	}
+	command := held.Command
+	if len(command) > 160 {
+		command = command[:160] + "…"
+	}
+	return fmt.Sprintf("by pid %d (%s) since %s", held.PID, command, held.Since.Format(time.RFC3339))
 }
 
 // Initialize creates the authority for a repository known to contain no records.

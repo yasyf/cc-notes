@@ -351,3 +351,95 @@ func TestSourceRenderPolicyChangeRequiresExplicitReindex(t *testing.T) {
 		t.Fatalf("reindexed object=%+v found=%t err=%v", object, found, err)
 	}
 }
+
+func TestWritersPublishWhileAReindexBuilds(t *testing.T) {
+	s := initStore(t)
+	note := create(t, s, noteOps("written before the rebuild"))
+	ref := refs.For(model.KindNote, note.EntityID())
+	rebuild, err := managed.LockRebuild(t.Context(), s.recordsCommonDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rebuild.Close() })
+	snapshot, finished, err := s.snapshotReindex(t.Context())
+	if err != nil || finished {
+		t.Fatalf("snapshot=%t, %v", finished, err)
+	}
+	if err := s.buildReindex(t.Context(), snapshot, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(managed.LockWaitEnv, "1ms")
+	appended, err := s.Append(t.Context(), ref, []model.Op{model.SetBody{Body: "written during the rebuild"}})
+	if err != nil {
+		t.Fatalf("append during a rebuild: %v", err)
+	}
+	created := create(t, s, noteOps("created during the rebuild"))
+	lock, err := managed.Lock(t.Context(), s.recordsCommonDir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := s.swapReindex(t.Context(), lock)
+	if err := errors.Join(err, lock.Close()); err != nil || stale {
+		t.Fatalf("swap=%t, %v", stale, err)
+	}
+	requireManagedProjection(t, s, ref, appended)
+	requireManagedProjection(t, s, refs.For(model.KindNote, created.EntityID()), created)
+	head, err := s.SourceHead(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tip, err := s.Repo.Tip(t.Context(), sourceindex.Ref); err != nil || tip != head.Token {
+		t.Fatalf("source ref=%s, %v; managed head=%s", tip, err, head.Token)
+	}
+	later, err := s.Append(t.Context(), ref, []model.Op{model.SetBody{Body: "written after the swap"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireManagedProjection(t, s, ref, later)
+}
+
+func TestReindexDiscardsAMintedBuildWritersOvertook(t *testing.T) {
+	s := initStore(t)
+	extended := create(t, s, noteOps("extended outside managed publication"))
+	extendedRef := refs.For(model.KindNote, extended.EntityID())
+	raw, err := s.PrepareAppendAt(t.Context(), extendedRef, extended.Meta().Head, []model.Op{model.SetBody{Body: "raw extension"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{raw.RefUpdate()}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, finished, err := s.snapshotReindex(t.Context())
+	if err != nil || finished {
+		t.Fatalf("snapshot=%t, %v", finished, err)
+	}
+	if err := s.buildReindex(t.Context(), snapshot, nil); err != nil {
+		t.Fatal(err)
+	}
+	created := create(t, s, noteOps("created during the minted rebuild"))
+	createdRef := refs.For(model.KindNote, created.EntityID())
+	lock, err := managed.Lock(t.Context(), s.recordsCommonDir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := s.swapReindex(t.Context(), lock)
+	if err := errors.Join(err, lock.Close()); err != nil || !stale {
+		t.Fatalf("swap of an overtaken minted build=%t, %v; want stale", stale, err)
+	}
+	if ready, err := s.reindexReady(); err != nil || ready {
+		t.Fatalf("discarded build still staged=%t, %v", ready, err)
+	}
+	requireManagedProjection(t, s, createdRef, created)
+	if err := s.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	requireManagedProjection(t, s, extendedRef, raw.Snapshot)
+	requireManagedProjection(t, s, createdRef, created)
+	head, err := s.SourceHead(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tip, err := s.Repo.Tip(t.Context(), sourceindex.Ref); err != nil || tip != head.Token {
+		t.Fatalf("source ref=%s, %v; managed head=%s", tip, err, head.Token)
+	}
+}

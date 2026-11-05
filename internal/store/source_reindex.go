@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,7 +25,13 @@ import (
 var (
 	managedReindexReady  = []byte("replace-ready")
 	managedReindexIntent = []byte("replace-intent")
+	managedReindexBase   = []byte("replace-base")
 )
+
+type reindexSnapshot struct {
+	entities map[string]model.SHA
+	source   map[string]model.SHA
+}
 
 // Reindex explicitly imports current entities and known historical source receipts.
 func (s *Store) Reindex(ctx context.Context) error { return s.ReindexWithSourcePolicy(ctx, nil) }
@@ -34,12 +41,12 @@ func (s *Store) ReindexWithSourcePolicy(ctx context.Context, policy sourceindex.
 	if err := s.CheckRecords(); err != nil {
 		return err
 	}
-	lock, err := managed.Lock(ctx, s.recordsCommonDir, true)
+	rebuild, err := managed.LockRebuild(ctx, s.recordsCommonDir)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
-	return s.reindexLocked(ctx, lock, policy)
+	defer func() { err = errors.Join(err, rebuild.Close()) }()
+	return s.rebuildAuthority(ctx, policy)
 }
 
 // AuthorityExists reports whether this store's managed authority is present.
@@ -52,32 +59,109 @@ func (s *Store) AuthorityImportLog() (string, error) {
 }
 
 // ReindexIfMissing imports current entities when no authority exists, leaving
-// the work to any process already holding the authority lock.
+// the work to any process already rebuilding it.
 func (s *Store) ReindexIfMissing(ctx context.Context) (err error) {
 	if err := s.CheckRecords(); err != nil {
 		return err
 	}
-	lock, err := managed.TryLock(s.recordsCommonDir, true)
-	if err != nil || lock == nil {
+	rebuild, err := managed.TryLockRebuild(s.recordsCommonDir)
+	if err != nil || rebuild == nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
+	defer func() { err = errors.Join(err, rebuild.Close()) }()
 	if s.AuthorityExists() {
 		return nil
 	}
-	return s.reindexLocked(ctx, lock, nil)
+	return s.rebuildAuthority(ctx, nil)
 }
 
-func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourceindex.ImportPolicy) (err error) {
-	if ready, err := s.reindexReady(); err != nil {
+// rebuildAuthority builds the replacement from one ref snapshot without the
+// authority lock, then takes it only to catch the replacement up with what
+// writers published meanwhile and swap it in. A replacement that minted its own
+// source revision cannot absorb writers that advanced the head past its base, so
+// that one rebuild runs again under the lock.
+func (s *Store) rebuildAuthority(ctx context.Context, policy sourceindex.ImportPolicy) (err error) {
+	snapshot, finished, err := s.snapshotReindex(ctx)
+	if err != nil || finished {
 		return err
-	} else if ready {
-		return s.finishReindex(ctx, lock)
 	}
-	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
+	if err := s.buildReindex(ctx, snapshot, policy); err != nil {
+		return err
+	}
+	lock, err := managed.Lock(ctx, s.recordsCommonDir, true)
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	stale, err := s.swapReindex(ctx, lock)
+	if err != nil || !stale {
+		return err
+	}
+	if snapshot, err = s.readReindexSnapshot(ctx); err != nil {
+		return err
+	}
+	if err := s.buildReindex(ctx, snapshot, policy); err != nil {
+		return err
+	}
+	_, err = s.swapReindex(ctx, lock)
+	return err
+}
+
+func (s *Store) snapshotReindex(ctx context.Context) (snapshot reindexSnapshot, finished bool, err error) {
+	lock, err := managed.Lock(ctx, s.recordsCommonDir, true)
+	if err != nil {
+		return snapshot, false, err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	if ready, err := s.reindexReady(); err != nil {
+		return snapshot, false, err
+	} else if ready {
+		_, err := s.finishReindex(ctx, lock)
+		return snapshot, true, err
+	}
+	snapshot, err = s.readReindexSnapshot(ctx)
+	return snapshot, false, err
+}
+
+func (s *Store) readReindexSnapshot(ctx context.Context) (reindexSnapshot, error) {
+	entities, err := s.Repo.ListPrefix(ctx, refs.Namespace)
+	if err != nil {
+		return reindexSnapshot{}, err
+	}
+	source := make(map[string]model.SHA)
+	for _, prefix := range []string{sourceindex.OperationPrefix, sourceindex.OperationPinPrefix} {
+		listed, err := s.Repo.ListPrefix(ctx, prefix)
+		if err != nil {
+			return reindexSnapshot{}, err
+		}
+		maps.Copy(source, listed)
+	}
+	for _, ref := range []string{sourceindex.Ref, sourceindex.CatalogRef, sourceindex.LiveRef, sourceindex.LegacyRef} {
+		tip, err := s.sourceRefTip(ctx, ref)
+		if err != nil {
+			return reindexSnapshot{}, err
+		}
+		if tip != "" {
+			source[ref] = tip
+		}
+	}
+	return reindexSnapshot{entities: entities, source: source}, nil
+}
+
+func (s *Store) swapReindex(ctx context.Context, lock *os.File) (stale bool, err error) {
+	building := s.reindexBuildingPath()
+	staging := managed.Path(s.recordsCommonDir) + ".reindex"
+	if err := os.Rename(building, staging); err != nil {
+		return false, err
+	}
+	if err := syncManagedDirectory(staging); err != nil {
+		return false, err
+	}
+	return s.finishReindex(ctx, lock)
+}
+
+func (s *Store) buildReindex(ctx context.Context, snapshot reindexSnapshot, policy sourceindex.ImportPolicy) (err error) {
+	tips := snapshot.entities
 	updates := make([]gitcmd.RefUpdate, 0, len(tips))
 	for ref, tip := range tips {
 		updates = append(updates, gitcmd.RefUpdate{Ref: ref, New: tip})
@@ -85,13 +169,11 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 	slices.SortFunc(updates, func(a, b gitcmd.RefUpdate) int { return bytes.Compare([]byte(a.Ref), []byte(b.Ref)) })
 	publications := newFoldPublicationBatch(ctx, s.cache)
 	defer publications.discard()
-	imported, err := s.importSourceMetadata(ctx, publications, tips)
+	imported, err := s.importSourceMetadata(ctx, publications, snapshot)
 	if err != nil {
 		return err
 	}
-	path := managed.Path(s.recordsCommonDir)
 	building := s.reindexBuildingPath()
-	staging := path + ".reindex"
 	if err := os.Remove(building); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -197,7 +279,8 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 		return err
 	}
 	sourceUpdates := slices.Clone(imported.proofUpdates)
-	oldHead, err := s.sourceRefTip(ctx, sourceindex.Ref)
+	oldHead := snapshot.source[sourceindex.Ref]
+	base, err := json.Marshal(oldHead)
 	if err != nil {
 		return err
 	}
@@ -214,11 +297,11 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 		if err := s.applyManaged(ctx, tx, managedIntent{Updates: updates, Rows: rows, Source: &sourcePublication{Revision: &current}}); err != nil {
 			return err
 		}
-		if err := s.preserveActiveQueryGenerations(ctx, tx); err != nil {
-			return err
-		}
 		root, err := managedRoot(tx)
 		if err != nil {
+			return err
+		}
+		if err := root.Put(managedReindexBase, base); err != nil {
 			return err
 		}
 		if len(sourceUpdates) > 0 {
@@ -248,16 +331,7 @@ func (s *Store) reindexLocked(ctx context.Context, lock *os.File, policy sourcei
 		return err
 	}
 	closed = true
-	if err := syncManagedDirectory(building); err != nil {
-		return err
-	}
-	if err := os.Rename(building, staging); err != nil {
-		return err
-	}
-	if err := syncManagedDirectory(staging); err != nil {
-		return err
-	}
-	return s.finishReindex(ctx, lock)
+	return syncManagedDirectory(building)
 }
 
 func (s *Store) reindexBuildingPath() string {
@@ -300,7 +374,7 @@ func (s *Store) reindexReady() (ready bool, err error) {
 	return true, nil
 }
 
-func (s *Store) finishReindex(ctx context.Context, lock *os.File) (err error) {
+func (s *Store) finishReindex(ctx context.Context, lock *os.File) (stale bool, err error) {
 	var published bool
 	var publishedUpdates []gitcmd.RefUpdate
 	defer func() {
@@ -313,7 +387,7 @@ func (s *Store) finishReindex(ctx context.Context, lock *os.File) (err error) {
 	staging := path + ".reindex"
 	db, err := bolt.Open(staging, 0o600, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	closed := false
 	defer func() {
@@ -321,6 +395,12 @@ func (s *Store) finishReindex(ctx context.Context, lock *os.File) (err error) {
 			err = errors.Join(err, db.Close())
 		}
 	}()
+	if stale, err := s.catchUpReindex(ctx, db); err != nil {
+		return false, err
+	} else if stale {
+		closed = true
+		return true, errors.Join(db.Close(), os.Remove(staging))
+	}
 	var intent managedIntent
 	if err := db.View(func(tx *bolt.Tx) error {
 		root, err := managedRoot(tx)
@@ -336,53 +416,118 @@ func (s *Store) finishReindex(ctx context.Context, lock *os.File) (err error) {
 		}
 		return json.Unmarshal(data, &intent)
 	}); err != nil {
-		return err
+		return false, err
 	}
 	if len(intent.Updates) > 0 {
 		if len(intent.Before) != len(intent.Updates) {
-			return managed.ErrReindex
+			return false, managed.ErrReindex
 		}
 		unchanged, applied := true, true
 		for i, update := range intent.Updates {
 			tip, err := s.sourceRefTip(ctx, update.Ref)
 			if err != nil {
-				return err
+				return false, err
 			}
 			unchanged = unchanged && tip == intent.Before[i]
 			applied = applied && tip == update.New
 		}
 		if !applied && !unchanged {
-			return fmt.Errorf("staged source import refs differ: %w", managed.ErrReindex)
+			return false, fmt.Errorf("staged source import refs differ: %w", managed.ErrReindex)
 		}
 		published = applied
 		publishedUpdates = intent.Updates
 		if unchanged && !applied {
 			if err := s.CheckRecords(); err != nil {
-				return err
+				return false, err
 			}
 			if err := s.RecordsGit.Holding(lock).UpdateRefs(ctx, intent.Updates); err != nil {
-				return err
+				return false, err
 			}
 			published = true
 		}
 		if err := s.recoverManaged(context.WithoutCancel(ctx), db); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if err := s.CheckRecords(); err != nil {
-		return err
+		return false, err
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	if err := db.Close(); err != nil {
-		return err
+		return false, err
 	}
 	closed = true
 	if err := os.Rename(staging, path); err != nil {
-		return err
+		return false, err
 	}
-	return syncManagedDirectory(path)
+	return false, syncManagedDirectory(path)
+}
+
+// catchUpReindex brings a replacement built from a snapshot up to the source
+// head writers advanced while it built, reporting it stale when it minted its
+// own revision over a base the head has since left.
+func (s *Store) catchUpReindex(ctx context.Context, db *bolt.DB) (stale bool, err error) {
+	var data []byte
+	var intent managedIntent
+	if err := db.View(func(tx *bolt.Tx) error {
+		root, err := managedRoot(tx)
+		if err != nil {
+			return err
+		}
+		data = bytes.Clone(root.Get(managedReindexBase))
+		if staged := root.Get(managedReindexIntent); staged != nil {
+			return json.Unmarshal(staged, &intent)
+		}
+		return nil
+	}); err != nil || data == nil {
+		return false, err
+	}
+	var base model.SHA
+	if err := json.Unmarshal(data, &base); err != nil {
+		return false, errors.Join(managed.ErrReindex, err)
+	}
+	head, err := s.sourceRefTip(ctx, sourceindex.Ref)
+	if err != nil {
+		return false, err
+	}
+	if head != base {
+		if slices.ContainsFunc(intent.Updates, func(update gitcmd.RefUpdate) bool { return update.Ref == sourceindex.Ref }) {
+			return true, nil
+		}
+		if err := s.adoptSourceHead(ctx, db); err != nil {
+			return false, err
+		}
+		var kept managedIntent
+		for i, update := range intent.Updates {
+			if update.Ref != sourceindex.LiveRef {
+				kept.Updates = append(kept.Updates, update)
+				kept.Before = append(kept.Before, intent.Before[i])
+			}
+		}
+		intent = kept
+	}
+	return false, db.Update(func(tx *bolt.Tx) error {
+		if err := s.preserveActiveQueryGenerations(ctx, tx); err != nil {
+			return err
+		}
+		root, err := managedRoot(tx)
+		if err != nil {
+			return err
+		}
+		if err := root.Delete(managedReindexBase); err != nil || head == base {
+			return err
+		}
+		if len(intent.Updates) == 0 {
+			return errors.Join(root.Delete(managedPendingKey), root.Delete(managedReindexIntent))
+		}
+		data, err := json.Marshal(intent)
+		if err != nil {
+			return err
+		}
+		return errors.Join(root.Put(managedPendingKey, data), root.Put(managedReindexIntent, data))
+	})
 }
 
 func syncManagedDirectory(path string) error {
