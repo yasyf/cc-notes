@@ -1145,7 +1145,7 @@ MCP: task_criterion_met (id, criterion, note)
 
 MCP: task_criterion_failed (id, criterion, note)
 
-MCP: task_criterion_pending (id, criterion)
+MCP: task_criterion_pending (id, criterion, note)
 
 MCP: task_criterion_script (id, criterion, file, clear)
 

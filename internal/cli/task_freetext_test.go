@@ -81,27 +81,16 @@ func TestCriterionNoteRoundTrip(t *testing.T) {
 	if got.Status != model.CriterionFailed || got.Note != "flaky assertion" {
 		t.Errorf("failed status/note = %q/%q, want %q/%q", got.Status, got.Note, model.CriterionFailed, "flaky assertion")
 	}
-}
 
-// TestCriterionNoteFlagScope pins that --note lives on met and failed but not on
-// pending: a reset to pending clears evidence with no flag to carry one.
-func TestCriterionNoteFlagScope(t *testing.T) {
-	root := cli.NewRootCmd()
-	for _, tc := range []struct {
-		verb string
-		want bool
-	}{
-		{"met", true},
-		{"failed", true},
-		{"pending", false},
-	} {
-		cmd, _, err := root.Find([]string{"task", "criterion", tc.verb})
-		if err != nil {
-			t.Fatalf("find task criterion %s: %v", tc.verb, err)
-		}
-		if got := cmd.Flags().Lookup("note") != nil; got != tc.want {
-			t.Errorf("task criterion %s has --note = %v, want %v", tc.verb, got, tc.want)
-		}
+	mustRun(t, dir, "task", "criterion", "pending", task.ID, crit, "--note", "rerun after the fixture fix")
+	got = loadCriterion(t, dir, task.ID, crit)
+	if got.Status != model.CriterionPending || got.Note != "rerun after the fixture fix" {
+		t.Errorf("pending status/note = %q/%q, want %q/%q", got.Status, got.Note, model.CriterionPending, "rerun after the fixture fix")
+	}
+
+	mustRun(t, dir, "task", "criterion", "pending", task.ID, crit)
+	if got = loadCriterion(t, dir, task.ID, crit); got.Note != "" {
+		t.Errorf("note after a bare pending = %q, want cleared", got.Note)
 	}
 }
 
