@@ -184,7 +184,7 @@ func TestHelperFreshProcessCost(t *testing.T) {
 	}
 	t.Setenv("CCN_MANAGED_COST_REINDEX", "1")
 	byMode := make(map[string][]helperCostResult)
-	for _, count := range []int{32, 10000} {
+	for _, count := range costPopulations() {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			dir, target := managedCostFixture(t, count)
 			for _, mode := range []string{"refresh", "page", "target", "content", "mutation", "changes", "inspect", "replay", "ack"} {
@@ -218,12 +218,12 @@ func TestHelperFreshProcessCost(t *testing.T) {
 			{"git_processes", low.GitProcesses, high.GitProcesses, 8},
 		} {
 			if c.high > c.low+c.allowance && !gradedByWriteCostCheck(c.name) {
-				t.Errorf("HELPER_COST_REGRESSION: %s %s32=%d10000=%d allowance=%d", mode, c.name, c.low, c.high, c.allowance)
+				t.Errorf("HELPER_COST_REGRESSION: %s %s low=%d high=%d allowance=%d", mode, c.name, c.low, c.high, c.allowance)
 			}
 		}
 		for _, name := range []string{"read", "pread64", "open", "openat", "newfstatat", "fstat", "getdents64", "fsync", "fdatasync"} {
 			if high.Syscalls[name] > low.Syscalls[name]+64 {
-				t.Errorf("HELPER_COST_REGRESSION: %s %s32=%d10000=%d", mode, name, low.Syscalls[name], high.Syscalls[name])
+				t.Errorf("HELPER_COST_REGRESSION: %s %s low=%d high=%d", mode, name, low.Syscalls[name], high.Syscalls[name])
 			}
 		}
 	}
@@ -248,7 +248,7 @@ func helperCostRun(t *testing.T, input managedCostInput, count int) helperCostRe
 	}
 	trace := filepath.Join(dir, "syscalls")
 	cmd := exec.CommandContext(t.Context(), "strace", "--seccomp-bpf", "-ff", "-q", "-ttt", "-s", "8192", "-e", "trace=read,pread64,readv,preadv,preadv2,write,pwrite64,writev,pwritev,pwritev2,open,openat,openat2,fstat,newfstatat,statx,getdents64,fsync,fdatasync,close,mmap,mremap,munmap,%process", "-o", trace, os.Args[0], "-test.run=^TestHelperFreshProcessCostChild$", "-test.count=1")
-	cmd.Env = append(os.Environ(), "CCN_HELPER_COST_INPUT="+path)
+	cmd.Env = append(os.Environ(), "CCN_HELPER_COST_INPUT="+path, "GOMAXPROCS=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt names its topic.
 
 ### Fixed
+- **A write no longer grows with the number of records.** The query generations
+  a pinned reader reads now live as versions of each query key, pruned once
+  neither the current nor the active generation can see them, instead of a graph
+  of hash-addressed nodes with a hash index and reference counts. A write
+  rewrites only the keys it changes and the versions it prunes. The authority
+  moves to `authority-v3.db`: the first command after upgrading copies
+  `authority-v2.db` into it without the old graph, which takes seconds and no Git
+  reindex. An older binary keeps using `authority-v2.db`; each adopts the refs
+  the other moved on its next write to that ref or on `cc-notes sync`. Git refs
+  stay the source of truth, so a damaged `authority-v3.db` can be deleted and
+  rebuilt with `cc-notes reindex`.
 - **A reindex no longer blocks writers while it builds.** `cc-notes reindex`
   builds the replacement authority from one snapshot of the refs without the
   authority lock, then takes it only to adopt what writers published meanwhile

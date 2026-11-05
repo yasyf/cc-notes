@@ -25,12 +25,8 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v -run '^TestSourceGraphWorkAcrossIndependentScopes$' ./internal/sourcegraph
       - name: Validate unchanged posting pages
         run: ./scripts/test.sh -race -count=1 -run '^TestQueryMetadataReplacementPreservesUnchangedPostingPages$' ./internal/store
-      - name: Validate query retirement ownership
-        run: ./scripts/test.sh -race -count=1 -run '^(TestQueryRetirement.*|TestRetainedQuery.*|TestRetainedMetadata.*)$' ./internal/store
-      - name: Validate query allocation locality
-        run: ./scripts/test.sh -race -count=1 -v -run '^TestQueryAllocation' ./internal/store
-      - name: Validate object hash-index bulk fill
-        run: ./scripts/test.sh -race -count=1 -v -run '^TestQueryObjectBulkFill' ./internal/store
+      - name: Validate retained query versions
+        run: ./scripts/test.sh -race -count=1 -run '^(TestRetainedQuery.*|TestRetainedMetadata.*|TestQueryActivation.*|TestLegacyAuthorityImport.*)$' ./internal/store
       - name: Prepare immutable helper baseline
         if: matrix.lane == 'baseline'
         run: |

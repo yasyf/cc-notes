@@ -3,7 +3,6 @@ package gitobj
 import (
 	"bufio"
 	"bytes"
-	"compress/zlib"
 	"crypto/sha1" //nolint:gosec // G505: git's pack and index trailers are SHA-1.
 	"encoding/binary"
 	"errors"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	gitsync "github.com/go-git/go-git/v5/utils/sync"
 )
 
 const (
@@ -207,10 +207,8 @@ func encodePack(objects []plumbing.EncodedObject) ([]byte, []packEntry, error) {
 	if err := binary.Write(&pack, binary.BigEndian, uint32(len(objects))); err != nil { //nolint:gosec // G115: a scope holds far fewer than 2^32 objects.
 		return nil, nil, err
 	}
-	compressor, err := zlib.NewWriterLevel(&pack, zlib.BestSpeed)
-	if err != nil {
-		return nil, nil, err
-	}
+	compressor := gitsync.GetZlibWriter(&pack)
+	defer gitsync.PutZlibWriter(compressor)
 	entries := make([]packEntry, 0, len(objects))
 	for _, value := range objects {
 		offset := pack.Len()

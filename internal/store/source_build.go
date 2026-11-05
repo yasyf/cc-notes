@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"slices"
@@ -30,6 +31,9 @@ import (
 type projectionGraph struct {
 	index    *sourcegraph.Map
 	revision sourceindex.Revision
+	// staged holds entities this build changed, nil for a removed one, until it
+	// writes each into EntityRoot once.
+	staged map[string]*sourceview.Entity
 }
 
 func (g *projectionGraph) Entity(kind model.Kind, id model.EntityID) (sourceview.Entity, bool, error) {
@@ -40,6 +44,12 @@ func (g *projectionGraph) Entity(kind model.Kind, id model.EntityID) (sourceview
 }
 
 func (g *projectionGraph) entityRef(ref string) (entity sourceview.Entity, found bool, err error) {
+	if staged, ok := g.staged[ref]; ok {
+		if staged == nil {
+			return entity, false, nil
+		}
+		return *staged, true, nil
+	}
 	data, found, err := g.index.Get(g.revision.EntityRoot, ref)
 	if err != nil || !found {
 		return entity, found, err
@@ -247,7 +257,7 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 			revision.Token, err = writeSourceRevision(objects, revision)
 			return err
 		}
-		graph := projectionGraph{index: sourcegraph.New(objects), revision: revision}
+		graph := projectionGraph{index: sourcegraph.New(objects), revision: revision, staged: make(map[string]*sourceview.Entity, len(changed))}
 		before := make(map[string]sourceview.Entity, len(changed))
 		affected := make(map[string]struct{}, len(changed))
 		dependencyPrefixes := make(map[string]struct{})
@@ -262,27 +272,25 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 			next, present := values[update.Ref]
 			collectSourceDependents(old, next, dependencyPrefixes)
 			affected[update.Ref] = struct{}{}
+			kept := sourceview.Dependencies(next)
 			for _, key := range sourceview.Dependencies(old) {
+				if slices.Contains(kept, key) {
+					continue
+				}
 				graph.revision.DependencyRoot, err = graph.index.Delete(graph.revision.DependencyRoot, key)
 				if err != nil {
 					return err
 				}
 			}
-			for _, key := range sourceview.Dependencies(next) {
+			for _, key := range kept {
 				graph.revision.DependencyRoot, err = graph.index.Put(graph.revision.DependencyRoot, key, []byte(next.Ref))
 				if err != nil {
 					return err
 				}
 			}
+			graph.staged[update.Ref] = nil
 			if present {
-				if err := graph.putEntity(next); err != nil {
-					return err
-				}
-			} else {
-				graph.revision.EntityRoot, err = graph.index.Delete(graph.revision.EntityRoot, update.Ref)
-				if err != nil {
-					return err
-				}
+				graph.staged[update.Ref] = &next
 			}
 		}
 		for prefix := range dependencyPrefixes {
@@ -332,6 +340,7 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 			ordered = append(ordered, ref)
 		}
 		slices.Sort(ordered)
+		retired := make(map[string]sourceview.Object)
 		for _, ref := range ordered {
 			old, found := before[ref]
 			if !found {
@@ -342,35 +351,56 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 				}
 			}
 			for _, entry := range old.Objects {
-				if err := graph.deleteObject(entry); err != nil {
-					return err
-				}
+				retired[entry.Key] = entry
 			}
 			if old.ProjectionError != "" {
 				graph.revision.ProjectionErrors--
 			}
 		}
+		var projected []sourceview.Entity
+		emitted := make(map[string]sourceview.Object)
 		for _, ref := range ordered {
 			next, found, err := graph.entityRef(ref)
 			if err != nil {
 				return err
 			}
 			if !found {
+				graph.revision.EntityRoot, err = graph.index.Delete(graph.revision.EntityRoot, ref)
+				if err != nil {
+					return err
+				}
 				continue
 			}
-			emitted, emitErr := sourceview.Emit(next, &graph)
+			objects, emitErr := sourceview.Emit(next, &graph)
 			next.ProjectionError = ""
 			if emitErr != nil {
 				next.ProjectionError = emitErr.Error()
 				graph.revision.ProjectionErrors++
-				emitted = nil
+				objects = nil
 			}
-			next.Objects = emitted
-			for _, entry := range emitted {
-				if err := graph.putObject(entry); err != nil {
-					return err
+			next.Objects = objects
+			for _, entry := range objects {
+				if _, duplicate := emitted[entry.Key]; duplicate {
+					return fmt.Errorf("duplicate source key %s", entry.Key)
 				}
+				emitted[entry.Key] = entry
 			}
+			projected = append(projected, next)
+		}
+		for _, key := range slices.Sorted(maps.Keys(retired)) {
+			if _, found := emitted[key]; found {
+				continue
+			}
+			if err := graph.deleteObject(retired[key]); err != nil {
+				return err
+			}
+		}
+		for _, key := range slices.Sorted(maps.Keys(emitted)) {
+			if err := graph.replaceObject(retired[key], emitted[key]); err != nil {
+				return err
+			}
+		}
+		for _, next := range projected {
 			if err := graph.putEntity(next); err != nil {
 				return err
 			}
@@ -491,6 +521,10 @@ func (g *projectionGraph) putObject(entry sourceview.Object) error {
 	if err := g.replaceName(entry, false); err != nil {
 		return err
 	}
+	return g.writeObject(entry)
+}
+
+func (g *projectionGraph) writeObject(entry sourceview.Object) error {
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
@@ -503,6 +537,27 @@ func (g *projectionGraph) putObject(entry sourceview.Object) error {
 		g.revision.ProjectionErrors++
 	}
 	return nil
+}
+
+func (g *projectionGraph) replaceObject(old, entry sourceview.Object) error {
+	if old == entry {
+		return nil
+	}
+	if old.Key == "" {
+		return g.putObject(entry)
+	}
+	if old.Parent != entry.Parent || old.Name != entry.Name {
+		if err := g.replaceName(old, true); err != nil {
+			return err
+		}
+		if err := g.replaceName(entry, false); err != nil {
+			return err
+		}
+	}
+	if sourceview.ValidateObject(old) != nil {
+		g.revision.ProjectionErrors--
+	}
+	return g.writeObject(entry)
 }
 
 func (g *projectionGraph) updateLFS(s *Store, old, next sourceview.Entity) error {

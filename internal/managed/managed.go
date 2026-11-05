@@ -22,17 +22,15 @@ const Format = "cc-notes-managed-v4"
 // PageSize keeps authority writes independent of the host memory page size.
 const PageSize = 4096
 
-// QueryGenerations identifies the required immutable metadata storage.
-const QueryGenerations = "query-generations-v1"
+// QueryGenerations identifies the required versioned metadata storage.
+const QueryGenerations = "query-generations"
 
-// QueryObjects identifies immutable graph objects shared by metadata generations.
-const QueryObjects = "objects"
+// LegacyQueryGenerations identifies the hash-addressed graph LegacyPath holds.
+const LegacyQueryGenerations = "query-generations-v1"
 
-// QueryObjectIDs maps content hashes to append-ordered storage locations.
-const QueryObjectIDs = "object-ids"
-
-// QueryObjectRefs counts immutable graph edges and retained generation roots.
-const QueryObjectRefs = "object-refs"
+// LegacyQueryObjectRefs names the LegacyQueryGenerations bucket every older
+// binary requires before it serves LegacyPath.
+const LegacyQueryObjectRefs = "object-refs"
 
 // ErrReindex requires an explicit import before ordinary managed operations.
 var ErrReindex = errors.New("managed authority unavailable; run cc-notes reindex")
@@ -51,6 +49,13 @@ const LockWaitEnv = "CCN_LOCK_WAIT"
 
 // Path names the shared records authority database.
 func Path(commonDir string) string {
+	return filepath.Join(commonDir, "cc-notes-managed", "authority-v3.db")
+}
+
+// LegacyPath names the authority database Path replaced, which an import
+// copies without its query graph.
+// TODO: remove once every machine has imported it.
+func LegacyPath(commonDir string) string {
 	return filepath.Join(commonDir, "cc-notes-managed", "authority-v2.db")
 }
 
@@ -245,17 +250,7 @@ func Initialize(ctx context.Context, commonDir string) (err error) {
 		if _, err := root.CreateBucket([]byte("refs")); err != nil {
 			return err
 		}
-		generations, err := tx.CreateBucket([]byte(QueryGenerations))
-		if err != nil {
-			return err
-		}
-		if _, err = generations.CreateBucket([]byte(QueryObjects)); err != nil {
-			return err
-		}
-		if _, err := generations.CreateBucket([]byte(QueryObjectIDs)); err != nil {
-			return err
-		}
-		_, err = generations.CreateBucket([]byte(QueryObjectRefs))
+		_, err = tx.CreateBucket([]byte(QueryGenerations))
 		return err
 	})
 }

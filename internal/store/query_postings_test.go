@@ -10,7 +10,6 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/yasyf/cc-notes/internal/sourcegraph"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -300,17 +299,35 @@ func TestQueryMetadataReplacementPreservesUnchangedPostingPages(t *testing.T) {
 		}
 		return result
 	}
-	before := roots()
+	versions := func() map[string]string {
+		t.Helper()
+		result := make(map[string]string)
+		if err := db.View(func(tx *bolt.Tx) error {
+			return queryGenerationBinding(tx, "binding").Bucket(queryVersionsBucket).ForEach(func(key, value []byte) error {
+				result[string(key)] = string(value)
+				return nil
+			})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	before, retained := roots(), versions()
 	replacement.Tip = "after"
-	ctx, work := sourcegraph.WithWork(t.Context())
-	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(ctx, tx, replacement) }); err != nil {
+	if err := db.Update(func(tx *bolt.Tx) error { return replaceQueryMetadata(t.Context(), tx, replacement) }); err != nil {
 		t.Fatal(err)
 	}
 	if after := roots(); !reflect.DeepEqual(after, before) {
 		t.Fatalf("unchanged posting pages changed: before=%v after=%v", before, after)
 	}
-	if writes := work.Snapshot().ValueWrites; writes != 1 {
-		t.Fatalf("retained graph wrote %d values; want only the changed row", writes)
+	var rewritten []string
+	for key, value := range versions() {
+		if retained[key] != value {
+			rewritten = append(rewritten, key)
+		}
+	}
+	if !slices.Equal(rewritten, []string{queryRowKey(replacement.ID)}) {
+		t.Fatalf("retained versions rewrote %v; want only the changed row", rewritten)
 	}
 	rows := labelMetadata(t, db, "binding", model.KindTask, "stable")
 	if len(rows) != 256 {
