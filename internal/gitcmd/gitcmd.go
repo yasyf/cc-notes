@@ -36,6 +36,9 @@ var (
 	// ErrNonFastForward reports a fetch or push update rejected because it
 	// does not fast-forward.
 	ErrNonFastForward = errors.New("non-fast-forward")
+	// ErrRemoteRejected reports a push the remote refused for a reason other
+	// than a non-fast-forward, such as a failed server-side ref update.
+	ErrRemoteRejected = errors.New("remote rejected")
 	// ErrDetachedHead reports that HEAD is not a symbolic ref.
 	ErrDetachedHead = errors.New("detached HEAD")
 	// ErrRevNotFound reports a rev that names no commit.
@@ -58,6 +61,11 @@ var casPatterns = []string{"cannot lock ref", "is at", "but expected", "referenc
 // " ! [rejected] ... (non-fast-forward)" and the "(fetch first)" variant
 // when the remote tip is unknown locally.
 var nonFFPatterns = []string{"non-fast-forward", "fetch first", "[rejected]"}
+
+// remoteMovedPatterns add the remote's own "[remote rejected] (cannot lock ref:
+// is at <x> but expected <y>)": another push moved the ref after the remote
+// advertised it, a non-fast-forward the remote caught late.
+var remoteMovedPatterns = append(slices.Clone(nonFFPatterns), "but expected")
 
 // Git runs the system git binary against one repository. A checkout handle
 // (the zero value plus Dir) runs with -C Dir under the inherited environment,
@@ -688,10 +696,14 @@ func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
 // configured remote.<r>.fetch refspecs: that opportunistic update would
 // force-clobber a diverged local entity ref in a repo wired by Install before
 // sync could union-merge it. A rejected update — a non-forced refspec that
-// does not fast-forward — wraps ErrNonFastForward.
+// does not fast-forward — wraps ErrNonFastForward; a local ref another writer
+// moved or locked meanwhile wraps ErrCASMismatch.
 func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
 	_, err := g.transfer(ctx, "", append([]string{"fetch", "--recurse-submodules=no", "--no-auto-maintenance", "--refmap=", remote}, refspecs...)...)
-	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
+	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil && !errors.Is(err, ErrNonFastForward) {
+		err = classify(err, ErrCASMismatch, casPatterns)
+	}
+	if err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}
 	return nil
@@ -757,11 +769,15 @@ func joinSHAs(shas []model.SHA) string {
 
 // Push uploads to remote using the given refspecs, never forced and without
 // the pre-push hook: Sync has already uploaded attachment content itself, and
-// a repo hook such as git-lfs's rescans every pushed ref. A rejected update
-// wraps ErrNonFastForward.
+// a repo hook such as git-lfs's rescans every pushed ref. A rejected update,
+// or one the remote refused because the ref moved under it, wraps
+// ErrNonFastForward; any other refusal by the remote wraps ErrRemoteRejected.
 func (g Git) Push(ctx context.Context, remote string, refspecs ...string) error {
 	_, err := g.transfer(ctx, "", append([]string{"push", "--no-verify", remote}, refspecs...)...)
-	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
+	if err = classify(err, ErrNonFastForward, remoteMovedPatterns); err != nil && !errors.Is(err, ErrNonFastForward) {
+		err = classify(err, ErrRemoteRejected, []string{"[remote rejected]"})
+	}
+	if err != nil {
 		return fmt.Errorf("push %s: %w", remote, err)
 	}
 	return nil

@@ -60,6 +60,9 @@ var (
 	ErrSyncContended = errors.New("sync contended")
 	// ErrRemoteNotFound reports a remote name with no configuration.
 	ErrRemoteNotFound = errors.New("remote not configured")
+	// ErrRefsRejected reports a Sync whose remote refused some refs; every
+	// other ref still pushed.
+	ErrRefsRejected = errors.New("refs rejected")
 	// ErrObjectsUnavailable reports a Sync that deferred refs whose objects
 	// the remote did not send; every other ref still converged and pushed.
 	ErrObjectsUnavailable = errors.New("objects unavailable")
@@ -140,6 +143,9 @@ type engine struct {
 	// deferred maps each ref the current round could not hydrate to the
 	// fetch failure that left it out.
 	deferred map[string]error
+	// rejected maps each ref the current round's push left out because the
+	// remote refused it alone to that refusal.
+	rejected map[string]error
 }
 
 // Sync converges the local refs/cc-notes/ namespace with remote and pushes
@@ -172,7 +178,9 @@ func Sync(ctx context.Context, s *store.Store, remote string, full bool) (Report
 // Prefixed is Sync over only the refs whose names start with prefix, such
 // as one ledger's ref: it lists, fetches, folds, pushes, and moves the
 // attachments of those refs alone, so converging one entity never waits on
-// the whole namespace. A prefix outside refs/cc-notes/ is an error.
+// the whole namespace. A prefix outside refs/cc-notes/ is an error. One
+// process at a time syncs a prefix: a call while another runs returns an empty
+// Report at once, and the running one syncs again before it returns.
 func Prefixed(ctx context.Context, s *store.Store, remote string, full bool, prefix string) (Report, error) {
 	if !strings.HasPrefix(prefix, namespace) {
 		return Report{}, fmt.Errorf("sync %s: prefix %q is outside %s", remote, prefix, namespace)
@@ -183,6 +191,41 @@ func Prefixed(ctx context.Context, s *store.Store, remote string, full bool, pre
 	if err := ensureRemote(ctx, s.RecordsGit, remote); err != nil {
 		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
 	}
+	turn, err := s.TakeSyncTurn(trackingLockKey(remote, prefix))
+	if err != nil {
+		return Report{}, fmt.Errorf("sync %s: %w", remote, err)
+	}
+	var total Report
+	for turn != nil {
+		report, err := converge(ctx, s, remote, full, prefix)
+		total = total.plus(report)
+		if err != nil {
+			return total, errors.Join(err, turn.Close())
+		}
+		if turn, err = turn.Next(); err != nil {
+			return total, fmt.Errorf("sync %s: %w", remote, err)
+		}
+	}
+	return total, nil
+}
+
+func (r Report) plus(o Report) Report {
+	return Report{
+		Created:       r.Created + o.Created,
+		FastForwarded: r.FastForwarded + o.FastForwarded,
+		Merged:        r.Merged + o.Merged,
+		Pushed:        r.Pushed + o.Pushed,
+		Reconciled:    r.Reconciled + o.Reconciled,
+		Rounds:        r.Rounds + o.Rounds,
+		Uploaded:      r.Uploaded + o.Uploaded,
+		Downloaded:    r.Downloaded + o.Downloaded,
+		Withheld:      o.Withheld,
+		Held:          o.Held,
+		Deferred:      o.Deferred,
+	}
+}
+
+func converge(ctx context.Context, s *store.Store, remote string, full bool, prefix string) (Report, error) {
 	e := &engine{store: s, remote: remote, full: full, prefix: prefix}
 	trackingPrefix := syncNamespace + remote + "/"
 	trackingScope := trackingPrefix + strings.TrimPrefix(prefix, namespace)
@@ -192,7 +235,10 @@ func Prefixed(ctx context.Context, s *store.Store, remote string, full bool, pre
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		if err := refreshTracking(ctx, s, remote, prefix, trackingPrefix, trackingScope, fetchSpec); err != nil {
+		switch err := refreshTracking(ctx, s, remote, prefix, trackingPrefix, trackingScope, fetchSpec); {
+		case errors.Is(err, gitcmd.ErrCASMismatch):
+			continue
+		case err != nil:
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
 		after, err := trackingView(ctx, s, trackingScope)
@@ -224,7 +270,7 @@ func Prefixed(ctx context.Context, s *store.Store, remote string, full bool, pre
 		pending = unblocked
 		switch err := e.push(ctx, pending); {
 		case err == nil:
-			return e.finish(ctx, round, len(pending))
+			return e.finish(ctx, round, len(pending)-len(e.rejected))
 		case errors.Is(err, gitcmd.ErrNonFastForward):
 		default:
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
@@ -244,6 +290,13 @@ func (e *engine) finish(ctx context.Context, round, pushed int) (Report, error) 
 	}
 	if err := e.downloadAttachments(ctx); err != nil {
 		errs = append(errs, err)
+	}
+	if len(e.rejected) > 0 {
+		causes := make([]error, 0, len(e.rejected))
+		for _, ref := range slices.Sorted(maps.Keys(e.rejected)) {
+			causes = append(causes, fmt.Errorf("%s: %w", ref, e.rejected[ref]))
+		}
+		errs = append(errs, fmt.Errorf("%w: the remote refused %d refs: %w", ErrRefsRejected, len(e.rejected), errors.Join(causes...)))
 	}
 	if len(e.deferred) > 0 {
 		causes := make([]error, 0, len(e.deferred))
@@ -279,7 +332,7 @@ func refreshTracking(ctx context.Context, s *store.Store, remote, prefix, tracki
 	if err != nil {
 		return err
 	}
-	lock, err := s.TrackingLock(ctx, remote)
+	lock, err := s.TrackingLock(ctx, trackingLockKey(remote, prefix))
 	if err != nil {
 		return err
 	}
@@ -292,6 +345,13 @@ func refreshTracking(ctx context.Context, s *store.Store, remote, prefix, tracki
 		return nil
 	}
 	return s.RecordsGit.Holding(lock).Fetch(ctx, remote, fetchSpec)
+}
+
+func trackingLockKey(remote, prefix string) string {
+	if prefix == namespace {
+		return remote
+	}
+	return remote + " " + prefix
 }
 
 func mirrors(listed, tracking map[string]model.SHA, trackingPrefix string) bool {
@@ -505,21 +565,38 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 }
 
 func (e *engine) push(ctx context.Context, pending []string) (err error) {
+	e.rejected = make(map[string]error)
 	if len(pending) == 0 {
 		return nil
 	}
-	lock, err := e.store.TrackingLock(ctx, e.remote)
+	lock, err := e.store.TrackingLock(ctx, trackingLockKey(e.remote, e.prefix))
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
 	git := e.store.RecordsGit.Holding(lock)
 	for _, batch := range pushBatches(pending) {
-		if err := git.Push(ctx, e.remote, batch...); err != nil {
+		if err := e.pushRefs(ctx, git, batch); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (e *engine) pushRefs(ctx context.Context, git gitcmd.Held, refs []string) error {
+	err := git.Push(ctx, e.remote, refs...)
+	switch {
+	case !errors.Is(err, gitcmd.ErrRemoteRejected):
+		return err
+	case len(refs) == 1:
+		e.rejected[refs[0]] = err
+		return nil
+	}
+	half := len(refs) / 2
+	if err := e.pushRefs(ctx, git, refs[:half]); err != nil {
+		return err
+	}
+	return e.pushRefs(ctx, git, refs[half:])
 }
 
 func pushBatches(pending []string) [][]string {

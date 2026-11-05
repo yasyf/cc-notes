@@ -1427,3 +1427,56 @@ func TestPrefixedSyncRefusesAPrefixOutsideTheNamespace(t *testing.T) {
 		t.Fatalf("Prefixed(refs/heads/) error = %v, want an outside-namespace refusal", err)
 	}
 }
+
+func TestSyncRetriesARoundWhoseTrackingRefAnotherWriterHolds(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	note := createNote(t, a, "fetched past a held tracking ref")
+	sync(t, a)
+	tracking := "refs/cc-notes-sync/origin/" + strings.TrimPrefix(refs.For(model.KindNote, note.ID), refs.Namespace)
+	held := filepath.Join(gittest.Git(t, b.Git.Dir, "rev-parse", "--absolute-git-dir"), tracking+".lock")
+	if err := os.MkdirAll(filepath.Dir(held), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(held, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := ccsync.Sync(t.Context(), b, "origin", false)
+	if !errors.Is(err, ccsync.ErrSyncContended) || report.Rounds != 5 {
+		t.Fatalf("Sync with %s held by another writer = %+v, %v; want every round retried, then ErrSyncContended", tracking, report, err)
+	}
+	if err := os.Remove(held); err != nil {
+		t.Fatal(err)
+	}
+	if report := sync(t, b); report.Created != 1 {
+		t.Fatalf("Sync once %s is free = %+v, want the note created", tracking, report)
+	}
+}
+
+func TestSyncPushesEveryRefButOneTheRemoteRefuses(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	refused := refs.For(model.KindNote, createNote(t, a, "refused by the remote").ID)
+	kept := refs.For(model.KindTask, createTask(t, a, "pushed beside the refused note", "main").ID)
+	hooks := t.TempDir()
+	hook := fmt.Sprintf("#!/bin/sh\nif grep -q ' %s$'; then echo 'refusing %s' >&2; exit 1; fi\n", refused, refused)
+	//nolint:gosec // G306: a git pre-receive hook must be executable (0o755) to run.
+	if err := os.WriteFile(filepath.Join(hooks, "pre-receive"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, bare, "config", "core.hooksPath", hooks)
+
+	_, err := ccsync.Sync(t.Context(), a, "origin", false)
+	if !errors.Is(err, ccsync.ErrRefsRejected) || !strings.Contains(err.Error(), refused) {
+		t.Fatalf("Sync with %s refused by the remote = %v, want ErrRefsRejected naming it", refused, err)
+	}
+	published := ccRefs(t, bare)
+	if _, ok := published[kept]; !ok {
+		t.Fatalf("Sync with %s refused left %s off the remote, want it pushed", refused, kept)
+	}
+	if _, ok := published[refused]; ok {
+		t.Fatalf("remote holds %s after refusing it", refused)
+	}
+}

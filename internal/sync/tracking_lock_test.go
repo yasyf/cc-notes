@@ -38,7 +38,9 @@ func TestTrackingLockParentProcess(t *testing.T) {
 	t.Fatalf("Sync returned before its parent was killed: %v", err)
 }
 
-func slowWhileHolding(t *testing.T, s *store.Store) (marker, release string) {
+const originTracking = "refs/cc-notes-sync/origin/"
+
+func slowWhileHolding(t *testing.T, s *store.Store, tracking string) (marker, release string) {
 	t.Helper()
 	dir := t.TempDir()
 	marker, release = filepath.Join(dir, "holding"), filepath.Join(dir, "release")
@@ -46,7 +48,7 @@ func slowWhileHolding(t *testing.T, s *store.Store) (marker, release string) {
 [ "$1" = prepared ] || exit 0
 while read -r old new ref; do
     case "$ref" in
-        refs/cc-notes-sync/origin/*)
+        %s*)
             guardian=$(ps -o ppid= -p "$PPID" | tr -d ' ')
             printf '%%s %%s %%s %%s\n' "$PPID" "$$" "$guardian" "$ref" > '%s.tmp'
             mv '%s.tmp' '%s'
@@ -55,7 +57,7 @@ while read -r old new ref; do
             ;;
     esac
 done
-`, marker, marker, marker, release)
+`, tracking, marker, marker, marker, release)
 	if err := os.WriteFile(filepath.Join(dir, "reference-transaction"), []byte(hook), 0o755); err != nil {
 		t.Fatalf("write reference-transaction hook: %v", err)
 	}
@@ -224,7 +226,7 @@ func TestSyncFetchKeepsTheTrackingLockPastItsParent(t *testing.T) {
 			noteRef := refs.For(model.KindNote, note.ID)
 			tracking := "refs/cc-notes-sync/origin/" + strings.TrimPrefix(noteRef, "refs/cc-notes/")
 			lockPath := trackingLockPath(t, b)
-			marker, release := slowWhileHolding(t, b)
+			marker, release := slowWhileHolding(t, b, originTracking)
 
 			killParentWhileHolding(t, b, marker, lockPath)
 			assertOrphanHoldsThenReleases(t, b, release)
@@ -248,7 +250,7 @@ func TestSyncPushKeepsTheTrackingLockPastItsParent(t *testing.T) {
 				t.Fatalf("Install source tracking refspec: %v", err)
 			}
 			lockPath := trackingLockPath(t, a)
-			marker, release := slowWhileHolding(t, a)
+			marker, release := slowWhileHolding(t, a, originTracking)
 
 			killParentWhileHolding(t, a, marker, lockPath)
 			assertOrphanHoldsThenReleases(t, a, release)
@@ -294,7 +296,7 @@ func TestSyncCancelReapsItsGitWriterBeforeFreeingTheTrackingLock(t *testing.T) {
 			b := clone(t, bare, "Bob", "bob@example.com")
 			createNote(t, a, "fetched by a cancelled sync")
 			sync(t, a)
-			marker, release := slowWhileHolding(t, b)
+			marker, release := slowWhileHolding(t, b, originTracking)
 			tt.git(t)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -334,6 +336,61 @@ func TestSyncCancelReapsItsGitWriterBeforeFreeingTheTrackingLock(t *testing.T) {
 				t.Fatalf("release the orphaned hook: %v", err)
 			}
 		})
+	}
+}
+
+func TestPrefixedSyncRunsWhileASyncOfAnotherPrefixHoldsItsTrackingLock(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	createNote(t, a, "fetched by a paused sync")
+	taskRef := refs.For(model.KindTask, createTask(t, a, "fetched past the paused sync", "main").ID)
+	sync(t, a)
+	notes := refs.Root(model.KindNote)
+	marker, release := slowWhileHolding(t, b, originTracking+strings.TrimPrefix(notes, refs.Namespace))
+	type result struct {
+		report ccsync.Report
+		err    error
+	}
+	paused := make(chan result, 1)
+	go func() {
+		report, err := ccsync.Prefixed(t.Context(), b, "origin", false, notes)
+		paused <- result{report, err}
+	}()
+	awaitPausedWriter(t, marker, func() string {
+		_ = os.WriteFile(release, nil, 0o600)
+		return fmt.Sprintf("Prefixed(%s) returned %+v", notes, <-paused)
+	})
+
+	scoped, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if _, err := ccsync.Prefixed(scoped, b, "origin", false, taskRef); err != nil {
+		t.Fatalf("Prefixed(%s) while a sync of %s holds its tracking lock = %v, want it to run without waiting", taskRef, notes, err)
+	}
+	if got, want := gittest.Git(t, b.Git.Dir, "rev-parse", taskRef), gittest.Git(t, bare, "rev-parse", taskRef); got != want {
+		t.Fatalf("%s = %s past the paused sync, want the remote tip %s", taskRef, got, want)
+	}
+	later := refs.For(model.KindNote, createNote(t, a, "written while the notes sync runs").ID)
+	sync(t, a)
+	same, cancelSame := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelSame()
+	if report, err := ccsync.Prefixed(same, b, "origin", false, notes); err != nil || report != (ccsync.Report{}) {
+		t.Fatalf("second Prefixed(%s) while the first runs = %+v, %v; want an empty report at once", notes, report, err)
+	}
+
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatalf("release the paused sync: %v", err)
+	}
+	select {
+	case got := <-paused:
+		if got.err != nil || got.report.Rounds != 2 {
+			t.Fatalf("paused Prefixed(%s) after release = %+v, %v; want a second run for the coalesced call", notes, got.report, got.err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("paused Prefixed(%s) never returned after release", notes)
+	}
+	if got, want := gittest.Git(t, b.Git.Dir, "rev-parse", later), gittest.Git(t, bare, "rev-parse", later); got != want {
+		t.Fatalf("%s = %s after the coalesced sync, want the remote tip %s", later, got, want)
 	}
 }
 
