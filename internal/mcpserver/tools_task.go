@@ -319,14 +319,12 @@ func registerCriterion(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"task", "criterion", "add"}, flags, in.ID)...)
 		})
 
-	for _, verb := range []string{"rm", "pending"} {
-		addTool(ts, &mcp.Tool{Name: "task_criterion_" + verb, Description: criterionVerbDescription(verb)},
-			func(ctx context.Context, _ *mcp.CallToolRequest, in criterionRefArgs) (*mcp.CallToolResult, any, error) {
-				return b.run(ctx, argvFor([]string{"task", "criterion", verb}, []string{"--json"}, in.ID, in.Criterion)...)
-			})
-	}
+	addTool(ts, &mcp.Tool{Name: "task_criterion_rm", Description: criterionVerbDescription("rm")},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in criterionRefArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, argvFor([]string{"task", "criterion", "rm"}, []string{"--json"}, in.ID, in.Criterion)...)
+		})
 
-	for _, verb := range []string{"met", "failed"} {
+	for _, verb := range []string{"met", "failed", "pending"} {
 		addTool(ts, &mcp.Tool{Name: "task_criterion_" + verb, Description: criterionVerbDescription(verb)},
 			func(ctx context.Context, _ *mcp.CallToolRequest, in criterionResultArgs) (*mcp.CallToolResult, any, error) {
 				flags, err := freeTextFlag([]string{"--json"}, "--note", in.Note)

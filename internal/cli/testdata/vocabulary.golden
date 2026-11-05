@@ -2616,6 +2616,7 @@ command: cc-notes task criterion pending
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --note shorthand=none type=string default="" usage="evidence recorded with the verdict (a later status change clears it)"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
 

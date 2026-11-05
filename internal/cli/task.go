@@ -1202,9 +1202,7 @@ func newCriterionStatusCmd(use string, status model.CriterionStatus) *cobra.Comm
 		},
 	}
 	flags := cmd.Flags()
-	if status != model.CriterionPending {
-		flags.StringVar(&note, "note", "", "evidence recorded with the verdict (a later status change clears it)")
-	}
+	flags.StringVar(&note, "note", "", "evidence recorded with the verdict (a later status change clears it)")
 	bindJSON(flags, &jsonOut)
 	return cmd
 }
