@@ -150,7 +150,7 @@ func TestQueryAllocationReducesSiblingCounterPages(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		before := db.Stats().TxStats.GetPageAlloc()
+		before := db.Stats()
 		for _, delta := range []int{1, -1} {
 			if err := db.Update(func(tx *bolt.Tx) error {
 				counts := newQueryReferenceCounts(tx.Bucket(queryGenerationsBucket))
@@ -166,7 +166,8 @@ func TestQueryAllocationReducesSiblingCounterPages(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		got := result{allocated: db.Stats().TxStats.GetPageAlloc() - before, root: rootHash, counts: make(map[model.SHA]uint64)}
+		after := db.Stats()
+		got := result{allocated: after.TxStats.GetPageAlloc() - before.TxStats.GetPageAlloc(), root: rootHash, counts: make(map[model.SHA]uint64)}
 		if err := db.View(func(tx *bolt.Tx) error {
 			root := tx.Bucket(queryGenerationsBucket)
 			store := queryObjectStoreAt(root)
