@@ -104,11 +104,15 @@ func (s *SourceObjects) ObjectType(sha model.SHA) (plumbing.ObjectType, error) {
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
 		value, err = s.repo.storage.managedObject(hash)
 	}
-	if errors.Is(err, plumbing.ErrObjectNotFound) {
-		value, err = s.repo.storage.looseObject(hash)
-	}
 	if err == nil {
 		return value.Type(), nil
+	}
+	if !errors.Is(err, plumbing.ErrObjectNotFound) {
+		return plumbing.InvalidObject, err
+	}
+	kind, err := s.repo.storage.looseObjectType(hash)
+	if err == nil {
+		return kind, nil
 	}
 	if !errors.Is(err, plumbing.ErrObjectNotFound) {
 		return plumbing.InvalidObject, err

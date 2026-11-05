@@ -177,7 +177,7 @@ func Open(dir string) (*Store, error) {
 // is malformed, or names a backend that is missing, replaced, bound onward, or
 // unreadable, is a *BindingError — never a fallback to a context-local corpus.
 func OpenContext(ctx context.Context, dir string) (*Store, error) {
-	git := gitcmd.Git{Dir: dir}.Memoized()
+	git := gitcmd.Git{Dir: dir}
 	gitDir, commonDir, bare, err := git.Dirs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open git repository at %s: %w", dir, err)
@@ -210,7 +210,7 @@ func OpenContext(ctx context.Context, dir string) (*Store, error) {
 			return nil, s.storage.fail(err)
 		}
 		s.Repo = records
-		s.RecordsGit = gitcmd.Backend(b.CommonDir, s.storage.workDir).Memoized()
+		s.RecordsGit = gitcmd.Backend(b.CommonDir, s.storage.workDir)
 		s.recordsCommonDir = b.CommonDir
 	}
 	s.Repo.BackfillWith(s.hydrateChain)

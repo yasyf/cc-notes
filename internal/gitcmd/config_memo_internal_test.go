@@ -9,10 +9,11 @@ import (
 
 func TestMemoizedConfigRereadsAnEditOnceItAges(t *testing.T) {
 	dir := gittest.InitRepo(t)
-	g := Git{Dir: dir}.Memoized()
+	g := Git{Dir: dir}
+	ctx := WithCommandMemo(t.Context())
 	read := func() int {
 		t.Helper()
-		pairs, err := g.ConfigGetRegexp(t.Context(), `^cc-notes\.local`)
+		pairs, err := g.ConfigGetRegexp(ctx, `^cc-notes\.local`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -25,7 +26,7 @@ func TestMemoizedConfigRereadsAnEditOnceItAges(t *testing.T) {
 	if got := read(); got != 0 {
 		t.Fatalf("fresh listing was not reused: %d", got)
 	}
-	g.memo.read = time.Now().Add(-configMemoMaxAge)
+	g.repo(memoOf(ctx)).read = time.Now().Add(-configMemoMaxAge)
 	if got := read(); got != 1 {
 		t.Fatalf("aged listing kept: %d", got)
 	}

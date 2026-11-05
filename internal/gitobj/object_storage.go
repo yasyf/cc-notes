@@ -157,6 +157,24 @@ func (s *objectStorage) looseObject(hash plumbing.Hash) (obj plumbing.EncodedObj
 	return memory, nil
 }
 
+func (s *objectStorage) looseObjectType(hash plumbing.Hash) (kind plumbing.ObjectType, resultErr error) {
+	file, err := s.dir.Object(hash)
+	if errors.Is(err, os.ErrNotExist) {
+		return plumbing.InvalidObject, plumbing.ErrObjectNotFound
+	}
+	if err != nil {
+		return plumbing.InvalidObject, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
+	reader, err := objfile.NewReader(contextFile{File: file, ctx: s.scope.ctx})
+	if err != nil {
+		return plumbing.InvalidObject, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, reader.Close()) }()
+	kind, _, err = reader.Header()
+	return kind, err
+}
+
 func (s *objectStorage) packedObject(hash plumbing.Hash) (plumbing.EncodedObject, error) {
 	if s.scope.refresh {
 		if err := s.scope.closeBatches(); err != nil {

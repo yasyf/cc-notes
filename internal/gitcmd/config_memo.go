@@ -1,7 +1,9 @@
 package gitcmd
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,15 +15,27 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// configMemoMaxAge bounds how long a memoized handle trusts its config read, so
-// a retained store still sees an edit made outside this process.
+// configMemoMaxAge bounds how long one read answers, so a command that runs for
+// a long time still sees an edit made outside it.
 const configMemoMaxAge = time.Second
 
-// configMemo holds what one handle read about its repository: one listing
-// answers every config question a command asks. It is shared by copies of the
-// handle, guarded by mu.
-type configMemo struct {
-	mu        sync.Mutex
+type commandMemoKey struct{}
+
+// commandMemo holds what one command learned about each repository it touched,
+// guarded by mu. One config listing answers every config question the command
+// asks, so a command that also writes config pays for a single read.
+type commandMemo struct {
+	mu    sync.Mutex
+	repos map[repoKey]*repoMemo
+}
+
+type repoKey struct {
+	dir     string
+	workDir string
+	backend bool
+}
+
+type repoMemo struct {
 	read      time.Time
 	entries   []scopedConfigEntry
 	gitDir    string
@@ -35,34 +49,54 @@ type scopedConfigEntry struct {
 	path  string
 	key   string
 	value string
+	bare  bool
 }
 
-// Memoized returns g answering config reads, the author identity, and HEAD
-// from one read of the repository's whole config. Config g writes itself shows
-// in its next read.
-func (g Git) Memoized() Git {
-	g.memo = &configMemo{}
-	return g
+// WithCommandMemo returns ctx carrying a memo for one command's git reads:
+// config, the author identity, and HEAD. A long-lived caller makes one per
+// operation rather than holding one across operations.
+func WithCommandMemo(ctx context.Context) context.Context {
+	return context.WithValue(ctx, commandMemoKey{}, &commandMemo{repos: make(map[repoKey]*repoMemo)})
 }
 
-func (g Git) memoized() bool {
-	return g.memo != nil && g.held == nil && os.Getenv("GIT_CONFIG") == ""
+func memoOf(ctx context.Context) *commandMemo {
+	memo, _ := ctx.Value(commandMemoKey{}).(*commandMemo)
+	return memo
 }
 
-func (g Git) forgetConfig() {
-	if g.memo == nil {
+func (g Git) repo(memo *commandMemo) *repoMemo {
+	key := repoKey{dir: g.Dir, workDir: g.workDir, backend: g.backend}
+	repo := memo.repos[key]
+	if repo == nil {
+		repo = &repoMemo{}
+		memo.repos[key] = repo
+	}
+	return repo
+}
+
+func (g Git) memoizes(ctx context.Context) bool {
+	return memoOf(ctx) != nil && g.held == nil && os.Getenv("GIT_CONFIG") == ""
+}
+
+func forgetConfig(ctx context.Context) {
+	memo := memoOf(ctx)
+	if memo == nil {
 		return
 	}
-	g.memo.mu.Lock()
-	defer g.memo.mu.Unlock()
-	g.memo.read = time.Time{}
+	memo.mu.Lock()
+	defer memo.mu.Unlock()
+	for _, repo := range memo.repos {
+		repo.read = time.Time{}
+	}
 }
 
 func (g Git) configEntries(ctx context.Context) ([]scopedConfigEntry, error) {
-	g.memo.mu.Lock()
-	defer g.memo.mu.Unlock()
-	if time.Since(g.memo.read) < configMemoMaxAge {
-		return g.memo.entries, nil
+	memo := memoOf(ctx)
+	memo.mu.Lock()
+	defer memo.mu.Unlock()
+	repo := g.repo(memo)
+	if time.Since(repo.read) < configMemoMaxAge {
+		return repo.entries, nil
 	}
 	out, err := g.run(ctx, "", "config", "--list", "--show-scope", "--show-origin", "--includes", "-z")
 	if err != nil {
@@ -72,7 +106,7 @@ func (g Git) configEntries(ctx context.Context) ([]scopedConfigEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	g.memo.entries, g.memo.read = entries, time.Now()
+	repo.entries, repo.read = entries, time.Now()
 	return entries, nil
 }
 
@@ -86,8 +120,8 @@ func parseScopedConfig(out string) ([]scopedConfigEntry, error) {
 	}
 	entries := make([]scopedConfigEntry, 0, len(tokens)/3)
 	for i := 0; i < len(tokens); i += 3 {
-		key, value, _ := strings.Cut(tokens[i+2], "\n")
-		entries = append(entries, scopedConfigEntry{scope: tokens[i], path: strings.TrimPrefix(tokens[i+1], "file:"), key: key, value: value})
+		key, value, hasValue := strings.Cut(tokens[i+2], "\n")
+		entries = append(entries, scopedConfigEntry{scope: tokens[i], path: strings.TrimPrefix(tokens[i+1], "file:"), key: key, value: value, bare: !hasValue})
 	}
 	return entries, nil
 }
@@ -183,6 +217,12 @@ func (g Git) memoizedAuthorIdent(ctx context.Context) (name, email string, ok bo
 	if err != nil {
 		return "", "", false, err
 	}
+	for _, entry := range entries {
+		ident := strings.HasPrefix(entry.key, "user.") || strings.HasPrefix(entry.key, "author.") || strings.HasPrefix(entry.key, "committer.")
+		if ident && (entry.bare || entry.key == "user.useconfigonly") {
+			return "", "", false, nil
+		}
+	}
 	pick := func(env, authorKey, userKey string) string {
 		if value, set := os.LookupEnv(env); set {
 			return value
@@ -208,15 +248,18 @@ func plainIdentPart(value string) bool {
 }
 
 // memoizedHead reads the branch from the HEAD file of a located repository. It
-// declines anything but a plain symbolic ref, which leaves a detached HEAD and
-// the reftable backend's placeholder branch to git.
-func (g Git) memoizedHead() (model.Branch, bool) {
-	if g.memo == nil {
+// declines anything but a symbolic ref naming a branch that is not itself
+// symbolic, which leaves a detached HEAD, a chain of symbolic refs, and the
+// reftable backend's placeholder branch to git.
+func (g Git) memoizedHead(ctx context.Context) (model.Branch, bool) {
+	memo := memoOf(ctx)
+	if memo == nil {
 		return "", false
 	}
-	g.memo.mu.Lock()
-	gitDir, located := g.memo.gitDir, g.memo.located
-	g.memo.mu.Unlock()
+	memo.mu.Lock()
+	repo := g.repo(memo)
+	gitDir, commonDir, located := repo.gitDir, repo.commonDir, repo.located
+	memo.mu.Unlock()
 	if !located {
 		return "", false
 	}
@@ -227,8 +270,17 @@ func (g Git) memoizedHead() (model.Branch, bool) {
 	}
 	target, symbolic := strings.CutPrefix(string(data), "ref:")
 	target = strings.TrimSpace(target)
-	if !symbolic || !strings.HasPrefix(target, "refs/") || target == "refs/heads/.invalid" {
+	branch, isBranch := strings.CutPrefix(target, "refs/heads/")
+	if !symbolic || !isBranch || branch == ".invalid" {
 		return "", false
 	}
-	return model.Branch(strings.TrimPrefix(target, "refs/heads/")), true
+	//nolint:gosec // G304: commonDir is the directory git itself reported, and target came from its HEAD.
+	ref, err := os.ReadFile(filepath.Join(commonDir, target))
+	if err == nil && bytes.HasPrefix(ref, []byte("ref:")) {
+		return "", false
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", false
+	}
+	return model.Branch(branch), true
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/version"
 )
 
@@ -29,6 +30,9 @@ func NewRootCmd() *cobra.Command {
 		RunE:          runHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			cmd.SetContext(gitcmd.WithCommandMemo(cmd.Context()))
+		},
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringP("repo", "R", "", "operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)")

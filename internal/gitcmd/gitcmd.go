@@ -69,7 +69,6 @@ type Git struct {
 	workDir string
 	backend bool
 	held    *os.File
-	memo    *configMemo
 }
 
 // Held runs the git commands that write a remote's tracking refs, none of
@@ -788,7 +787,7 @@ func (g Git) ConfigGet(ctx context.Context, key string) (string, error) {
 // config order, or nil when nothing matches. A multi-valued key yields one
 // pair per value.
 func (g Git) ConfigGetRegexp(ctx context.Context, pattern string) ([][2]string, error) {
-	if g.memoized() {
+	if g.memoizes(ctx) {
 		return g.memoizedConfigRegexp(ctx, pattern)
 	}
 	out, err := g.run(ctx, "", "config", "-z", "--get-regexp", pattern)
@@ -880,7 +879,7 @@ func envWithoutGitConfig() []string {
 // ConfigFileSet sets key to value in exactly the config file at path — no
 // scope resolution, no includes — via git config --file.
 func (g Git) ConfigFileSet(ctx context.Context, path, key, value string) error {
-	defer g.forgetConfig()
+	defer forgetConfig(ctx)
 	if _, err := g.run(ctx, "", "config", "--file", path, key, value); err != nil {
 		return fmt.Errorf("config set %s in %s: %w", key, path, err)
 	}
@@ -910,7 +909,7 @@ func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
 // multi-valued key yields one pair per value, and a bare "[section] key" line
 // an empty value. It is the single-read form of ConfigGetAll over every key.
 func (g Git) ConfigLocal(ctx context.Context) ([][2]string, error) {
-	if g.memoized() {
+	if g.memoizes(ctx) {
 		if pairs, known, err := g.memoizedConfigLocal(ctx); known || err != nil {
 			return pairs, err
 		}
@@ -933,7 +932,7 @@ func (g Git) ConfigLocal(ctx context.Context) ([][2]string, error) {
 // ConfigAdd appends value as a new line for key in the repository-local
 // config, keeping any existing values.
 func (g Git) ConfigAdd(ctx context.Context, key, value string) error {
-	defer g.forgetConfig()
+	defer forgetConfig(ctx)
 	if _, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--add", key, value); err != nil {
 		return fmt.Errorf("config add %s: %w", key, err)
 	}
@@ -943,7 +942,7 @@ func (g Git) ConfigAdd(ctx context.Context, key, value string) error {
 // ConfigSet sets key to value in the repository-local config, replacing a
 // single existing value. Setting a multi-valued key fails.
 func (g Git) ConfigSet(ctx context.Context, key, value string) error {
-	defer g.forgetConfig()
+	defer forgetConfig(ctx)
 	if _, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", key, value); err != nil {
 		return fmt.Errorf("config set %s: %w", key, err)
 	}
@@ -955,7 +954,7 @@ func (g Git) ConfigSet(ctx context.Context, key, value string) error {
 // place. oldValue is matched literally (--fixed-value), so refspec
 // metacharacters are not interpreted as a regexp.
 func (g Git) ConfigReplaceValue(ctx context.Context, key, oldValue, newValue string) error {
-	defer g.forgetConfig()
+	defer forgetConfig(ctx)
 	if _, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--replace-all", "--fixed-value", key, newValue, oldValue); err != nil {
 		return fmt.Errorf("config replace %s value %q: %w", key, oldValue, err)
 	}
@@ -967,7 +966,7 @@ func (g Git) ConfigReplaceValue(ctx context.Context, key, oldValue, newValue str
 // no line matches — the value was already unset — it wraps ErrConfigNoMatch, so
 // a caller racing a concurrent unset can treat it as already done.
 func (g Git) ConfigUnsetValue(ctx context.Context, key, value string) error {
-	defer g.forgetConfig()
+	defer forgetConfig(ctx)
 	_, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--unset-all", "--fixed-value", key, value)
 	var cmdErr *commandError
 	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 5 {
@@ -983,7 +982,7 @@ func (g Git) ConfigUnsetValue(ctx context.Context, key, value string) error {
 // in a freshly initialized repository. A detached HEAD wraps
 // ErrDetachedHead.
 func (g Git) HeadBranch(ctx context.Context) (model.Branch, error) {
-	if branch, ok := g.memoizedHead(); ok {
+	if branch, ok := g.memoizedHead(ctx); ok {
 		return branch, nil
 	}
 	out, err := g.run(ctx, "", "symbolic-ref", "HEAD")
@@ -1018,7 +1017,7 @@ func (g Git) DefaultBranch(ctx context.Context) (model.Branch, error) {
 // `git var GIT_AUTHOR_IDENT`. A missing identity surfaces git's own error
 // plus a hint to set user.name and user.email.
 func (g Git) AuthorIdent(ctx context.Context) (name, email string, err error) {
-	if g.memoized() {
+	if g.memoizes(ctx) {
 		if name, email, ok, err := g.memoizedAuthorIdent(ctx); ok || err != nil {
 			return name, email, err
 		}
@@ -1091,18 +1090,20 @@ func (g Git) CommonDir(ctx context.Context) (string, error) {
 // Dirs returns the physical per-worktree and shared git directories and
 // whether the repository is bare, from one --path-format=absolute rev-parse.
 func (g Git) Dirs(ctx context.Context) (gitDir, commonDir string, bare bool, err error) {
-	if g.memo == nil {
+	memo := memoOf(ctx)
+	if memo == nil {
 		return g.dirs(ctx, nil)
 	}
-	g.memo.mu.Lock()
-	defer g.memo.mu.Unlock()
-	if !g.memo.located {
-		if g.memo.gitDir, g.memo.commonDir, g.memo.bare, err = g.dirs(ctx, nil); err != nil {
+	memo.mu.Lock()
+	defer memo.mu.Unlock()
+	repo := g.repo(memo)
+	if !repo.located {
+		if repo.gitDir, repo.commonDir, repo.bare, err = g.dirs(ctx, nil); err != nil {
 			return "", "", false, err
 		}
-		g.memo.located = true
+		repo.located = true
 	}
-	return g.memo.gitDir, g.memo.commonDir, g.memo.bare, nil
+	return repo.gitDir, repo.commonDir, repo.bare, nil
 }
 
 func (g Git) dirs(ctx context.Context, env []string) (gitDir, commonDir string, bare bool, err error) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
+	"github.com/yasyf/cc-notes/model"
 )
 
 var memoPatterns = []string{
@@ -44,13 +45,13 @@ func writeMemoConfig(t *testing.T, commonDir string) {
 
 func assertMemoConfigMatchesGit(t *testing.T, plain gitcmd.Git) {
 	t.Helper()
-	memo := plain.Memoized()
+	ctx := gitcmd.WithCommandMemo(t.Context())
 	for _, pattern := range memoPatterns {
 		want, err := plain.ConfigGetRegexp(t.Context(), pattern)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := memo.ConfigGetRegexp(t.Context(), pattern)
+		got, err := plain.ConfigGetRegexp(ctx, pattern)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +63,7 @@ func assertMemoConfigMatchesGit(t *testing.T, plain gitcmd.Git) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := memo.ConfigLocal(t.Context())
+	got, err := plain.ConfigLocal(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,11 +122,12 @@ func TestMemoizedConfigMatchesGit(t *testing.T) {
 
 func TestMemoizedConfigSeesItsOwnWrites(t *testing.T) {
 	dir := gittest.InitRepo(t)
-	g := gitcmd.Git{Dir: dir}.Memoized()
+	g := gitcmd.Git{Dir: dir}
+	ctx := gitcmd.WithCommandMemo(t.Context())
 	const key = "remote.origin.push"
 	read := func() []string {
 		t.Helper()
-		pairs, err := g.ConfigGetRegexp(t.Context(), `^remote\.origin\.push$`)
+		pairs, err := g.ConfigGetRegexp(ctx, `^remote\.origin\.push$`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,28 +140,28 @@ func TestMemoizedConfigSeesItsOwnWrites(t *testing.T) {
 	if got := read(); len(got) != 0 {
 		t.Fatalf("initial = %q", got)
 	}
-	if err := g.ConfigAdd(t.Context(), key, "one"); err != nil {
+	if err := g.ConfigAdd(ctx, key, "one"); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(); !reflect.DeepEqual(got, []string{"one"}) {
 		t.Fatalf("after add = %q", got)
 	}
-	if err := g.ConfigReplaceValue(t.Context(), key, "one", "two"); err != nil {
+	if err := g.ConfigReplaceValue(ctx, key, "one", "two"); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(); !reflect.DeepEqual(got, []string{"two"}) {
 		t.Fatalf("after replace = %q", got)
 	}
-	if err := g.ConfigUnsetValue(t.Context(), key, "two"); err != nil {
+	if err := g.ConfigUnsetValue(ctx, key, "two"); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(); len(got) != 0 {
 		t.Fatalf("after unset = %q", got)
 	}
-	if err := g.ConfigSet(t.Context(), "cc-notes.localLabel", "set"); err != nil {
+	if err := g.ConfigSet(ctx, "cc-notes.localLabel", "set"); err != nil {
 		t.Fatal(err)
 	}
-	pairs, err := g.ConfigGetRegexp(t.Context(), `^cc-notes\.local`)
+	pairs, err := g.ConfigGetRegexp(ctx, `^cc-notes\.local`)
 	if err != nil || !reflect.DeepEqual(pairs, [][2]string{{"cc-notes.locallabel", "set"}}) {
 		t.Fatalf("after set = %q, %v", pairs, err)
 	}
@@ -170,6 +172,7 @@ func TestMemoizedAuthorIdentMatchesGit(t *testing.T) {
 		name   string
 		config map[string]string
 		env    map[string]string
+		bare   string
 	}{
 		{name: "user config", config: map[string]string{"user.name": "Ann Lee", "user.email": "ann@example.com"}},
 		{name: "author config wins", config: map[string]string{"user.name": "Ann", "user.email": "ann@example.com", "author.name": "Bo", "author.email": "bo@example.com"}},
@@ -181,6 +184,8 @@ func TestMemoizedAuthorIdentMatchesGit(t *testing.T) {
 		{name: "empty environment name", config: map[string]string{"user.name": "Ann", "user.email": "ann@example.com"}, env: map[string]string{"GIT_AUTHOR_NAME": ""}},
 		{name: "EMAIL fallback", config: map[string]string{"user.name": "Ann", "user.useConfigOnly": "false"}, env: map[string]string{"EMAIL": "env@example.com"}},
 		{name: "useConfigOnly with no email", config: map[string]string{"user.name": "Ann", "user.useConfigOnly": "true"}},
+		{name: "bare author name", config: map[string]string{"user.name": "Ann", "user.email": "ann@example.com"}, bare: "[author]\n\tname\n"},
+		{name: "invalid useConfigOnly", config: map[string]string{"user.name": "Ann", "user.email": "ann@example.com", "user.useConfigOnly": "maybe"}},
 		{name: "author date set", config: map[string]string{"user.name": "Ann", "user.email": "ann@example.com"}, env: map[string]string{"GIT_AUTHOR_DATE": "not a date"}},
 	}
 	for _, test := range tests {
@@ -189,11 +194,23 @@ func TestMemoizedAuthorIdentMatchesGit(t *testing.T) {
 			for key, value := range test.config {
 				gittest.Git(t, plain.Dir, "config", key, value)
 			}
+			if test.bare != "" {
+				file, err := os.OpenFile(filepath.Join(plain.Dir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := file.WriteString(test.bare); err != nil {
+					t.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
 			for key, value := range test.env {
 				t.Setenv(key, value)
 			}
 			wantName, wantEmail, wantErr := plain.AuthorIdent(t.Context())
-			gotName, gotEmail, gotErr := plain.Memoized().AuthorIdent(t.Context())
+			gotName, gotEmail, gotErr := plain.AuthorIdent(gitcmd.WithCommandMemo(t.Context()))
 			if (gotErr == nil) != (wantErr == nil) || gotName != wantName || gotEmail != wantEmail {
 				t.Fatalf("got %q %q %v, git says %q %q %v", gotName, gotEmail, gotErr, wantName, wantEmail, wantErr)
 			}
@@ -203,18 +220,19 @@ func TestMemoizedAuthorIdentMatchesGit(t *testing.T) {
 
 func TestMemoizedHeadMatchesGit(t *testing.T) {
 	dir := gittest.InitRepo(t)
-	located := func(dir string) gitcmd.Git {
+	memoHead := func(dir string) (model.Branch, error) {
 		t.Helper()
-		g := gitcmd.Git{Dir: dir}.Memoized()
-		if _, _, _, err := g.Dirs(t.Context()); err != nil {
+		g := gitcmd.Git{Dir: dir}
+		ctx := gitcmd.WithCommandMemo(t.Context())
+		if _, _, _, err := g.Dirs(ctx); err != nil {
 			t.Fatal(err)
 		}
-		return g
+		return g.HeadBranch(ctx)
 	}
 	assertSame := func(dir string) {
 		t.Helper()
 		want, wantErr := gitcmd.Git{Dir: dir}.HeadBranch(t.Context())
-		got, gotErr := located(dir).HeadBranch(t.Context())
+		got, gotErr := memoHead(dir)
 		if got != want || errors.Is(gotErr, gitcmd.ErrDetachedHead) != errors.Is(wantErr, gitcmd.ErrDetachedHead) || (gotErr == nil) != (wantErr == nil) {
 			t.Fatalf("HeadBranch = %q %v, git says %q %v", got, gotErr, want, wantErr)
 		}
@@ -228,9 +246,13 @@ func TestMemoizedHeadMatchesGit(t *testing.T) {
 	assertSame(linked)
 	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/custom/head")
 	assertSame(dir)
+	gittest.Git(t, dir, "branch", "-q", "real", "linked")
+	gittest.Git(t, dir, "symbolic-ref", "refs/heads/alias", "refs/heads/real")
+	gittest.Git(t, dir, "symbolic-ref", "HEAD", "refs/heads/alias")
+	assertSame(dir)
 	gittest.Git(t, dir, "switch", "-q", "--detach", "linked")
 	assertSame(dir)
-	if _, err := located(dir).HeadBranch(t.Context()); !errors.Is(err, gitcmd.ErrDetachedHead) {
+	if _, err := memoHead(dir); !errors.Is(err, gitcmd.ErrDetachedHead) {
 		t.Fatalf("detached HEAD = %v", err)
 	}
 }
