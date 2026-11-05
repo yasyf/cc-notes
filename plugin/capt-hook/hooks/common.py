@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -10,13 +11,17 @@ from itertools import takewhile
 from pathlib import Path
 from typing import Any
 
-from captain_hook import BaseHookEvent, CommandLine, CustomCondition
+from captain_hook import BaseHookEvent, CommandLine, CustomCondition, SessionSlot
+from captain_hook.session import state_root
 from captain_hook.state import SeenKeys
 from pydantic import BaseModel, Field
 
 SESSION_TASK_CAP = 7
 SESSION_ANSWER_CAP = 8
 ANSWER_CANDIDATE_LIMIT = 12
+RECENT_PROMPT_LIMIT = 20
+SHINGLE_WORDS = 4
+TEMPLATE_SHARE = 0.5
 ANSWERS_SCOPE = "answers"
 ANSWER_METADATA_PREFIXES = ("Question: ", "Options: ", "Notes: ", "Preview: ")
 NUDGE_MAX_FIRES = 3
@@ -35,6 +40,15 @@ MCP_TOOL_PREFIX = "mcp__plugin_cc-notes_cc-notes__"
 class SessionAnswers(BaseModel):
     lines: dict[str, str] = Field(default_factory=dict)
     owners: dict[str, str] = Field(default_factory=dict)
+
+
+class RecentPrompt(BaseModel):
+    session: str
+    shingles: list[str]
+
+
+class RecentPrompts(BaseModel):
+    prompts: list[RecentPrompt] = Field(default_factory=list)
 
 
 def agent_key(evt: BaseHookEvent) -> str:
@@ -397,9 +411,45 @@ def durable_answers(evt: BaseHookEvent, *anchors: str) -> list[dict[str, Any]]:
     return [a for a in parse_answers(out) if not a.get("stale_at")]
 
 
+def trunk_branch(evt: BaseHookEvent) -> str:
+    if remote := (evt.ctx.git("symbolic-ref", "--short", "refs/remotes/origin/HEAD") or "").strip():
+        return remote.removeprefix("origin/")
+    return next((name for name in ("main", "master") if evt.ctx.git("rev-parse", "--verify", "--quiet", f"refs/heads/{name}")), "")
+
+
 def branch_answers(evt: BaseHookEvent) -> list[dict[str, Any]]:
     branch = current_branch(evt)
-    return durable_answers(evt, "--branch", branch) if branch else []
+    return durable_answers(evt, "--branch", branch) if branch and branch != trunk_branch(evt) else []
+
+
+def recent_prompts() -> SessionSlot[RecentPrompts]:
+    return SessionSlot(state_root() / "cc-notes", RecentPrompts)
+
+
+def prompt_shingles(text: str) -> set[str]:
+    words = text[:LLM_INPUT_CAP].lower().split()
+    return {
+        hashlib.blake2b(" ".join(words[i : i + SHINGLE_WORDS]).encode(), digest_size=4).hexdigest()
+        for i in range(len(words) - SHINGLE_WORDS + 1)
+    }
+
+
+def repeats_another_session(evt: BaseHookEvent, shingles: set[str], prompts: list[RecentPrompt]) -> bool:
+    return bool(shingles) and any(
+        p.session != evt.session_id and len(shingles.intersection(p.shingles)) >= TEMPLATE_SHARE * len(shingles) for p in prompts
+    )
+
+
+def repeats_recent_prompts(evt: BaseHookEvent, text: str) -> bool:
+    return repeats_another_session(evt, prompt_shingles(text), recent_prompts().get(RecentPrompts()).prompts)
+
+
+def remember_first_prompt(evt: BaseHookEvent, text: str) -> bool:
+    shingles = prompt_shingles(text)
+    with recent_prompts().mutate() as state:
+        repeated = repeats_another_session(evt, shingles, state.prompts)
+        state.prompts = [*state.prompts, RecentPrompt(session=evt.session_id, shingles=sorted(shingles))][-RECENT_PROMPT_LIMIT:]
+    return repeated
 
 
 def matched_answers(evt: BaseHookEvent, text: str) -> list[dict[str, Any]]:

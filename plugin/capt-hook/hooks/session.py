@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from captain_hook import Event, HookResult, UserPromptSubmitEvent, on
 
+from .answers import pick_prompt_answer
 from .common import (
     SESSION_ANSWER_CAP,
     SESSION_TASK_CAP,
@@ -15,6 +16,7 @@ from .common import (
     dedup_tasks,
     parse_status,
     remember_answers,
+    remember_first_prompt,
     render_steal_line,
     render_task_line,
     run_cc_notes,
@@ -49,8 +51,10 @@ def float_session_tasks(evt: UserPromptSubmitEvent) -> HookResult | None:
 def float_session_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
     if not evt.ctx.s.once("first", scope="session-answers"):
         return None
-    named = matched_answers(evt, evt.user_prompt or "")
-    fresh = unseen_answers(evt, list({a["id"]: a for a in [*named, *branch_answers(evt)]}.values()))
+    prompt = evt.user_prompt or ""
+    named = [] if remember_first_prompt(evt, prompt) else unseen_answers(evt, matched_answers(evt, prompt))
+    picked = [answer] if named and (answer := pick_prompt_answer(evt, named)) else []
+    fresh = unseen_answers(evt, list({a["id"]: a for a in [*picked, *branch_answers(evt)]}.values()))
     if not fresh:
         return None
     lines = remember_answers(evt, fresh[:SESSION_ANSWER_CAP])

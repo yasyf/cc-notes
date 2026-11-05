@@ -4993,12 +4993,17 @@ def test_record_user_answers_silent_without_answers(monkeypatch, tmp_path) -> No
     check("answer none: no CLI calls", calls == [], repr(calls))
 
 
-def prompt_event(monkeypatch, tmp_path, candidates: list[dict], prompt: str = "work on auth", foreign: list[dict] | None = None, branch: str | None = "feat/x\n"):
+def prompt_event(
+    monkeypatch, tmp_path, candidates: list[dict], prompt: str = "work on auth", foreign: list[dict] | None = None, branch: str | None = "feat/x\n",
+    *, state: Path | None = None, trunk: str | None = None,
+):
     monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
+    monkeypatch.setenv("CAPTAIN_HOOK_STATE_DIR", str(state or tmp_path / "state"))
     evt = mock_event("UserPromptSubmit", prompt=prompt, session_dir=tmp_path)
+    evt._raw["session_id"] = tmp_path.name
     listings = {BRANCH_ANSWER_LIST: json.dumps(candidates), ANSWER_LIST: json.dumps([*(foreign or []), *candidates])}
     monkeypatch.setattr(evt.ctx, "call_cli", stub_cli(listings))
-    monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "--abbrev-ref", "HEAD"): branch}))
+    monkeypatch.setattr(evt.ctx, "git", stub_git({("rev-parse", "--abbrev-ref", "HEAD"): branch, ("symbolic-ref", "--short", "refs/remotes/origin/HEAD"): trunk}))
     return evt
 
 
@@ -5065,10 +5070,88 @@ def test_a_ruling_with_no_anchor_floats_on_the_first_prompt_that_names_its_topic
     evt = prompt_event(monkeypatch, tmp_path, [durable_answer("auth001aaaa", title="Session store?", body="Redis")], prompt=prompt)
     listed = evt.ctx.call_cli
     monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **kw: json.dumps([ruling]) if tuple(args[1:]) == prompt_named_answer(prompt) else listed(args, **kw))
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("ff7fca1aaaa")}))
     digest = float_session_answers(evt)
     message = digest.message or "" if digest else ""
     check("match: the ruling floats with its answer", "ff7fca1 Do we chase Akamai edge 403s" in message and "Never a lane" in message, message)
     check("match: the ruling comes before the branch's answers", message.find("ff7fca1") < message.find("auth001"), message)
+
+
+def named_prompt_event(monkeypatch, tmp_path, prompt: str, named: list[dict], **kw):
+    evt = prompt_event(monkeypatch, tmp_path, [durable_answer("auth001aaaa", title="Session store?", body="Redis")], prompt=prompt, **kw)
+    listed = evt.ctx.call_cli
+    monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **kw: json.dumps(named) if tuple(args[1:]) == prompt_named_answer(prompt) else listed(args, **kw))
+    return evt
+
+
+def test_first_prompt_floats_only_the_named_answer_the_judge_keeps(monkeypatch, tmp_path) -> None:
+    """The first prompt's matched answers go through the prompt judge: the one it picks floats, the rest never do."""
+    prompt = "move the session store off redis before the auth migration"
+    named = [durable_answer("kept001aaaa", title="Where does session state live?", body="Postgres"), durable_answer("drop001bbbb", title="Button color?", body="Blue")]
+    evt = named_prompt_event(monkeypatch, tmp_path, prompt, named)
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("kept001aaaa")}, asked))
+    message = (float_session_answers(evt) or SimpleNamespace(message="")).message or ""
+    check("judged: the judge reads the prompt", asked and asked[0][0] == prompt, repr(asked))
+    check("judged: the judge is offered only the matched answers", list(offered(asked, "answer")) == ["none", "kept001aaaa", "drop001bbbb"], repr(asked))
+    check("judged: the kept answer floats", "kept001" in message, message)
+    check("judged: the rejected answer never floats", "drop001" not in message, message)
+
+    rejected = named_prompt_event(monkeypatch, tmp_path / "none", prompt, named)
+    monkeypatch.setattr(rejected.ctx, "decide", stub_decide(PICK_NONE))
+    message = (float_session_answers(rejected) or SimpleNamespace(message="")).message or ""
+    check("judged: none floats no matched answer", "kept001" not in message and "drop001" not in message and "auth001" in message, message)
+
+
+def test_first_prompt_lists_no_branch_answers_on_the_trunk(monkeypatch, tmp_path) -> None:
+    """On the remote's default branch, the newest answers recorded there say nothing about this session, so neither path lists them."""
+    rows = [durable_answer(f"dev{i:04d}xxxx", title=f"Q{i}?") for i in range(10)]
+    check("trunk: the first prompt lists nothing", float_session_answers(prompt_event(monkeypatch, tmp_path / "digest", rows, branch="dev\n", trunk="origin/dev\n")) is None)
+    evt = prompt_event(monkeypatch, tmp_path / "prompt", rows, branch="dev\n", trunk="origin/dev\n")
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(evt.ctx, "decide", stub_decide(PICK_NONE, asked))
+    stage_prompt_answers(evt)
+    check("trunk: the prompt pick is offered none of them", asked == [], repr(asked))
+    check("trunk: a feature branch still lists its answers", float_session_answers(prompt_event(monkeypatch, tmp_path / "feature", rows, trunk="origin/dev\n")) is not None)
+
+
+LAUNCH = """You are working inside Orca, a multi-agent IDE. You are a dispatched worker.
+Report the task outcome exactly once with orca orchestration send --type worker_done --task-id {task}
+Send a heartbeat every 5 minutes while actively working on the task.
+=== TASK ===
+Lane {lane}: read the whole brief and follow it exactly."""
+
+
+def test_a_launch_template_draws_no_matched_answers(monkeypatch, tmp_path) -> None:
+    """A first prompt that mostly repeats another session's first prompt is a template: it draws no match, and neither does a later templated prompt."""
+    state = tmp_path / "state"
+    ruling = [durable_answer("merge01aaaa", title="Who merges?", body="The owner")]
+    first = named_prompt_event(monkeypatch, tmp_path / "lane-a", LAUNCH.format(task="task_a1", lane="alpha"), ruling, state=state)
+    monkeypatch.setattr(first.ctx, "decide", stub_decide({"answer": label("merge01aaaa")}))
+    check("template: the first launch is not yet known", "merge01" in ((float_session_answers(first) or SimpleNamespace(message="")).message or ""))
+
+    own = named_prompt_event(monkeypatch, tmp_path / "lane-a", LAUNCH.format(task="task_a1", lane="alpha"), [durable_answer("other01cccc")], state=state)
+    own_asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(own.ctx, "decide", stub_decide(PICK_NONE, own_asked))
+    stage_prompt_answers(own)
+    check("template: a session's own first prompt never counts against it", own_asked != [], repr(own_asked))
+
+    second = named_prompt_event(monkeypatch, tmp_path / "lane-b", LAUNCH.format(task="task_b2", lane="beta"), ruling, state=state)
+    asked: list[tuple[object, dict]] = []
+    monkeypatch.setattr(second.ctx, "decide", stub_decide({"answer": label("merge01aaaa")}, asked))
+    digest = float_session_answers(second)
+    check("template: a repeated launch floats no matched answer", digest is not None and "merge01" not in (digest.message or "") and "auth001" in (digest.message or ""), repr(digest))
+    check("template: the judge never runs", asked == [], repr(asked))
+
+    again = named_prompt_event(monkeypatch, tmp_path / "lane-b", LAUNCH.format(task="task_b3", lane="beta"), ruling, state=state)
+    monkeypatch.setattr(again.ctx, "decide", stub_decide({"answer": label("merge01aaaa")}, asked))
+    stage_prompt_answers(again)
+    check("template: a later templated prompt stages nothing", asked == [], repr(asked))
+
+    person = "why does the journal cadence alert keep paging on the gsk tenant"
+    root = named_prompt_event(monkeypatch, tmp_path / "root", person, ruling, state=state)
+    monkeypatch.setattr(root.ctx, "decide", stub_decide({"answer": label("merge01aaaa")}))
+    check("template: a prompt of a person's own words still matches", "merge01" in ((float_session_answers(root) or SimpleNamespace(message="")).message or ""))
 
 
 def test_a_ruling_the_prompt_names_reaches_the_prompt_pick(monkeypatch, tmp_path) -> None:
