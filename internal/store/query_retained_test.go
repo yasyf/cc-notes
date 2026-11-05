@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"maps"
@@ -145,8 +146,9 @@ func queryGraphEntries(index *sourcegraph.Map, root model.SHA) ([]sourcegraph.En
 	return index.Range(root, 0, int(count))
 }
 
-// assertQueryObjectsExactlyReachable fails on a stored node no retained generation
-// reaches, a leak, and on a reachable node missing from the store.
+// assertQueryObjectsExactlyReachable fails on a stored node that neither a retained
+// generation reaches nor a dead list holds, a leak, and on a reachable node missing
+// from the store. A reindex dead-lists the rebuilt graph born before the preserved one.
 func assertQueryObjectsExactlyReachable(t *testing.T, tx *bolt.Tx) int {
 	t.Helper()
 	root := tx.Bucket(queryGenerationsBucket)
@@ -186,10 +188,30 @@ func assertQueryObjectsExactlyReachable(t *testing.T, tx *bolt.Tx) int {
 			}
 		}
 	}
+	dead := make(map[string]struct{})
+	for _, binding := range bindings {
+		bucket := binding.Bucket(queryDeadBucket)
+		if bucket == nil {
+			continue
+		}
+		if err := bucket.ForEach(func(key, ids []byte) error {
+			if binding.Get(queryRetiredRoot) == nil && binary.BigEndian.Uint64(key) < queryDeadEpochOf(binding) {
+				t.Errorf("dead nodes outlived the generation that held them: %x", key)
+			}
+			for start := 0; start < len(ids); start += 8 {
+				dead[string(ids[start:start+8])] = struct{}{}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := objects.objects.ForEach(func(key, _ []byte) error {
 		handle := queryObjectHandle(queryObjectKeyID(key))
-		if _, found := reachable[handle]; !found {
-			t.Errorf("stored node %s is unreachable from every retained generation", handle)
+		_, retained := reachable[handle]
+		_, pending := dead[string(key)]
+		if !retained && !pending {
+			t.Errorf("stored node %s is neither retained nor on a dead list", handle)
 		}
 		return nil
 	}); err != nil {
