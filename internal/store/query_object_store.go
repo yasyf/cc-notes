@@ -100,8 +100,10 @@ func (store queryObjectStore) putBatch(ctx context.Context, order []model.SHA, v
 	}
 	keys := slices.Clone(order)
 	slices.Sort(keys)
-	if key, _ := store.ids.Cursor().First(); key == nil {
-		store.ids.FillPercent = 0.9
+	if store.ids.Root() == 0 {
+		if key, _ := store.ids.Cursor().First(); key == nil {
+			store.ids.FillPercent = 0.9
+		}
 	}
 	for _, hash := range keys {
 		if err := ctx.Err(); err != nil {
