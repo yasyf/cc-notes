@@ -192,6 +192,13 @@ func recordHolder(file *os.File, exclusive bool) error {
 	return nil
 }
 
+// RecordHolder names this process in a lock file it holds exclusively, for
+// DescribeHolder to read back to a waiter.
+func RecordHolder(file *os.File) error { return recordHolder(file, true) }
+
+// DescribeHolder names the process RecordHolder last recorded in file.
+func DescribeHolder(file *os.File) string { return describeHolder(file, false) }
+
 func describeHolder(file *os.File, exclusive bool) string {
 	if exclusive && syscall.Flock(int(file.Fd()), syscall.LOCK_SH|syscall.LOCK_NB) == nil {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)

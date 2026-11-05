@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/yasyf/cc-notes/internal/managed"
 )
 
 const (
@@ -44,6 +46,9 @@ func (s *Store) TrackingLock(ctx context.Context, remote string) (*os.File, erro
 	if err := waitLock(ctx, lock); err != nil {
 		return nil, errors.Join(fmt.Errorf("tracking lock %s: %w", remote, err), lock.Close())
 	}
+	if err := managed.RecordHolder(lock); err != nil {
+		return nil, fmt.Errorf("tracking lock %s: %w", remote, err)
+	}
 	return lock, nil
 }
 
@@ -67,7 +72,7 @@ func waitLock(ctx context.Context, lock *os.File) error {
 		select {
 		case <-ctx.Done():
 		case <-deadline.C:
-			return fmt.Errorf("%w for %s: %s", ErrLockHeld, lockWait, lock.Name())
+			return fmt.Errorf("%w for %s: %s held %s", ErrLockHeld, lockWait, lock.Name(), managed.DescribeHolder(lock))
 		case <-poll.C:
 		}
 	}

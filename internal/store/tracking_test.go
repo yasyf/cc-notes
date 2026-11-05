@@ -2,8 +2,10 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -20,8 +22,8 @@ func TestTrackingLockFailsBehindAHungHolder(t *testing.T) {
 		t.Fatalf("TrackingLock with no holder: %v", err)
 	}
 	start := time.Now()
-	if _, err := s.TrackingLock(t.Context(), "origin"); !errors.Is(err, ErrLockHeld) {
-		t.Fatalf("TrackingLock behind a holder = %v, want ErrLockHeld", err)
+	if _, err := s.TrackingLock(t.Context(), "origin"); !errors.Is(err, ErrLockHeld) || !strings.Contains(err.Error(), fmt.Sprintf("by pid %d (", os.Getpid())) {
+		t.Fatalf("TrackingLock behind a holder = %v, want ErrLockHeld naming pid %d", err, os.Getpid())
 	}
 	if waited := time.Since(start); waited < lockWait {
 		t.Fatalf("TrackingLock gave up after %s, before lockWait %s", waited, lockWait)

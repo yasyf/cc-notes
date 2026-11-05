@@ -690,7 +690,7 @@ func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
 // sync could union-merge it. A rejected update — a non-forced refspec that
 // does not fast-forward — wraps ErrNonFastForward.
 func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.transfer(ctx, "", append([]string{"fetch", "--recurse-submodules=no", "--refmap=", remote}, refspecs...)...)
+	_, err := g.transfer(ctx, "", append([]string{"fetch", "--recurse-submodules=no", "--no-auto-maintenance", "--refmap=", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}
