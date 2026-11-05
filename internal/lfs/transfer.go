@@ -54,7 +54,8 @@ func (c *Client) Upload(ctx context.Context, store Store, objects []Object) (upl
 // GET per action streamed through hash verification, so a corrupt body
 // never lands. Per-object server errors — a 404 means the ref referenced
 // content nobody uploaded — aggregate as *ObjectError values via
-// errors.Join; a transfer failure aborts immediately.
+// errors.Join; a transfer failure aborts immediately, and a GET that moves no
+// bytes for stallAfter fails as a *StalledError.
 func (c *Client) Download(ctx context.Context, store Store, objects []Object) (downloaded int, err error) {
 	res, err := c.batch(ctx, "download", objects)
 	if err != nil {
@@ -166,7 +167,9 @@ func statusError(oid string, res *http.Response) *ObjectError {
 	return &ObjectError{OID: oid, Code: res.StatusCode, Message: msg}
 }
 
-func (c *Client) getObject(ctx context.Context, store Store, obj batchObject, act action) error {
+func (c *Client) getObject(ctx context.Context, store Store, obj batchObject, act action) (err error) {
+	ctx, watch := watchStall(ctx, obj.OID)
+	defer func() { err = watch.stop(err) }()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, act.Href, nil)
 	if err != nil {
 		return err
@@ -182,8 +185,57 @@ func (c *Client) getObject(ctx context.Context, store Store, obj batchObject, ac
 	if res.StatusCode/100 != 2 {
 		return fmt.Errorf("get %s: status %d", obj.OID, res.StatusCode)
 	}
-	if err := store.PutVerified(res.Body, obj.OID, obj.Size); err != nil {
+	if err := store.PutVerified(watch.reader(res.Body), obj.OID, obj.Size); err != nil {
 		return fmt.Errorf("get %s: %w", obj.OID, err)
 	}
 	return nil
+}
+
+// stallAfter bounds how long a download may move no bytes before it fails
+// with a *StalledError, so one stuck object never holds its sync open.
+var stallAfter = 15 * time.Second
+
+// StalledError reports a download that moved no bytes for stallAfter.
+type StalledError struct{ OID string }
+
+func (e *StalledError) Error() string {
+	return fmt.Sprintf("object %s: download stalled, no bytes for %s", e.OID, stallAfter)
+}
+
+type stallWatch struct {
+	timer  *time.Timer
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+}
+
+func watchStall(ctx context.Context, oid string) (context.Context, *stallWatch) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	w := &stallWatch{ctx: ctx, cancel: cancel}
+	w.timer = time.AfterFunc(stallAfter, func() { cancel(&StalledError{OID: oid}) })
+	return ctx, w
+}
+
+func (w *stallWatch) reader(r io.Reader) io.Reader { return stallReader{r: r, w: w} }
+
+func (w *stallWatch) stop(err error) error {
+	w.timer.Stop()
+	var stalled *StalledError
+	if err != nil && errors.As(context.Cause(w.ctx), &stalled) {
+		err = stalled
+	}
+	w.cancel(nil)
+	return err
+}
+
+type stallReader struct {
+	r io.Reader
+	w *stallWatch
+}
+
+func (s stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 {
+		s.w.timer.Reset(stallAfter)
+	}
+	return n, err
 }

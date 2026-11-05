@@ -37,6 +37,7 @@ type fakeLFS struct {
 	requests    int
 	failBatch   int    // when non-zero, batch answers this status
 	failGet     int    // when non-zero, content GET answers this status
+	stallGet    bool   // when set, content GET sends nothing until the client gives up
 	failVerify  int    // verifies left to answer 422, as GitHub does right after a PUT
 	requireAuth string // exact batch Authorization demanded when set
 }
@@ -57,6 +58,12 @@ func (f *fakeLFS) setFailGet(status int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failGet = status
+}
+
+func (f *fakeLFS) setStallGet() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stallGet = true
 }
 
 func (f *fakeLFS) setFailVerify(n int) {
@@ -163,9 +170,13 @@ func newFakeLFS(t *testing.T) (*fakeLFS, string) {
 
 	mux.HandleFunc("GET /data/{oid}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		failGet := f.failGet
+		failGet, stallGet := f.failGet, f.stallGet
 		data, ok := f.objects[r.PathValue("oid")]
 		f.mu.Unlock()
+		if stallGet {
+			<-r.Context().Done()
+			return
+		}
 		if failGet != 0 {
 			http.Error(w, "induced content failure", failGet)
 			return
@@ -594,6 +605,32 @@ func TestSyncSucceedsAndCountsAnAttachmentTheServerLacks(t *testing.T) {
 	}
 	if hasObject(t, b, att.OID) {
 		t.Errorf("object %s present locally though the server lacks it", att.OID)
+	}
+}
+
+func TestSyncPushesThenReportsAnAttachmentWhoseDownloadStalls(t *testing.T) {
+	bare := gittest.InitBare(t)
+	f, endpoint := newFakeLFS(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
+	gittest.Git(t, b.Git.Dir, "config", "lfs.url", endpoint)
+
+	note := createNote(t, a, "content the CDN stops sending")
+	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "slow.bin", []byte("stalls on download"))
+	sync(t, a)
+	f.setStallGet()
+
+	own := createNote(t, b, "b's own note")
+	report, err := ccsync.Sync(t.Context(), b, "origin", false)
+	if err != nil {
+		t.Fatalf("sync whose attachment download stalls = %v, want success with the stall reported", err)
+	}
+	if want := (ccsync.Report{Created: 1, Pushed: 1, Reconciled: 1, Rounds: 1, Stalled: att.OID}); report != want {
+		t.Fatalf("report = %+v, want %+v", report, want)
+	}
+	if got := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, own.ID)); got == "" {
+		t.Errorf("B's own ref never published")
 	}
 }
 

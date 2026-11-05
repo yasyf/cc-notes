@@ -182,6 +182,11 @@ func (e *engine) downloadAttachments(ctx context.Context) error {
 	if err := e.store.RecordUploadedAttachments(e.endpoint.Href, confirmedBy(missing, err)); err != nil {
 		return fmt.Errorf("download attachments: %w", err)
 	}
+	var stalled *lfs.StalledError
+	if errors.As(err, &stalled) {
+		e.stalled = stalled.OID
+		return nil
+	}
 	if objErrs := objectErrors(err); len(objErrs) > 0 && !slices.ContainsFunc(objErrs, func(oe *lfs.ObjectError) bool { return oe.Code != 404 }) {
 		e.absent = len(objErrs)
 		return nil
