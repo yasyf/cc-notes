@@ -6,65 +6,55 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/yasyf/cc-notes/internal/managed"
+	"github.com/yasyf/cc-notes/internal/sourcegraph"
 	"github.com/yasyf/cc-notes/model"
 )
 
-// copyQueryObject copies a graph into a new authority under fresh IDs, recording
-// each one, and returns the handle of its root.
-func copyQueryObject(ctx context.Context, source, objects queryObjectStore, ids *[]byte, handle model.SHA) (model.SHA, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	stored, err := source.get(handle)
+// copyQueryGraph rebuilds a graph in a new authority and returns its root with the
+// packed IDs of its nodes. Nodes name their children by ID, so a graph moves
+// between authorities by its entries rather than by its bytes.
+func copyQueryGraph(ctx context.Context, source, objects queryObjectStore, root model.SHA) (model.SHA, []byte, error) {
+	index := sourcegraph.New(queryGraphObjects{ctx: ctx, store: source})
+	count, err := index.Count(root)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if len(stored) == 0 {
-		return "", managed.ErrReindex
-	}
-	kind, err := queryObjectKind(stored[0])
+	entries, err := index.Range(root, 0, int(count))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	data := bytes.Clone(stored)
-	if kind == plumbing.TreeObject {
-		entries, err := (queryGraphObjects{ctx: ctx, store: source}).ReadTree(handle)
+	mutations := make([]sourcegraph.Mutation, len(entries))
+	for i, entry := range entries {
+		mutations[i] = sourcegraph.Mutation{Key: entry.Key, Value: entry.Value}
+	}
+	writes := newQueryObjectWrites()
+	copied, err := sourcegraph.New(queryGraphObjects{ctx: ctx, store: objects, writes: writes}).Apply("", mutations)
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := writes.flush(ctx, objects, []model.SHA{copied}); err != nil {
+		return "", nil, err
+	}
+	var ids []byte
+	stack := []model.SHA{copied}
+	for len(stack) > 0 {
+		handle := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		children, err := queryObjectChildren(ctx, objects, handle)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		for i, entry := range entries {
-			child, err := copyQueryObject(ctx, source, objects, ids, model.SHA(entry.Hash.String()))
-			if err != nil {
-				return "", err
-			}
-			entries[i].Hash = plumbing.NewHash(string(child))
+		stack = append(stack, children...)
+		key, err := queryObjectKey(handle)
+		if err != nil {
+			return "", nil, err
 		}
-		value := &plumbing.MemoryObject{}
-		if err := (&object.Tree{Entries: entries}).Encode(value); err != nil {
-			return "", err
-		}
-		if data, err = queryObjectBytes(value); err != nil {
-			return "", err
-		}
+		ids = append(ids, key...)
 	}
-	copied, err := objects.allocate()
-	if err != nil {
-		return "", err
-	}
-	if err := objects.put(copied, data); err != nil {
-		return "", err
-	}
-	key, err := queryObjectKey(copied)
-	if err != nil {
-		return "", err
-	}
-	*ids = append(*ids, key...)
-	return copied, nil
+	return copied, ids, nil
 }
 
 // preserveActiveQueryGenerations carries each pinned generation across a reindex.
@@ -99,7 +89,7 @@ func (s *Store) preserveActiveQueryGenerations(ctx context.Context, destination 
 			}
 			var ids []byte
 			if generation.Root != "" {
-				generation.Root, err = copyQueryObject(ctx, queryObjectStoreAt(old), objects, &ids, generation.Root)
+				generation.Root, ids, err = copyQueryGraph(ctx, queryObjectStoreAt(old), objects, generation.Root)
 				if err != nil {
 					return err
 				}
