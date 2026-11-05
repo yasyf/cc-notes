@@ -28,6 +28,10 @@ const QueryGenerations = "query-generations"
 // LegacyQueryGenerations identifies the hash-addressed graph LegacyPath holds.
 const LegacyQueryGenerations = "query-generations-v1"
 
+// LegacyQueryObjectRefs names the LegacyQueryGenerations bucket every older
+// binary requires before it serves LegacyPath.
+const LegacyQueryObjectRefs = "object-refs"
+
 // ErrReindex requires an explicit import before ordinary managed operations.
 var ErrReindex = errors.New("managed authority unavailable; run cc-notes reindex")
 

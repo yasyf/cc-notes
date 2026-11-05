@@ -14,8 +14,9 @@ import (
 
 // importLegacyAuthority copies the authority managed.LegacyPath holds into
 // managed.Path without its hash-addressed query graph, deriving each binding's
-// first generation from the query rows it carries. It holds the authority lock
-// so no writer of either file is mid-publication while it copies.
+// first generation from the query rows it carries, then fences the legacy file.
+// It holds the authority lock so no writer of either file is mid-publication
+// while it copies; a pending intent it copies settles in the new authority.
 // TODO: remove with managed.LegacyPath.
 func (s *Store) importLegacyAuthority(ctx context.Context) (err error) {
 	lock, err := managed.Lock(ctx, s.recordsCommonDir, true)
@@ -23,7 +24,7 @@ func (s *Store) importLegacyAuthority(ctx context.Context) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
-	legacy, err := bolt.Open(managed.LegacyPath(s.recordsCommonDir), 0o600, &bolt.Options{ReadOnly: true})
+	legacy, err := bolt.Open(managed.LegacyPath(s.recordsCommonDir), 0o600, nil)
 	if err != nil {
 		return err
 	}
@@ -56,10 +57,24 @@ func (s *Store) importLegacyAuthority(ctx context.Context) (err error) {
 	if err = errors.Join(err, db.Close()); err != nil {
 		return errors.Join(err, os.Remove(building))
 	}
+	if err := legacy.Update(fenceLegacyAuthority); err != nil {
+		return err
+	}
 	if err := os.Rename(building, managed.Path(s.recordsCommonDir)); err != nil {
 		return err
 	}
 	return syncManagedDirectory(managed.Path(s.recordsCommonDir))
+}
+
+// fenceLegacyAuthority drops the bucket every older binary requires, so one
+// still running refuses with managed.ErrReindex instead of serving refs, and
+// recovering an intent, that this binary's writes have moved past.
+func fenceLegacyAuthority(tx *bolt.Tx) error {
+	graph := tx.Bucket([]byte(managed.LegacyQueryGenerations))
+	if graph == nil || graph.Bucket([]byte(managed.LegacyQueryObjectRefs)) == nil {
+		return nil
+	}
+	return graph.DeleteBucket([]byte(managed.LegacyQueryObjectRefs))
 }
 
 func copyAuthorityBucket(ctx context.Context, target, source *bolt.Bucket) error {

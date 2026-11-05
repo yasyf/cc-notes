@@ -32,7 +32,7 @@ func TestLegacyAuthorityImportKeepsRecordsAndDropsItsGraph(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, name := range []string{"objects", "object-ids", "object-refs"} {
+		for _, name := range []string{"objects", "object-ids", managed.LegacyQueryObjectRefs} {
 			if _, err := graph.CreateBucket([]byte(name)); err != nil {
 				return err
 			}
@@ -74,7 +74,17 @@ func TestLegacyAuthorityImportKeepsRecordsAndDropsItsGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	appendOps(t, s, refs.For(model.KindDoc, a), model.AddTag{Tag: "after import"})
-	if _, err := os.Stat(legacy); err != nil {
-		t.Fatalf("import removed the legacy authority an older binary still reads: %v", err)
+	db, err = bolt.Open(legacy, 0o600, &bolt.Options{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.View(func(tx *bolt.Tx) error {
+		if tx.Bucket([]byte(managed.LegacyQueryGenerations)).Bucket([]byte(managed.LegacyQueryObjectRefs)) != nil {
+			t.Fatal("an older binary can still serve the legacy authority this write moved past")
+		}
+		return nil
+	})
+	if err = errors.Join(err, db.Close()); err != nil {
+		t.Fatal(err)
 	}
 }
