@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,13 +15,13 @@ import (
 	"github.com/yasyf/cc-notes/internal/store"
 )
 
-const authorityImportWait = 10 * time.Second
+const authorityImportProgress = 10 * time.Second
 
-// ErrAuthorityImporting reports a first import that outlasted the wait; it
-// finishes in the background and the next command proceeds.
+// ErrAuthorityImporting reports a first import that outlasted the caller's
+// managed.LockWaitEnv; it finishes in the background and a later command proceeds.
 var ErrAuthorityImporting = errors.New("importing existing records into the managed authority in the background; retry shortly")
 
-func ensureAuthority(ctx context.Context, s *store.Store) (err error) {
+func ensureAuthority(ctx context.Context, s *store.Store, progress io.Writer) (err error) {
 	if s.AuthorityExists() {
 		return nil
 	}
@@ -48,13 +49,14 @@ func ensureAuthority(ctx context.Context, s *store.Store) (err error) {
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- importer.Wait() }()
-	wait, err := managed.Wait(authorityImportWait)
+	wait, err := managed.Wait(managed.Unbounded)
 	if err != nil {
 		return err
 	}
 	deadline := time.After(wait)
-	poll := time.NewTicker(25 * time.Millisecond)
-	defer poll.Stop()
+	started := time.Now()
+	ticks := time.NewTicker(authorityImportProgress)
+	defer ticks.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -66,9 +68,10 @@ func ensureAuthority(ctx context.Context, s *store.Store) (err error) {
 				output, _ := os.ReadFile(logPath) //nolint:gosec // G304: The log path is a fixed child of the records common directory.
 				return fmt.Errorf("import managed authority: %w: %s", err, strings.TrimSpace(string(output)))
 			}
-		case <-poll.C:
-			if s.AuthorityExists() {
-				return nil
+			return nil
+		case <-ticks.C:
+			if _, err := fmt.Fprintf(progress, "importing this clone's existing records into the managed authority, a one-time step: %s so far; the command runs when it finishes\n", time.Since(started).Round(time.Second)); err != nil {
+				return err
 			}
 		}
 	}

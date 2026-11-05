@@ -58,14 +58,15 @@ func (s *Store) AuthorityImportLog() (string, error) {
 	return path, os.MkdirAll(filepath.Dir(path), 0o750)
 }
 
-// ReindexIfMissing imports current entities when no authority exists, leaving
-// the work to any process already rebuilding it.
+// ReindexIfMissing imports current entities when no authority exists, first
+// waiting out any rebuild already running, so it returns only once the
+// authority exists or the import failed.
 func (s *Store) ReindexIfMissing(ctx context.Context) (err error) {
 	if err := s.CheckRecords(); err != nil {
 		return err
 	}
-	rebuild, err := managed.TryLockRebuild(s.recordsCommonDir)
-	if err != nil || rebuild == nil {
+	rebuild, err := managed.AwaitRebuild(ctx, s.recordsCommonDir)
+	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, rebuild.Close()) }()
