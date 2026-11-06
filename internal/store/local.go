@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -314,40 +315,71 @@ func (s *Store) Published(ctx context.Context, ref string) (bool, error) {
 	return len(tracked) > 0, nil
 }
 
+type keptLocalKey struct{}
+
+type keptLocalNotices struct {
+	w    io.Writer
+	sent map[string]bool
+}
+
+// WithKeptLocalNotices makes every write under ctx that a local default keeps
+// on this clone write one line to w, once per entity, naming the entity, the
+// default, and the command that publishes it, since no other clone can read
+// the entity until then.
+func WithKeptLocalNotices(ctx context.Context, w io.Writer) context.Context {
+	return context.WithValue(ctx, keptLocalKey{}, &keptLocalNotices{w: w, sent: map[string]bool{}})
+}
+
+func announceKeptLocal(ctx context.Context, notice string) {
+	n, ok := ctx.Value(keptLocalKey{}).(*keptLocalNotices)
+	if !ok || notice == "" || n.sent[notice] {
+		return
+	}
+	n.sent[notice] = true
+	_, _ = io.WriteString(n.w, notice)
+}
+
 // track keeps ref's entry in the local push include in step with snap after a
 // write, so a plain git push between writes never publishes a local entity.
 // It refuses the write when a default would keep one of the added attachments
 // local but ref is already published.
-func (s *Store) track(ctx context.Context, ref string, snap model.Snapshot, added []model.Attachment) error {
+func (s *Store) track(ctx context.Context, ref string, snap model.Snapshot, added []model.Attachment) (notice string, err error) {
 	policy, err := s.LocalPolicy(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	reason := policy.Reason(snap.Meta())
 	if Defaulted(reason) {
+		parsed, err := refs.Parse(ref)
+		if err != nil {
+			return "", err
+		}
 		published, err := s.Published(ctx, ref)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if published {
 			if err := policy.refuse(ref, added); err != nil {
-				return err
+				return "", err
 			}
 			reason = ""
+		} else {
+			id := parsed.ID.Short()
+			notice = fmt.Sprintf("cc-notes: kept local by default: %s %s, %s; no other clone can read it until you publish it with `ccn local unmark %s`\n", parsed.Kind, id, reason, id)
 		}
 	}
 	local := reason != ""
 	secluded, err := s.Secluded()
 	if err != nil {
-		return err
+		return "", err
 	}
 	switch {
 	case local && !secluded[ref]:
-		return s.Seclude(ctx, []string{ref}, nil)
+		return notice, s.Seclude(ctx, []string{ref}, nil)
 	case !local && secluded[ref]:
-		return s.Seclude(ctx, nil, []string{ref})
+		return notice, s.Seclude(ctx, nil, []string{ref})
 	}
-	return nil
+	return notice, nil
 }
 
 func (p LocalPolicy) refuse(ref string, added []model.Attachment) error {

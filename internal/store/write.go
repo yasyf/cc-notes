@@ -67,13 +67,15 @@ func (s *Store) create(ctx context.Context, ops []model.Op, deduplicate bool) (m
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	ref := refs.For(kind, model.EntityID(sha))
-	if err := s.track(ctx, ref, snapshot, nil); err != nil {
+	notice, err := s.track(ctx, ref, snapshot, nil)
+	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	if err := s.publishSnapshot(ctx, ref, sha, "", snapshot); err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
 	s.cache.putChain(sha, snapshot, []model.PackCommit{root})
+	announceKeptLocal(ctx, notice)
 	return snapshot, nil
 }
 
@@ -150,12 +152,14 @@ func (s *Store) appendBuilt(ctx context.Context, ref string, build func(context.
 		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
-		if err := s.track(ctx, ref, snapshot, addedAttachments(ops)); err != nil {
+		notice, err := s.track(ctx, ref, snapshot, addedAttachments(ops))
+		if err != nil {
 			return nil, fmt.Errorf("append to %s: %w", ref, err)
 		}
 		switch err := s.publishSnapshot(ctx, ref, sha, tip, snapshot); {
 		case err == nil:
 			s.cache.put(sha, snapshot, max(top, pack.Lamport), floor, tip)
+			announceKeptLocal(ctx, notice)
 			return snapshot, nil
 		case errors.Is(err, gitcmd.ErrCASMismatch):
 			lastErr = err

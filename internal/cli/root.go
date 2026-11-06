@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/internal/version"
 )
 
@@ -31,7 +32,7 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
-			cmd.SetContext(gitcmd.WithCommandMemo(cmd.Context()))
+			cmd.SetContext(store.WithKeptLocalNotices(gitcmd.WithCommandMemo(cmd.Context()), cmd.ErrOrStderr()))
 		},
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
