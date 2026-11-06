@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
@@ -67,10 +68,11 @@ func newNoteReviewCmd() *cobra.Command { return noteDocument.reviewVerb() }
 // resolveCommits expands every user-supplied commit anchor — an abbreviated
 // sha or a revision like HEAD — to its full 40-char commit sha, so the value
 // stored on the anchor is what every read path (status, show, drift) can
-// resolve. An anchor naming no commit, or an ambiguous prefix, is a hard
-// error surfaced at add time: nothing is stored on a bad value. The result
-// preserves order and is freshly allocated, so the caller's slice is left
-// untouched.
+// resolve. A full sha this clone lacks, such as a PR head a shallow clone
+// never fetched, is fetched from the derived remote first. An anchor naming
+// no commit, or an ambiguous prefix, is a hard error surfaced at add time:
+// nothing is stored on a bad value. The result preserves order and is
+// freshly allocated, so the caller's slice is left untouched.
 func resolveCommits(ctx context.Context, g gitcmd.Git, commits []string) ([]string, error) {
 	if len(commits) == 0 {
 		return commits, nil
@@ -78,6 +80,9 @@ func resolveCommits(ctx context.Context, g gitcmd.Git, commits []string) ([]stri
 	full := make([]string, len(commits))
 	for i, c := range commits {
 		sha, err := g.CommitSHA(ctx, c)
+		if errors.Is(err, gitcmd.ErrRevNotFound) && plumbing.IsHash(c) {
+			sha, err = fetchCommit(ctx, g, c)
+		}
 		if errors.Is(err, gitcmd.ErrRevNotFound) {
 			return nil, fmt.Errorf("%w: no commit %s", store.ErrNotFound, c)
 		}
@@ -87,6 +92,17 @@ func resolveCommits(ctx context.Context, g gitcmd.Git, commits []string) ([]stri
 		full[i] = string(sha)
 	}
 	return full, nil
+}
+
+func fetchCommit(ctx context.Context, g gitcmd.Git, sha string) (model.SHA, error) {
+	remote, err := deriveRemote(ctx, g)
+	if err != nil {
+		return "", err
+	}
+	if err := g.Fetch(ctx, remote, sha); err != nil {
+		return "", fmt.Errorf("%w: no commit %s in this clone, and fetching it from %s failed: %w", store.ErrNotFound, sha, remote, err)
+	}
+	return g.CommitSHA(ctx, sha)
 }
 
 func buildAnchors(commits, paths, dirs, branches []string) []model.Anchor {

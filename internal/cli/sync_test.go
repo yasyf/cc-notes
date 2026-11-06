@@ -60,6 +60,27 @@ func TestWiredWriteReadsLocalConfigOnce(t *testing.T) {
 	}
 }
 
+func TestNoteAddAnchorsAPushedCommitThisCloneNeverFetched(t *testing.T) {
+	dir, bare := initRepoWithRemote(t)
+	commitFile(t, dir, "seed.go", "package main")
+	gittest.Git(t, dir, "push", "-q", "origin", "HEAD:main")
+	other := t.TempDir()
+	gittest.Git(t, other, "clone", "-q", bare, ".")
+	gittest.Git(t, other, "config", "user.name", "Other")
+	gittest.Git(t, other, "config", "user.email", "other@example.com")
+	head := commitFile(t, other, "pr.go", "package pr")
+	gittest.Git(t, other, "push", "-q", "origin", "HEAD:refs/heads/pr")
+	added := showJSON[noteJSON](t, dir, mustRun(t, dir, "note", "add", "PR head", "--commit", head, "--json"))
+	if len(added.Anchors) != 1 || added.Anchors[0].Kind != "commit" || added.Anchors[0].Value != head {
+		t.Fatalf("anchors = %+v, want the one commit %s", added.Anchors, head)
+	}
+	gittest.Git(t, dir, "cat-file", "-e", head+"^{commit}")
+	_, _, err := runCLI(t, dir, "note", "add", "Gone", "--commit", strings.Repeat("e", 40))
+	if cli.ExitCode(err) != 3 {
+		t.Fatalf("note add with a commit origin lacks = %v (exit %d), want not-found exit 3", err, cli.ExitCode(err))
+	}
+}
+
 func TestInitInstallsRefspecs(t *testing.T) {
 	dir, _ := initRepoWithRemote(t)
 	out := mustRun(t, dir, "init")
