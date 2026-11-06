@@ -73,8 +73,8 @@ func classify(err error) (int, string) {
 	case errors.As(err, &conflict), errors.As(err, &notesConflict), errors.Is(err, notes.ErrIllegalTransition), errors.Is(err, store.ErrContended), errors.Is(err, ccsync.ErrSyncContended):
 		return 4, "conflict"
 	default:
-		// A *notes.MissingContentError (attachment bytes absent locally) lands
-		// here as a plain exit 1; Hint carries its `cc-notes sync` remediation.
+		// A *notes.MissingContentError (attachment bytes no remote serves)
+		// lands here as a plain exit 1; Hint carries its remediation.
 		return 1, "error"
 	}
 }
@@ -112,7 +112,7 @@ func Message(err error) string {
 
 // Hint returns the remediation line an error carries beyond its message, or ""
 // when it carries none. A *notes.MissingContentError points at `cc-notes sync`
-// to fetch the referenced-but-absent attachment bytes named in the message; a
+// on the clone that wrote the attachment, which uploads its bytes; a
 // *notes.AttachmentExistsError points at --replace to overwrite the name-colliding
 // attachment. A *notFoundHintError names the other kinds the missed id resolves to
 // and the kind-agnostic `cc-notes show`. A *notes.IllegalTransitionError lists the
@@ -121,7 +121,7 @@ func Message(err error) string {
 func Hint(err error) string {
 	var missing *notes.MissingContentError
 	if errors.As(err, &missing) {
-		return "run `cc-notes sync` to download it"
+		return "run `cc-notes sync` where it was attached, which uploads its content"
 	}
 	var illegal *notes.IllegalTransitionError
 	if errors.As(err, &illegal) {

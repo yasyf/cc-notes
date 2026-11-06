@@ -248,8 +248,8 @@ func hasObject(t *testing.T, s *store.Store, oid string) bool {
 }
 
 // TestSyncAttachmentRoundTrip is the end-to-end path: attach in A, sync A
-// (upload before push), sync a fresh clone B (download after convergence),
-// and the content is byte-identical.
+// (upload before push), sync a fresh clone B without one LFS request, and B's
+// first read fetches byte-identical content.
 func TestSyncAttachmentRoundTrip(t *testing.T) {
 	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
@@ -273,8 +273,15 @@ func TestSyncAttachmentRoundTrip(t *testing.T) {
 		t.Errorf("server never verified %s after upload", att.OID)
 	}
 
-	if got, want := sync(t, b), (ccsync.Report{Created: 1, Reconciled: 1, Downloaded: 1, Rounds: 1}); got != want {
+	before := f.requestCount()
+	if got, want := sync(t, b), (ccsync.Report{Created: 1, Reconciled: 1, Rounds: 1}); got != want {
 		t.Fatalf("B sync report = %+v, want %+v", got, want)
+	}
+	if got := f.requestCount(); got != before || hasObject(t, b, att.OID) {
+		t.Fatalf("B sync made %d LFS requests and holds %s = %v, want neither: content waits for a read", got-before, att.OID, hasObject(t, b, att.OID))
+	}
+	if err := b.FetchAttachment(t.Context(), att.OID, att.Size); err != nil {
+		t.Fatalf("B FetchAttachment: %v", err)
 	}
 	if got := readObject(t, b, att.OID); !bytes.Equal(got, content) {
 		t.Fatalf("B content differs: got %d bytes, want %d byte-identical", len(got), len(content))
@@ -331,7 +338,7 @@ func TestSyncAsksTheLFSServerOncePerObject(t *testing.T) {
 // TestSyncAttachmentExtraHeaderAuth drives the CI shape end-to-end: each
 // clone's local http.<url>.extraheader carries Basic auth for the batch
 // endpoint with no credential helper, so clone A's sync uploads and clone B's
-// sync downloads byte-identical content.
+// first read downloads byte-identical content.
 func TestSyncAttachmentExtraHeaderAuth(t *testing.T) {
 	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
@@ -360,8 +367,11 @@ func TestSyncAttachmentExtraHeaderAuth(t *testing.T) {
 		t.Errorf("server never verified %s after upload", att.OID)
 	}
 
-	if got, want := sync(t, b), (ccsync.Report{Created: 1, Reconciled: 1, Downloaded: 1, Rounds: 1}); got != want {
+	if got, want := sync(t, b), (ccsync.Report{Created: 1, Reconciled: 1, Rounds: 1}); got != want {
 		t.Fatalf("B sync report = %+v, want %+v", got, want)
+	}
+	if err := b.FetchAttachment(t.Context(), att.OID, att.Size); err != nil {
+		t.Fatalf("B FetchAttachment: %v", err)
 	}
 	if got := readObject(t, b, att.OID); !bytes.Equal(got, content) {
 		t.Fatalf("B content differs: got %d bytes, want %d byte-identical", len(got), len(content))
@@ -499,10 +509,9 @@ func TestSyncZeroAttachmentsZeroLFSRequests(t *testing.T) {
 	}
 }
 
-// TestSyncInterruptedDownloadHealsNextSync pins self-healing: a download
-// that dies mid-sync leaves no partial object, and the next sync's full
-// referenced scan fetches it with no flag.
-func TestSyncInterruptedDownloadHealsNextSync(t *testing.T) {
+// TestFetchAttachmentInterruptedHealsNextRead pins self-healing: a fetch
+// that dies mid-read leaves no partial object, and the next read fetches it.
+func TestFetchAttachmentInterruptedHealsNextRead(t *testing.T) {
 	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
@@ -510,26 +519,23 @@ func TestSyncInterruptedDownloadHealsNextSync(t *testing.T) {
 	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
 	gittest.Git(t, b.Git.Dir, "config", "lfs.url", endpoint)
 
-	content := []byte("heals on the next run")
+	content := []byte("heals on the next read")
 	note := createNote(t, a, "interrupted")
 	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "heal.bin", content)
 	sync(t, a)
+	sync(t, b)
 
 	f.setFailGet(http.StatusServiceUnavailable)
-	report, err := ccsync.Sync(t.Context(), b, "origin", false)
-	if err == nil {
-		t.Fatal("sync with failing content GET succeeded, want download error")
-	}
-	if want := (ccsync.Report{Created: 1, Reconciled: 1, Rounds: 1}); report != want {
-		t.Fatalf("interrupted report = %+v, want %+v (ref landed, content did not)", report, want)
+	if err := b.FetchAttachment(t.Context(), att.OID, att.Size); !errors.Is(err, lfs.ErrObjectMissing) {
+		t.Fatalf("FetchAttachment with a failing content GET = %v, want lfs.ErrObjectMissing", err)
 	}
 	if hasObject(t, b, att.OID) {
 		t.Fatal("partial download landed in the store")
 	}
 
 	f.setFailGet(0)
-	if got, want := sync(t, b), (ccsync.Report{Downloaded: 1, Rounds: 1}); got != want {
-		t.Fatalf("healing sync report = %+v, want %+v", got, want)
+	if err := b.FetchAttachment(t.Context(), att.OID, att.Size); err != nil {
+		t.Fatalf("healing FetchAttachment: %v", err)
 	}
 	if got := readObject(t, b, att.OID); !bytes.Equal(got, content) {
 		t.Fatalf("healed content = %q, want %q", got, content)
@@ -575,11 +581,10 @@ func TestSyncRemoveLastAttachmentUnbricksLFSlessRemote(t *testing.T) {
 	}
 }
 
-// TestSyncDownloadMissingObjectNamesEntity pins the pushed-but-download-
-// failed contract: the run's own refs publish (the report says so), the
-// error is non-nil, and it names the entity, the oid, the remediation, and
-// the plain-git-push hole that strands content.
-func TestSyncSucceedsAndCountsAnAttachmentTheServerLacks(t *testing.T) {
+// TestSyncPushesBesideAnAttachmentTheServerLacks pins that content the server
+// lost never touches a sync: B's own ref publishes and the run succeeds, and
+// only a read of the lost attachment fails, naming the server's 404.
+func TestSyncPushesBesideAnAttachmentTheServerLacks(t *testing.T) {
 	bare := gittest.InitBare(t)
 	f, endpoint := newFakeLFS(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
@@ -595,42 +600,20 @@ func TestSyncSucceedsAndCountsAnAttachmentTheServerLacks(t *testing.T) {
 	own := createNote(t, b, "b's own note")
 	report, err := ccsync.Sync(t.Context(), b, "origin", false)
 	if err != nil {
-		t.Fatalf("sync whose push landed but whose attachment the server lacks = %v, want success", err)
+		t.Fatalf("sync beside an attachment the server lacks = %v, want success", err)
 	}
-	if want := (ccsync.Report{Created: 1, Pushed: 1, Reconciled: 1, Rounds: 1, Absent: 1}); report != want {
+	if want := (ccsync.Report{Created: 1, Pushed: 1, Reconciled: 1, Rounds: 1}); report != want {
 		t.Fatalf("report = %+v, want %+v", report, want)
 	}
 	if got := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, own.ID)); got == "" {
 		t.Errorf("B's own ref never published")
+	}
+	err = b.FetchAttachment(t.Context(), att.OID, att.Size)
+	if !errors.Is(err, lfs.ErrObjectMissing) || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("FetchAttachment of content the server lost = %v, want lfs.ErrObjectMissing naming the 404", err)
 	}
 	if hasObject(t, b, att.OID) {
 		t.Errorf("object %s present locally though the server lacks it", att.OID)
-	}
-}
-
-func TestSyncPushesThenReportsAnAttachmentWhoseDownloadStalls(t *testing.T) {
-	bare := gittest.InitBare(t)
-	f, endpoint := newFakeLFS(t)
-	a := clone(t, bare, "Alice", "alice@example.com")
-	b := clone(t, bare, "Bob", "bob@example.com")
-	gittest.Git(t, a.Git.Dir, "config", "lfs.url", endpoint)
-	gittest.Git(t, b.Git.Dir, "config", "lfs.url", endpoint)
-
-	note := createNote(t, a, "content the CDN stops sending")
-	att := attachFile(t, a, refs.For(model.KindNote, note.ID), "slow.bin", []byte("stalls on download"))
-	sync(t, a)
-	f.setStallGet()
-
-	own := createNote(t, b, "b's own note")
-	report, err := ccsync.Sync(t.Context(), b, "origin", false)
-	if err != nil {
-		t.Fatalf("sync whose attachment download stalls = %v, want success with the stall reported", err)
-	}
-	if want := (ccsync.Report{Created: 1, Pushed: 1, Reconciled: 1, Rounds: 1, Stalled: att.OID}); report != want {
-		t.Fatalf("report = %+v, want %+v", report, want)
-	}
-	if got := gittest.Git(t, bare, "rev-parse", refs.For(model.KindNote, own.ID)); got == "" {
-		t.Errorf("B's own ref never published")
 	}
 }
 

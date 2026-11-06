@@ -15,7 +15,6 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/store"
-	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -160,7 +159,7 @@ func parseDuration(s string) (time.Duration, error) {
 // none is named: the sole cc-notes-wired remote of the records repository when
 // exactly one is wired, else the default remote. WiredRemotes failures propagate.
 func (c *Client) deriveRemote(ctx context.Context) (string, error) {
-	wired, err := ccsync.WiredRemotes(ctx, c.s.RecordsGit)
+	wired, err := store.WiredRemotes(ctx, c.s.RecordsGit)
 	if err != nil {
 		return "", err
 	}

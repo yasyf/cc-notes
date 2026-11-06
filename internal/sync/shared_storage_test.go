@@ -95,8 +95,9 @@ func TestSyncBoundUsesRecordsRemote(t *testing.T) {
 	gittest.Git(t, peer.Git.Dir, "config", "lfs.url", lfsURL)
 	gittest.Git(t, peer.Git.Dir, "config", authHeaderKey, "AUTHORIZATION: "+authValue)
 	peerNote := createNote(t, peer, "peer-authored")
-	if peerReport := sync(t, peer); peerReport.Downloaded != 1 {
-		t.Fatalf("peer sync report = %+v, want the thin-uploaded attachment downloaded", peerReport)
+	sync(t, peer)
+	if err := peer.FetchAttachment(ctx, att.OID, att.Size); err != nil {
+		t.Fatalf("peer FetchAttachment of the thin-uploaded attachment: %v", err)
 	}
 	report = sync(t, f.thinStore)
 	if report.Created != 1 || report.Pushed != 0 {

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -83,7 +84,7 @@ func TestAttachmentMissingLocally(t *testing.T) {
 		t.Fatalf("attachments = %+v, want present=false after object removal", shown.Attachments)
 	}
 	lean := mustRun(t, dir, "note", "show", added.ID)
-	if want := fmt.Sprintf("attachment: gone.bin (12 bytes, oid %s, missing locally — run `cc-notes sync`)\n", oid[:7]); !strings.Contains(lean, want) {
+	if want := fmt.Sprintf("attachment: gone.bin (12 bytes, oid %s, missing locally — a read downloads it)\n", oid[:7]); !strings.Contains(lean, want) {
 		t.Fatalf("note show = %q, want missing marker %q", lean, want)
 	}
 
@@ -396,8 +397,11 @@ func TestSyncTransfersAttachments(t *testing.T) {
 	gittest.Git(t, cloneDir, "config", "user.email", "test@example.com")
 	gittest.Git(t, cloneDir, "config", "lfs.url", endpoint)
 	report := mustJSON[syncJSON](t, mustRun(t, cloneDir, "sync", "--json"))
-	if report.Downloaded != 1 || report.Created != 1 {
-		t.Fatalf("clone sync = %+v, want created: 1 and downloaded: 1", report)
+	if report.Created != 1 {
+		t.Fatalf("clone sync = %+v, want created: 1", report)
+	}
+	if _, err := os.Stat(filepath.Join(cloneDir, ".git", "lfs", "objects", oid[0:2], oid[2:4], oid)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("clone sync left %s in the LFS store (stat err %v), want its content left for the first read", oid, err)
 	}
 	notes := mustRun(t, cloneDir, "note", "list", "--json")
 	var listed []noteJSON

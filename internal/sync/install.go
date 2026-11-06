@@ -12,29 +12,12 @@ import (
 )
 
 const (
-	// oldFetchRefspec is the pre-fix same-namespace force-mirror. A plain
-	// git fetch --prune uses it to force-clobber a diverged canonical entity
-	// ref and to prune a locally-created, not-yet-synced one; Install rewrites
-	// it to fetchRefspec so a plain fetch touches only the tracking namespace.
-	oldFetchRefspec = "+" + namespace + "*:" + namespace + "*"
-	pushRefspec     = refs.PushRefspec
+	pushRefspec = refs.PushRefspec
 	// headRefspec keeps plain git push pushing the current branch: any
 	// remote.<r>.push entry overrides push.default, so installing a push
 	// refspec into a remote that had none must restore the default first.
 	headRefspec = "HEAD"
 )
-
-// fetchRefspec is the plain-fetch refspec Install writes for remote: it
-// force-mirrors the remote's entity refs into the per-remote tracking
-// namespace Sync converges from — refs/cc-notes-sync/<remote>/ — never into
-// the canonical refs/cc-notes/ namespace. So fetch.prune can only prune
-// tracking copies, which mirror the remote by definition, never a
-// locally-created, not-yet-synced canonical ref. It is byte-for-byte the
-// refspec Sync fetches with, so a plain fetch pre-populates exactly the
-// tracking refs Sync then folds into canonical refs via compare-and-swap.
-func fetchRefspec(remote string) string {
-	return "+" + namespace + "*:" + syncNamespace + remote + "/*"
-}
 
 // InstallReport lists what one Install call changed in .git/config.
 type InstallReport struct {
@@ -170,8 +153,8 @@ func (c localConfig) fetchRemotes() []string {
 // is a no-op.
 func upgradeFetch(ctx context.Context, g gitcmd.Git, remote string, fetch []string, target bool, report *InstallReport) error {
 	fetchKey := "remote." + remote + ".fetch"
-	want := fetchRefspec(remote)
-	hasOld := slices.Contains(fetch, oldFetchRefspec)
+	want := refs.FetchRefspec(remote)
+	hasOld := slices.Contains(fetch, refs.OldFetchRefspec)
 	hasNew := slices.Contains(fetch, want)
 	switch {
 	case hasOld && hasNew:
@@ -179,15 +162,15 @@ func upgradeFetch(ctx context.Context, g gitcmd.Git, remote string, fetch []stri
 		// through the old one, so drop it. A concurrent autoInstall racing us may
 		// have dropped it already (ErrConfigNoMatch) — tolerate that and report
 		// nothing, since this call changed nothing.
-		switch err := g.ConfigUnsetValue(ctx, fetchKey, oldFetchRefspec); {
+		switch err := g.ConfigUnsetValue(ctx, fetchKey, refs.OldFetchRefspec); {
 		case errors.Is(err, gitcmd.ErrConfigNoMatch):
 		case err != nil:
 			return err
 		default:
-			report.Removed = append(report.Removed, fetchKey+"="+oldFetchRefspec)
+			report.Removed = append(report.Removed, fetchKey+"="+refs.OldFetchRefspec)
 		}
 	case hasOld:
-		if err := g.ConfigReplaceValue(ctx, fetchKey, oldFetchRefspec, want); err != nil {
+		if err := g.ConfigReplaceValue(ctx, fetchKey, refs.OldFetchRefspec, want); err != nil {
 			return err
 		}
 		report.Added = append(report.Added, fetchKey+"="+want)

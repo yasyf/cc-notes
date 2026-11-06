@@ -154,17 +154,21 @@ func (e *AttachmentExistsError) Error() string {
 }
 
 // MissingContentError reports an attachment referenced by an entity whose bytes
-// are absent from the local LFS store. Attachment carries the name and oid so
-// the caller renders the "run cc-notes sync" remediation itself.
+// neither the local LFS store nor any sync remote's LFS server holds. Attachment
+// carries the name and oid so the caller renders the remediation itself; Cause
+// is each remote's failure.
 type MissingContentError struct {
 	Attachment model.Attachment
+	Cause      error
 }
 
-// Error names the absent attachment and its oid; the sync remediation is the
-// caller's to render.
+// Error names the absent attachment, its oid, and why no remote served it; the
+// remediation is the caller's to render.
 func (e *MissingContentError) Error() string {
-	return fmt.Sprintf("cc-notes: attachment %q (oid %s) not present locally", e.Attachment.Name, e.Attachment.OID)
+	return fmt.Sprintf("cc-notes: attachment %q (oid %s) is on neither this clone nor a sync remote: %v", e.Attachment.Name, e.Attachment.OID, e.Cause)
 }
+
+func (e *MissingContentError) Unwrap() error { return e.Cause }
 
 // KindMatch is one entity a kind-agnostic prefix resolved to: its kind, id, and
 // title.

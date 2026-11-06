@@ -630,7 +630,7 @@ MCP: attachment_get (id, name, output)
 
 Stream an attachment's bytes from the local git-lfs store to stdout, or write them to a file with
 `-o PATH`. `ID` is the owning note, answer, doc, or log; `NAME` is the attachment's per-entity name, as
-listed by `show`. Content not yet downloaded arrives with the next `cc-notes sync`. Over MCP the
+listed by `show`. Content this clone lacks downloads from the sync remote on read. Over MCP the
 `output` path is required — binary never flows through the tool result.
 
 | Flag | Default | Meaning |

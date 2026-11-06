@@ -35,6 +35,24 @@ const Namespace = namespace
 // union merge instead of a clobber.
 const PushRefspec = namespace + "*:" + namespace + "*"
 
+// OldFetchRefspec is the pre-fix same-namespace force-mirror. A plain git
+// fetch --prune uses it to force-clobber a diverged canonical entity ref and to
+// prune a locally-created, not-yet-synced one; Install rewrites it to
+// FetchRefspec so a plain fetch touches only the tracking namespace.
+const OldFetchRefspec = "+" + namespace + "*:" + namespace + "*"
+
+// FetchRefspec is the plain-fetch refspec Install writes for remote: it
+// force-mirrors the remote's entity refs into the per-remote tracking
+// namespace Sync converges from — refs/cc-notes-sync/<remote>/ — never into
+// the canonical refs/cc-notes/ namespace. So fetch.prune can only prune
+// tracking copies, which mirror the remote by definition, never a
+// locally-created, not-yet-synced canonical ref. It is byte-for-byte the
+// refspec Sync fetches with, so a plain fetch pre-populates exactly the
+// tracking refs Sync then folds into canonical refs via compare-and-swap.
+func FetchRefspec(remote string) string {
+	return "+" + namespace + "*:" + syncNamespace + remote + "/*"
+}
+
 var (
 	// ErrNotCCNotes reports a ref outside the cc-notes namespaces.
 	ErrNotCCNotes = errors.New("not a cc-notes ref")

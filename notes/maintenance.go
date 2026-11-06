@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/yasyf/cc-notes/internal/ccnhome"
+	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -27,15 +28,12 @@ type SyncOptions struct {
 // FastForwarded, and Merged count the refs converged by create, fast-forward,
 // and union merge; Pushed counts the refs the final push created or updated;
 // Reconciled counts the refs handed to the fold across every round; Rounds
-// counts fetch-reconcile-push rounds run, 1 being a clean pass; Uploaded and
-// Downloaded count attachment objects moved to and from the remote LFS endpoint;
-// Withheld counts the refs in scope kept off the remote; Defaulted lists those
+// counts fetch-reconcile-push rounds run, 1 being a clean pass; Uploaded counts
+// attachment objects moved to the remote LFS endpoint; Withheld counts the refs in scope kept off the remote; Defaulted lists those
 // a local default kept off it, which no remote has; Held counts the
 // local refs left unpushed because an attachment they reference failed to
 // upload; Deferred counts
-// the remote refs left unfolded because the remote did not send their objects;
-// Absent counts referenced attachment objects the remote's LFS server lacks;
-// Stalled names an attachment whose download stalled, the first remote's.
+// the remote refs left unfolded because the remote did not send their objects.
 // When Sync fans out over several remotes, every field is the sum across them.
 type SyncReport struct {
 	Created       int
@@ -45,13 +43,10 @@ type SyncReport struct {
 	Reconciled    int
 	Rounds        int
 	Uploaded      int
-	Downloaded    int
 	Withheld      int
 	Defaulted     []WithheldEntity
 	Held          int
 	Deferred      int
-	Absent        int
-	Stalled       string
 }
 
 // Sync converges the repository's refs/cc-notes/* namespace with one or more
@@ -67,7 +62,7 @@ type SyncReport struct {
 func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error) {
 	remotes := []string{opts.Remote}
 	if opts.Remote == "" {
-		targets, err := c.syncTargets(ctx)
+		targets, err := store.SyncRemotes(ctx, c.s.RecordsGit)
 		if err != nil {
 			return SyncReport{}, err
 		}
@@ -90,12 +85,9 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		report.Reconciled += rep.Reconciled
 		report.Rounds += rep.Rounds
 		report.Uploaded += rep.Uploaded
-		report.Downloaded += rep.Downloaded
 		report.Withheld += rep.Withheld
 		report.Held += rep.Held
 		report.Deferred += rep.Deferred
-		report.Absent += rep.Absent
-		report.Stalled = cmp.Or(report.Stalled, rep.Stalled)
 		if err != nil && syncErr == nil {
 			syncErr = err
 		}
@@ -114,19 +106,6 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		}
 	}
 	return report, errors.Join(syncErr, adoptErr)
-}
-
-// syncTargets is the remote set a bare Sync converges: every cc-notes-wired
-// remote in git-config order, or the default remote when none is wired.
-func (c *Client) syncTargets(ctx context.Context) ([]string, error) {
-	wired, err := ccsync.WiredRemotes(ctx, c.s.RecordsGit)
-	if err != nil {
-		return nil, err
-	}
-	if len(wired) == 0 {
-		return []string{defaultRemote}, nil
-	}
-	return wired, nil
 }
 
 // ReconcileOptions selects a Reconcile run's scope. Into is the target branch,
