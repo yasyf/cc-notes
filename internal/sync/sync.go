@@ -54,6 +54,8 @@ const (
 	maxRefAttempts = 16
 	// refConcurrency bounds the per-ref fan-out of reconcile.
 	refConcurrency = 8
+	// createBatch bounds the refs one managed transaction creates.
+	createBatch = 512
 	// contendedBackoffBase scales the jitter before a round that follows a
 	// push another writer beat.
 	contendedBackoffBase = 250 * time.Millisecond
@@ -469,23 +471,37 @@ func (e *engine) hydrateRefs(ctx context.Context, scope map[string]model.SHA, na
 }
 
 // reconcile converges every ref in scope but the deferred ones. Local-only
-// refs need no work here: the push publishes them. Each ref handed to ensure
-// is tallied so the report surfaces exactly what this run folded. Every ref
-// runs to its own verdict and the error joins each failure, so a binding moved
-// mid-run names every ref it hid rather than the first.
+// refs need no work here: the push publishes them. Refs this clone lacks are
+// created in batches first; the rest, and any ref a failed batch leaves, go
+// through ensure. Each ref is tallied so the report surfaces exactly what this
+// run folded. Every ref runs to its own verdict and the error joins each
+// failure, so a binding moved mid-run names every ref it hid rather than the
+// first.
 func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) error {
 	defer Phase(ctx, fmt.Sprintf("folding %d refs", len(scope)))()
-	var ordered []string
+	local, err := recordRefs(ctx, e.store, e.prefix)
+	if err != nil {
+		return err
+	}
+	var ordered, absent []string
 	for _, ref := range slices.Sorted(maps.Keys(scope)) {
-		if _, deferred := e.deferred[ref]; !deferred {
-			ordered = append(ordered, ref)
+		if _, deferred := e.deferred[ref]; deferred {
+			continue
 		}
+		e.reconciled.Add(1)
+		if _, found := local[ref]; found {
+			ordered = append(ordered, ref)
+		} else {
+			absent = append(absent, ref)
+		}
+	}
+	for batch := range slices.Chunk(absent, createBatch) {
+		ordered = append(ordered, e.create(ctx, scope, batch)...)
 	}
 	errs := make([]error, len(ordered))
 	var g errgroup.Group
 	g.SetLimit(refConcurrency)
 	for i, ref := range ordered {
-		e.reconciled.Add(1)
 		g.Go(func() error {
 			if err := e.ensure(ctx, ref, scope[ref]); err != nil {
 				errs[i] = fmt.Errorf("reconcile %s: %w", ref, err)
@@ -497,6 +513,28 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+// create publishes refs this clone lacks at their remote tips in one managed
+// transaction, halving a batch that fails, and returns the refs left for
+// ensure: a lone ref whose batch failed, or every ref once ctx is done.
+func (e *engine) create(ctx context.Context, scope map[string]model.SHA, names []string) []string {
+	if len(names) == 1 || ctx.Err() != nil {
+		return names
+	}
+	updates := make([]gitcmd.RefUpdate, len(names))
+	for i, ref := range names {
+		updates[i] = gitcmd.RefUpdate{Ref: ref, New: scope[ref]}
+	}
+	e.authority.Lock()
+	err := e.store.PublishRefs(ctx, updates)
+	e.authority.Unlock()
+	if err == nil {
+		e.created.Add(int64(len(names)))
+		return nil
+	}
+	half := len(names) / 2
+	return append(e.create(ctx, scope, names[:half]), e.create(ctx, scope, names[half:])...)
 }
 
 // changed returns the subset of after whose tip differs from before, plus any

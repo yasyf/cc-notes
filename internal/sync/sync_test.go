@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/internal/sourceindex"
 	"github.com/yasyf/cc-notes/internal/store"
 	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/model"
@@ -1487,19 +1489,76 @@ func TestSyncReconcileWorkersNeverWaitOutTheirOwnProcess(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
-	const notes = 24
-	for i := range notes {
-		createNote(t, a, fmt.Sprintf("note %d", i))
+	const tasks = 24
+	created := make([]string, tasks)
+	for i := range tasks {
+		created[i] = refs.For(model.KindTask, createTask(t, a, fmt.Sprintf("task %d", i), "main").ID)
+	}
+	sync(t, a)
+	sync(t, b)
+	for _, ref := range created {
+		appendOps(t, a, ref, model.AddComment{Body: "moved on"})
 	}
 	sync(t, a)
 	t.Setenv(managed.LockWaitEnv, "1ms")
 
 	report, err := ccsync.Sync(t.Context(), b, "origin", false)
 	if err != nil {
-		t.Fatalf("Sync folding %d new refs with an authority wait of 1ms = %v, want its reconcile workers to queue on each other", notes, err)
+		t.Fatalf("Sync folding %d moved refs with an authority wait of 1ms = %v, want its reconcile workers to queue on each other", tasks, err)
 	}
-	if report.Created != notes {
-		t.Fatalf("Sync created %d refs, want %d", report.Created, notes)
+	if report.FastForwarded != tasks {
+		t.Fatalf("Sync fast-forwarded %d refs, want %d", report.FastForwarded, tasks)
+	}
+}
+
+func TestSyncCreatesAFreshCloneInOneManagedTransaction(t *testing.T) {
+	revisions := make(map[int]string)
+	for _, notes := range []int{1, 40} {
+		bare := gittest.InitBare(t)
+		a := clone(t, bare, "Alice", "alice@example.com")
+		for i := range notes {
+			createNote(t, a, fmt.Sprintf("note %d", i))
+		}
+		sync(t, a)
+		b := clone(t, bare, "Bob", "bob@example.com")
+
+		if report := sync(t, b); report.Created != notes {
+			t.Fatalf("fresh clone sync of %d notes created %d", notes, report.Created)
+		}
+		if got, want := ccRefs(t, b.Git.Dir), ccRefs(t, bare); !maps.Equal(got, want) {
+			t.Fatalf("fresh clone of %d notes holds %v, want the remote's %v", notes, got, want)
+		}
+		revisions[notes] = gittest.Git(t, b.Git.Dir, "rev-list", "--count", sourceindex.Ref)
+	}
+	if revisions[40] != revisions[1] {
+		t.Fatalf("fresh clone wrote %s managed source revisions for 40 notes and %s for 1, want one transaction however many it creates", revisions[40], revisions[1])
+	}
+}
+
+func TestSyncCreatesEveryFreshRefButOneThatCannotFold(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	var kept []string
+	for i := range 8 {
+		kept = append(kept, refs.For(model.KindNote, createNote(t, a, fmt.Sprintf("note %d", i)).ID))
+	}
+	sync(t, a)
+	bogus := refs.For(model.KindNote, model.EntityID(strings.Repeat("ab", 20)))
+	gittest.Git(t, bare, "update-ref", bogus, gittest.Git(t, bare, "rev-parse", kept[0]))
+	b := clone(t, bare, "Bob", "bob@example.com")
+
+	_, err := ccsync.Sync(t.Context(), b, "origin", false)
+	if err == nil || !strings.Contains(err.Error(), bogus) {
+		t.Fatalf("Sync of a remote whose %s holds another note's chain = %v, want an error naming it", bogus, err)
+	}
+	local := ccRefs(t, b.Git.Dir)
+	for _, ref := range kept {
+		if _, ok := local[ref]; !ok {
+			t.Fatalf("Sync left %s uncreated beside the unfoldable %s", ref, bogus)
+		}
+	}
+	if _, ok := local[bogus]; ok {
+		t.Fatalf("Sync created the unfoldable %s", bogus)
 	}
 }
 
