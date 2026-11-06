@@ -1538,9 +1538,9 @@ func TestSyncCreatesAFreshCloneInOneManagedTransaction(t *testing.T) {
 func TestSyncCreatesEveryFreshRefButOneThatCannotFold(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
-	var kept []string
-	for i := range 8 {
-		kept = append(kept, refs.For(model.KindNote, createNote(t, a, fmt.Sprintf("note %d", i)).ID))
+	kept := make([]string, 8)
+	for i := range kept {
+		kept[i] = refs.For(model.KindNote, createNote(t, a, fmt.Sprintf("note %d", i)).ID)
 	}
 	sync(t, a)
 	bogus := refs.For(model.KindNote, model.EntityID(strings.Repeat("ab", 20)))

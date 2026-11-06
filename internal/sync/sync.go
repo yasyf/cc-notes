@@ -479,7 +479,7 @@ func (e *engine) hydrateRefs(ctx context.Context, scope map[string]model.SHA, na
 // first.
 func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) error {
 	defer Phase(ctx, fmt.Sprintf("folding %d refs", len(scope)))()
-	local, err := recordRefs(ctx, e.store, e.prefix)
+	local, err := e.store.Repo.ListPrefix(ctx, e.prefix)
 	if err != nil {
 		return err
 	}
