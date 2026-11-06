@@ -116,7 +116,7 @@ func TestMessageTrimsNotesPrefix(t *testing.T) {
 		{"plain error untouched", errors.New("boom"), "boom"},
 		{"raw notes conflict", &notes.ConflictError{ID: id, Msg: "is already done"}, "aaaaaaa is already done"},
 		{"attachment exists", &notes.AttachmentExistsError{Name: "f.txt"}, `attachment "f.txt" already exists`},
-		{"missing content", &notes.MissingContentError{Attachment: model.Attachment{Name: "g.txt", OID: "abc123", Size: 1}}, `attachment "g.txt" (oid abc123) not present locally`},
+		{"missing content", &notes.MissingContentError{Attachment: model.Attachment{Name: "g.txt", OID: "abc123", Size: 1}, Cause: errors.New("origin: 404")}, `attachment "g.txt" (oid abc123) is on neither this clone nor a sync remote: origin: 404`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,7 +132,7 @@ func TestMessageTrimsNotesPrefix(t *testing.T) {
 // wrap); every other error carries none.
 func TestHint(t *testing.T) {
 	missing := &notes.MissingContentError{Attachment: model.Attachment{Name: "g.txt", OID: "abc123", Size: 1}}
-	if got, want := cli.Hint(fmt.Errorf("open: %w", missing)), "run `cc-notes sync` to download it"; got != want {
+	if got, want := cli.Hint(fmt.Errorf("open: %w", missing)), "run `cc-notes sync` where it was attached, which uploads its content"; got != want {
 		t.Errorf("Hint(missing content) = %q, want %q", got, want)
 	}
 	exists := &notes.AttachmentExistsError{Name: "f.txt"}

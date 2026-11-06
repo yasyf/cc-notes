@@ -37,7 +37,6 @@ type fakeLFS struct {
 	requests    int
 	failBatch   int    // when non-zero, batch answers this status
 	failGet     int    // when non-zero, content GET answers this status
-	stallGet    bool   // when set, content GET sends nothing until the client gives up
 	failVerify  int    // verifies left to answer 422, as GitHub does right after a PUT
 	requireAuth string // exact batch Authorization demanded when set
 }
@@ -58,12 +57,6 @@ func (f *fakeLFS) setFailGet(status int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failGet = status
-}
-
-func (f *fakeLFS) setStallGet() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.stallGet = true
 }
 
 func (f *fakeLFS) setFailVerify(n int) {
@@ -170,13 +163,9 @@ func newFakeLFS(t *testing.T) (*fakeLFS, string) {
 
 	mux.HandleFunc("GET /data/{oid}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		failGet, stallGet := f.failGet, f.stallGet
+		failGet := f.failGet
 		data, ok := f.objects[r.PathValue("oid")]
 		f.mu.Unlock()
-		if stallGet {
-			<-r.Context().Done()
-			return
-		}
 		if failGet != 0 {
 			http.Error(w, "induced content failure", failGet)
 			return
