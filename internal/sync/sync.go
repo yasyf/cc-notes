@@ -20,10 +20,12 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	stdsync "sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -52,7 +54,10 @@ const (
 	maxRefAttempts = 16
 	// refConcurrency bounds the per-ref fan-out of reconcile.
 	refConcurrency = 8
-	pushArgBudget  = 256 << 10
+	// contendedBackoffBase scales the jitter before a round that follows a
+	// push another writer beat.
+	contendedBackoffBase = 250 * time.Millisecond
+	pushArgBudget        = 256 << 10
 )
 
 var (
@@ -290,6 +295,9 @@ func converge(ctx context.Context, s *store.Store, remote string, full bool, pre
 		case err == nil:
 			return e.finish(ctx, round, len(pending)-len(e.rejected))
 		case errors.Is(err, gitcmd.ErrNonFastForward):
+			if err := contendedBackoff(ctx, round); err != nil {
+				return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
+			}
 		default:
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
@@ -585,6 +593,20 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 	}
 	slices.Sort(pending)
 	return pending, secluded, nil
+}
+
+// contendedBackoff waits a jittered span that doubles per round before the
+// round after a push another writer beat, so writers racing on one ref, such
+// as a shared ledger, spread out instead of colliding again.
+func contendedBackoff(ctx context.Context, round int) error {
+	//nolint:gosec // G404: retry jitter is timing, not security.
+	wait := time.Duration(rand.Int64N(int64(contendedBackoffBase << round)))
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(wait):
+		return nil
+	}
 }
 
 func (e *engine) push(ctx context.Context, pending []string) (err error) {

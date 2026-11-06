@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/gittest"
@@ -1498,5 +1500,46 @@ func TestSyncReconcileWorkersNeverWaitOutTheirOwnProcess(t *testing.T) {
 	}
 	if report.Created != notes {
 		t.Fatalf("Sync created %d refs, want %d", report.Created, notes)
+	}
+}
+
+func TestSyncWritersRacingOnOneLedgerBothLand(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	created, err := a.Create(t.Context(), []model.Op{model.CreateLedger{Nonce: model.NewNonce(), Title: "desk", Columns: []string{"state"}}})
+	if err != nil {
+		t.Fatalf("create ledger: %v", err)
+	}
+	ledger := refs.For(model.KindLedger, created.(model.Ledger).ID)
+	sync(t, a)
+	sync(t, b)
+
+	const appends = 4
+	var writers errgroup.Group
+	for name, s := range map[string]*store.Store{"alice": a, "bob": b} {
+		writers.Go(func() error {
+			for i := range appends {
+				row := model.UpsertRow{Key: fmt.Sprintf("%s-%d", name, i), Fields: map[string]string{"state": "open"}}
+				if _, err := s.Append(t.Context(), ledger, []model.Op{row}); err != nil {
+					return fmt.Errorf("%s append %d: %w", name, i, err)
+				}
+				if _, err := ccsync.Prefixed(t.Context(), s, "origin", false, ledger); err != nil {
+					return fmt.Errorf("%s sync %d: %w", name, i, err)
+				}
+			}
+			return nil
+		})
+	}
+	if err := writers.Wait(); err != nil {
+		t.Fatalf("two writers racing on %s: %v", ledger, err)
+	}
+	sync(t, a)
+	sync(t, b)
+	remote := gittest.Git(t, bare, "rev-parse", ledger)
+	for name, s := range map[string]*store.Store{"alice": a, "bob": b} {
+		if got := gittest.Git(t, s.Git.Dir, "rev-parse", ledger); got != remote {
+			t.Fatalf("%s's %s = %s after both writers synced, want the remote tip %s", name, ledger, got, remote)
+		}
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -201,11 +202,17 @@ type commandError struct {
 }
 
 func (e *commandError) Error() string {
-	if e.stderr == "" {
+	stderr := strings.Join(slices.DeleteFunc(strings.Split(e.stderr, "\n"), dependabotBanner.MatchString), "; ")
+	if stderr == "" {
 		return RedactURLs(fmt.Sprintf("git %s: %v", strings.Join(e.args, " "), e.err))
 	}
-	return RedactURLs(fmt.Sprintf("git %s: %v: %s", strings.Join(e.args, " "), e.err, strings.ReplaceAll(e.stderr, "\n", "; ")))
+	return RedactURLs(fmt.Sprintf("git %s: %v: %s", strings.Join(e.args, " "), e.err, stderr))
 }
+
+// dependabotBanner matches each line of the vulnerability notice GitHub prints
+// on every push to a repository with open alerts, which buries the line naming
+// what the remote refused.
+var dependabotBanner = regexp.MustCompile(`^remote:\s*(GitHub found \d+ vulnerabilit.*|https://\S+/security/dependabot\s*)?$`)
 
 func (e *commandError) Unwrap() error { return e.err }
 
