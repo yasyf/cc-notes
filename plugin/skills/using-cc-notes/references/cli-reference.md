@@ -661,7 +661,10 @@ List every entity this clone keeps to itself, with the reason: the `local` label
 `synced`. Sync withholds local entities and the attachment content only they reference, and every
 write records a negative push refspec for each in `.git/cc-notes/local-push.config`, which
 `.git/config` includes, so a plain `git push` withholds them too. Every add verb takes `--local` and
-`--sync` (MCP `local`, `sync`), which add the `local` or `synced` label at creation. A default never
+`--sync` (MCP `local`, `sync`), which add the `local` or `synced` label at creation. A write that a
+default keeps local prints `cc-notes: kept local by default: <kind> <id>, <reason>; ...` on stderr
+(over MCP, a notice block) once per entity, naming `cc-notes local unmark` as the way to publish
+it. A default never
 withholds an entity a remote already has, so attaching a file a default covers to a published
 entity fails and names the remedies: attach it to a local entity, `cc-notes local mark` this one,
 or label this one `synced`.

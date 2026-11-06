@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import, which now folds its records on eight readers: 49.5 s instead of 158 s.
 
 ### Added
+- **A write that a local default keeps on this clone says so.** An entity
+  with a `*.log` attachment, an attachment over 10 MiB, or a `lane-brief` label
+  stays off the remote. Until now, only `cc-notes sync` mentioned this, so a
+  lane on another machine reading the entity found nothing. The write now
+  prints one line on stderr per entity, naming the entity, the default, and
+  `ccn local unmark <id>` to publish it, such as `cc-notes: kept local by
+  default: log 50ae570, attachment ci-go-117663-baseline.log matches *.log`.
+  MCP returns the same line as a notice. A write with `--sync` or `--local`
+  prints nothing.
 - **`answer match` finds an answer by words only in its body, and draws far
   fewer on a line that merely shares a word.** An answer whose deciding words sit
   in its body now matches when three rare words of the text make up at least half
