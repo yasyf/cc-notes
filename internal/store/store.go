@@ -274,6 +274,13 @@ type publicationError struct{ error }
 
 func (e *publicationError) Unwrap() error { return e.error }
 
+// Published reports whether err failed a PublishRefs whose refs had already
+// moved, so the transaction stands and only what followed it failed.
+func Published(err error) bool {
+	var published *publicationError
+	return errors.As(err, &published)
+}
+
 func publicationFailure(updates []gitcmd.RefUpdate, err error) error {
 	names := make([]string, len(updates))
 	for i, update := range updates {

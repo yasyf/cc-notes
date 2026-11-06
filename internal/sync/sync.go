@@ -495,8 +495,11 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 			absent = append(absent, ref)
 		}
 	}
+	var failed []error
 	for batch := range slices.Chunk(absent, createBatch) {
-		ordered = append(ordered, e.create(ctx, scope, batch)...)
+		left, err := e.create(ctx, scope, batch)
+		ordered = append(ordered, left...)
+		failed = append(failed, err)
 	}
 	errs := make([]error, len(ordered))
 	var g errgroup.Group
@@ -510,17 +513,19 @@ func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) erro
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return errors.Join(errs...)
+		failed = append(failed, errs...)
 	}
-	return nil
+	return errors.Join(failed...)
 }
 
 // create publishes refs this clone lacks at their remote tips in one managed
-// transaction, halving a batch that fails, and returns the refs left for
-// ensure: a lone ref whose batch failed, or every ref once ctx is done.
-func (e *engine) create(ctx context.Context, scope map[string]model.SHA, names []string) []string {
+// transaction, halving a batch that fails before its refs move, and returns
+// the refs left for ensure: a lone ref whose batch failed, or every ref once
+// ctx is done. A batch that failed after its refs moved stands, and its error
+// returns with it.
+func (e *engine) create(ctx context.Context, scope map[string]model.SHA, names []string) ([]string, error) {
 	if len(names) == 1 || ctx.Err() != nil {
-		return names
+		return names, nil
 	}
 	updates := make([]gitcmd.RefUpdate, len(names))
 	for i, ref := range names {
@@ -529,12 +534,14 @@ func (e *engine) create(ctx context.Context, scope map[string]model.SHA, names [
 	e.authority.Lock()
 	err := e.store.PublishRefs(ctx, updates)
 	e.authority.Unlock()
-	if err == nil {
+	if err == nil || store.Published(err) {
 		e.created.Add(int64(len(names)))
-		return nil
+		return nil, err
 	}
 	half := len(names) / 2
-	return append(e.create(ctx, scope, names[:half]), e.create(ctx, scope, names[half:])...)
+	low, lowErr := e.create(ctx, scope, names[:half])
+	high, highErr := e.create(ctx, scope, names[half:])
+	return append(low, high...), errors.Join(lowErr, highErr)
 }
 
 // changed returns the subset of after whose tip differs from before, plus any
