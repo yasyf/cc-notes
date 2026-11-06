@@ -10,6 +10,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/ccnhome"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
+	ccsync "github.com/yasyf/cc-notes/internal/sync"
 	"github.com/yasyf/cc-notes/internal/version"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
@@ -161,7 +162,7 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, syncErr := c.Sync(ctx, notes.SyncOptions{Remote: remote, Full: full, Prefix: prefix})
+			report, syncErr := c.Sync(ccsync.WithSlowPhases(ctx, cmd.ErrOrStderr()), notes.SyncOptions{Remote: remote, Full: full, Prefix: prefix})
 			// A failed sync can still have done real work — e.g. a download
 			// failure after the push loop converged — so the report prints
 			// before the error propagates to a non-zero exit. A run that

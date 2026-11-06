@@ -75,7 +75,9 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 	}
 	var adoptErr error
 	if opts.Prefix == "" {
+		end := ccsync.Phase(ctx, "adopting refs written outside cc-notes")
 		_, adoptErr = c.s.AdoptExtendedRefs(ctx)
+		end()
 	}
 	var report SyncReport
 	var syncErr error
@@ -104,7 +106,10 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 	}
 	report.Defaulted = defaulted
 	if syncErr == nil && report.Created+report.FastForwarded+report.Merged+report.Pushed > 0 {
-		if _, err := c.tidy(ctx); err != nil {
+		end := ccsync.Phase(ctx, "tidying the local cache")
+		_, err := c.tidy(ctx)
+		end()
+		if err != nil {
 			return report, fmt.Errorf("tidy after sync: %w", err)
 		}
 	}

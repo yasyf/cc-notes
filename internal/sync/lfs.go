@@ -63,6 +63,7 @@ func (e *engine) lfsEndpoint(ctx context.Context) (lfs.Endpoint, error) {
 // each implicated reference. Only a failed reference scan returns an error.
 // A repository referencing no attachments makes no LFS request at all.
 func (e *engine) uploadAttachments(ctx context.Context, secluded map[string]bool) error {
+	defer Phase(ctx, "uploading attachments")()
 	e.blocked, e.uploadErr = nil, nil
 	referenced, err := e.referenced(ctx)
 	if err != nil {
@@ -156,6 +157,7 @@ func blockedBy(candidates []store.ReferencedObject, err error) map[string]bool {
 // this run changed, so a download an earlier sync never finished heals here.
 // A repository referencing no attachments makes no LFS request at all.
 func (e *engine) downloadAttachments(ctx context.Context) error {
+	defer Phase(ctx, "downloading attachments")()
 	referenced, err := e.referenced(ctx)
 	if err != nil {
 		return fmt.Errorf("download attachments: %w", err)
