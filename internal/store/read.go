@@ -166,9 +166,10 @@ func (s *Store) foldLinear(ctx context.Context, ref string, head model.PackCommi
 		if err != nil {
 			return nil, nil, false, err
 		}
+		depth := model.Lamport(len(walked)) //nolint:gosec // G115: a slice length is nonnegative.
 		for _, lag := range checkpointLags() {
-			if due && int(lag) < len(walked) {
-				legs = append(legs, int(lag))
+			if due && lag < depth {
+				legs = append(legs, int(lag)) //nolint:gosec // G115: lag is below a slice length.
 			}
 		}
 	}
