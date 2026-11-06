@@ -479,10 +479,10 @@ unless you pass `replace: true` (a re-run superseding the last run's `scenario.l
 
 The sharp edges:
 
-- **Only `sync` moves the bytes.** Attachment content transfers over git-lfs during `sync`
-  — uploads before the refs push, downloads after. A plain `git push` (the installed
-  refspecs) publishes the refs *without* the content, so replicas see the entry but not the
-  files until someone who has them runs `sync`.
+- **Only `sync` uploads the bytes.** `sync` uploads attachment content over git-lfs before
+  the refs push and never downloads; a read fetches the one object it needs. A plain
+  `git push` (the installed refspecs) publishes the refs *without* the content, so replicas
+  see the entry but cannot read the files until someone who has them runs `sync`.
 - **The remote's LFS quota is real.** On GitHub, attachments draw down the repo's LFS
   storage and bandwidth quota — modest on the free tier and separate from ordinary repo
   storage. Attach evidence that earns its bytes; when it stops earning them,
@@ -491,8 +491,8 @@ The sharp edges:
 Read evidence back with `attachment_get` — it requires an `output` file path and writes the
 bytes there, never inline (CLI: `cc-notes attachment get <id> <name> -o <path>`, or stdout
 with no `-o`) — or `attachment_path`, which prints the local store path for a zero-copy
-read. `show` on the entity lists its attachments and flags any not yet downloaded with a
-sync hint.
+read. Either one downloads content this clone lacks from the sync remote first. `show` on
+the entity lists its attachments and flags any not yet on this clone.
 
 ## Answers (automatic)
 

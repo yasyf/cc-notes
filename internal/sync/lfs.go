@@ -13,7 +13,7 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-// client returns the LFS client for operation ("upload" or "download"),
+// client returns the LFS client for operation ("upload"),
 // discovering the remote's endpoint once per run and building one client per
 // operation — ssh grants are per-operation, and a Client is not safe for
 // concurrent use, which the single-goroutine transfer phases respect.
@@ -53,49 +53,51 @@ func (e *engine) lfsEndpoint(ctx context.Context) (lfs.Endpoint, error) {
 // references content the server lacks. The batch reply decides what the
 // server already has, so re-upload is a natural no-op; an object the
 // endpoint's upload log already confirms skips the batch unless the sync is
-// full, and every object a batch confirms joins the log. The
-// referenced-∧-present intersection keeps merged-in remote refs whose content
-// was never downloaded out of the upload set. An object only secluded
-// entities reference never uploads. A failure holds back only the refs
-// referencing an implicated object — exactly the failed oids for per-object
-// errors, every candidate for an endpoint or transport failure such as an
-// LFS-less remote — and every other ref still pushes; e.uploadErr names
-// each implicated reference. Only a failed reference scan returns an error.
-// A repository referencing no attachments makes no LFS request at all.
+// full, and every object a batch confirms joins the log. Only objects this
+// clone holds can upload, and a clone holding none the log does not already
+// confirm skips the reference scan, so a fresh clone pushes without reading
+// every chain. An object only secluded entities reference never uploads. A
+// failure holds back only the refs referencing an implicated object — exactly
+// the failed oids for per-object errors, every candidate for an endpoint or
+// transport failure such as an LFS-less remote — and every other ref still
+// pushes; e.uploadErr names each implicated reference. Only a failed reference
+// scan returns an error. A repository holding no attachment content makes no
+// LFS request at all.
 func (e *engine) uploadAttachments(ctx context.Context, secluded map[string]bool) error {
 	defer Phase(ctx, "uploading attachments")()
 	e.blocked, e.uploadErr = nil, nil
-	referenced, err := e.referenced(ctx)
-	if err != nil {
-		return fmt.Errorf("upload attachments: %w", err)
-	}
-	if len(referenced) == 0 {
+	if !e.holdsAttachmentKinds() {
 		return nil
 	}
 	content := e.store.LFS()
-	present := make([]store.ReferencedObject, 0, len(referenced))
-	for _, obj := range referenced {
-		if content.Has(obj.OID) && !onlySecluded(obj, secluded) {
-			present = append(present, obj)
-		}
+	local, err := content.OIDs()
+	if err != nil || len(local) == 0 {
+		return err
 	}
-	if len(present) == 0 {
-		return nil
-	}
-	ep, err := e.lfsEndpoint(ctx)
-	if err != nil {
-		e.blocked, e.uploadErr = blockedBy(present, err), transferError("upload", err, present)
-		return nil
-	}
-	if !e.full {
+	ep, epErr := e.lfsEndpoint(ctx)
+	if epErr == nil && !e.full {
 		confirmed, err := e.store.UploadedAttachments(ep.Href)
 		if err != nil {
 			return fmt.Errorf("upload attachments: %w", err)
 		}
-		present = slices.DeleteFunc(present, func(obj store.ReferencedObject) bool { return confirmed[obj.OID] })
-		if len(present) == 0 {
+		local = slices.DeleteFunc(local, func(oid string) bool { return confirmed[oid] })
+		if len(local) == 0 {
 			return nil
 		}
+	}
+	referenced, err := e.referenced(ctx)
+	if err != nil {
+		return fmt.Errorf("upload attachments: %w", err)
+	}
+	present := slices.DeleteFunc(referenced, func(obj store.ReferencedObject) bool {
+		return !slices.Contains(local, obj.OID) || onlySecluded(obj, secluded)
+	})
+	if len(present) == 0 {
+		return nil
+	}
+	if epErr != nil {
+		e.blocked, e.uploadErr = blockedBy(present, epErr), transferError(epErr, present)
+		return nil
 	}
 	c, err := e.client(ctx, "upload")
 	if err == nil {
@@ -107,7 +109,7 @@ func (e *engine) uploadAttachments(ctx context.Context, secluded map[string]bool
 		return fmt.Errorf("upload attachments: %w", err)
 	}
 	if err != nil {
-		e.blocked, e.uploadErr = blockedBy(present, err), transferError("upload", err, present)
+		e.blocked, e.uploadErr = blockedBy(present, err), transferError(err, present)
 	}
 	return nil
 }
@@ -150,62 +152,16 @@ func blockedBy(candidates []store.ReferencedObject, err error) map[string]bool {
 	return blocked
 }
 
-// downloadAttachments fetches every referenced object missing locally, after
-// the push loop converges: refs land before content on the fetch side, so a
-// missing object is a first-class local state and an LFS outage never blocks
-// publishing refs. The referenced scan is always full, never scoped to what
-// this run changed, so a download an earlier sync never finished heals here.
-// A repository referencing no attachments makes no LFS request at all.
-func (e *engine) downloadAttachments(ctx context.Context) error {
-	defer Phase(ctx, "downloading attachments")()
-	referenced, err := e.referenced(ctx)
-	if err != nil {
-		return fmt.Errorf("download attachments: %w", err)
-	}
-	if len(referenced) == 0 {
-		return nil
-	}
-	content := e.store.LFS()
-	missing := make([]store.ReferencedObject, 0, len(referenced))
-	for _, obj := range referenced {
-		if !content.Has(obj.OID) {
-			missing = append(missing, obj)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	c, err := e.client(ctx, "download")
-	if err != nil {
-		return transferError("download", err, missing)
-	}
-	downloaded, err := c.Download(ctx, content, transferObjects(missing))
-	e.downloaded += downloaded
-	if err := e.store.RecordUploadedAttachments(e.endpoint.Href, confirmedBy(missing, err)); err != nil {
-		return fmt.Errorf("download attachments: %w", err)
-	}
-	var stalled *lfs.StalledError
-	if errors.As(err, &stalled) {
-		e.stalled = stalled.OID
-		return nil
-	}
-	if objErrs := objectErrors(err); len(objErrs) > 0 && !slices.ContainsFunc(objErrs, func(oe *lfs.ObjectError) bool { return oe.Code != 404 }) {
-		e.absent = len(objErrs)
-		return nil
-	}
-	if err != nil {
-		return transferError("download", err, missing)
-	}
-	return nil
+// holdsAttachmentKinds reports whether this run's prefix covers any kind that
+// carries attachments.
+func (e *engine) holdsAttachmentKinds() bool {
+	return slices.ContainsFunc(store.AttachmentKinds[:], func(kind model.Kind) bool {
+		root := refs.Root(kind)
+		return strings.HasPrefix(root, e.prefix) || strings.HasPrefix(e.prefix, root)
+	})
 }
 
 func (e *engine) referenced(ctx context.Context) ([]store.ReferencedObject, error) {
-	if !slices.ContainsFunc(store.AttachmentKinds[:], func(kind model.Kind) bool {
-		root := refs.Root(kind)
-		return strings.HasPrefix(root, e.prefix) || strings.HasPrefix(e.prefix, root)
-	}) {
-		return nil, nil
-	}
 	referenced, err := e.store.ReferencedAttachments(ctx)
 	if err != nil {
 		return nil, err
@@ -235,15 +191,12 @@ func transferObjects(objects []store.ReferencedObject) []lfs.Object {
 	return out
 }
 
-// transferError rewraps a transfer failure with the per-entity detail the
-// operator acts on. An unsupported endpoint implicates every candidate
-// object; per-object batch errors implicate exactly the failed oids. Each
-// implicated oid names the entities referencing it and the remediation:
-// remove the attachment and sync again. A download 404 additionally names
-// its usual cause — plain `git push` publishes refs/cc-notes/* through the
-// installed wildcard refspec without uploading LFS content; only
-// `cc-notes sync` uploads objects before refs.
-func transferError(operation string, err error, candidates []store.ReferencedObject) error {
+// transferError rewraps an upload failure with the per-entity detail the
+// operator acts on. An unsupported endpoint implicates every candidate object;
+// per-object batch errors implicate exactly the failed oids. Each implicated
+// oid names the entities referencing it and the remediation: remove the
+// attachment and sync again.
+func transferError(err error, candidates []store.ReferencedObject) error {
 	var b strings.Builder
 	switch objErrs := objectErrors(err); {
 	case errors.Is(err, lfs.ErrUnsupported):
@@ -256,19 +209,12 @@ func transferError(operation string, err error, candidates []store.ReferencedObj
 		for _, obj := range candidates {
 			byOID[obj.OID] = obj
 		}
-		notFound := false
 		for _, oe := range objErrs {
-			notFound = notFound || oe.Code == 404
 			writeUses(&b, byOID[oe.OID])
 		}
-		if operation == "download" && notFound {
-			b.WriteString("\na plain `git push` publishes refs/cc-notes/* without uploading attachment content — only `cc-notes sync` uploads objects before refs; ask the publisher to run `cc-notes sync`, or remove the attachments as above and run `cc-notes sync`")
-		}
-		if operation == "upload" {
-			b.WriteString("\nthe entities above stay unpushed and every other ref pushed; the next `cc-notes sync` retries them")
-		}
+		b.WriteString("\nthe entities above stay unpushed and every other ref pushed; the next `cc-notes sync` retries them")
 	}
-	return fmt.Errorf("%s attachments: %w%s", operation, err, b.String())
+	return fmt.Errorf("upload attachments: %w%s", err, b.String())
 }
 
 // writeUses appends one line per use of obj: the entity, the attachment

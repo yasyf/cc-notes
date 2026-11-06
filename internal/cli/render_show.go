@@ -52,8 +52,8 @@ func renderNoteShow(n model.Note, drift string, supersedes []model.EntityID, att
 }
 
 // attachmentHeaders writes one attachment header line per attachment:
-// "<name> (<size> bytes, oid <oid7>)", with a missing-locally marker and the
-// sync remediation when the content is not in the local LFS store.
+// "<name> (<size> bytes, oid <oid7>)", with a missing-locally marker when the
+// content is not in the local LFS store yet; a read downloads it.
 func attachmentHeaders(b *strings.Builder, atts []attachmentDTO) {
 	for _, a := range atts {
 		header(b, "attachment", attachmentDisplay(a))
@@ -62,7 +62,7 @@ func attachmentHeaders(b *strings.Builder, atts []attachmentDTO) {
 
 func attachmentDisplay(a attachmentDTO) string {
 	if !a.Present {
-		return fmt.Sprintf("%s (%d bytes, oid %s, missing locally — run `cc-notes sync`)", a.Name, a.Size, a.OID[:7])
+		return fmt.Sprintf("%s (%d bytes, oid %s, missing locally — a read downloads it)", a.Name, a.Size, a.OID[:7])
 	}
 	return fmt.Sprintf("%s (%d bytes, oid %s)", a.Name, a.Size, a.OID[:7])
 }

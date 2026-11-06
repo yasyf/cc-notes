@@ -24,7 +24,6 @@ type syncJSON struct {
 	Merged        int `json:"merged"`
 	Pushed        int `json:"pushed"`
 	Uploaded      int `json:"uploaded"`
-	Downloaded    int `json:"downloaded"`
 	Rounds        int `json:"rounds"`
 }
 

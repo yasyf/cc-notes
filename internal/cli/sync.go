@@ -163,22 +163,12 @@ func newSyncCmd() *cobra.Command {
 				return err
 			}
 			report, syncErr := c.Sync(ccsync.WithSlowPhases(ctx, cmd.ErrOrStderr()), notes.SyncOptions{Remote: remote, Full: full, Prefix: prefix})
-			// A failed sync can still have done real work — e.g. a download
-			// failure after the push loop converged — so the report prints
+			// A failed sync can still have done real work — e.g. a held
+			// upload after every other ref pushed — so the report prints
 			// before the error propagates to a non-zero exit. A run that
 			// never completed a round has nothing to report.
 			if syncErr != nil && report.Rounds == 0 {
 				return syncErr
-			}
-			if report.Stalled != "" {
-				if _, perr := fmt.Fprintf(cmd.ErrOrStderr(), "warning: the download of attachment %s stalled, so this sync downloaded no more attachments after its push; the next `cc-notes sync` downloads the rest\n", report.Stalled); perr != nil {
-					return perr
-				}
-			}
-			if report.Absent > 0 {
-				if _, perr := fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d referenced attachments are absent on the remote's LFS server and were not downloaded; run `cc-notes sync` where they were written\n", report.Absent); perr != nil {
-					return perr
-				}
 			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
@@ -188,13 +178,10 @@ func newSyncCmd() *cobra.Command {
 					Merged:        report.Merged,
 					Pushed:        report.Pushed,
 					Uploaded:      report.Uploaded,
-					Downloaded:    report.Downloaded,
 					Withheld:      report.Withheld,
 					Defaulted:     defaultedDTOs(report.Defaulted),
 					Held:          report.Held,
 					Deferred:      report.Deferred,
-					Absent:        report.Absent,
-					Stalled:       report.Stalled,
 					Rounds:        report.Rounds,
 				}); perr != nil {
 					return perr
@@ -210,7 +197,6 @@ func newSyncCmd() *cobra.Command {
 				{"merged", report.Merged},
 				{"pushed", report.Pushed},
 				{"uploaded", report.Uploaded},
-				{"downloaded", report.Downloaded},
 				{"withheld (local)", report.Withheld},
 				{"held (attachment upload failed)", report.Held},
 				{"deferred (objects unavailable)", report.Deferred},
@@ -260,13 +246,10 @@ type syncDTO struct {
 	Merged        int            `json:"merged"`
 	Pushed        int            `json:"pushed"`
 	Uploaded      int            `json:"uploaded"`
-	Downloaded    int            `json:"downloaded"`
 	Withheld      int            `json:"withheld"`
 	Defaulted     []defaultedDTO `json:"defaulted,omitempty"`
 	Held          int            `json:"held"`
 	Deferred      int            `json:"deferred"`
-	Absent        int            `json:"absent"`
-	Stalled       string         `json:"stalled,omitempty"`
 	Rounds        int            `json:"rounds"`
 }
 

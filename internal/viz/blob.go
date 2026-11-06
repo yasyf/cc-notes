@@ -117,12 +117,16 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content := s.store.LFS()
-	f, err := content.Open(oid)
+	err = s.store.FetchAttachment(ctx, oid, obj.Size)
 	if errors.Is(err, lfs.ErrObjectMissing) {
 		s.writeError(w, r, http.StatusNotFound, blobMissingMessage(obj))
 		return
 	}
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}
+	f, err := s.store.LFS().Open(oid)
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
@@ -175,7 +179,7 @@ func sniffContentType(f *os.File) (string, error) {
 // size, and owning entity — and points at the fix.
 func blobMissingMessage(obj store.ReferencedObject) string {
 	use := obj.Uses[0]
-	return fmt.Sprintf("attachment %s (%s, on %s %s) has not been fetched locally — run cc-notes sync",
+	return fmt.Sprintf("attachment %s (%s, on %s %s) is on neither this clone nor a sync remote — run cc-notes sync where it was attached",
 		use.Name, humanSize(obj.Size), use.Kind, use.Entity.Short())
 }
 

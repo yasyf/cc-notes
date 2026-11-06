@@ -33,6 +33,19 @@ func (s Store) Has(oid string) bool {
 	return err == nil
 }
 
+// OIDs returns the oid of every object the store holds.
+func (s Store) OIDs() ([]string, error) {
+	paths, err := filepath.Glob(filepath.Join(s.Dir, "objects", "*", "*", "*"))
+	if err != nil {
+		return nil, err
+	}
+	oids := make([]string, len(paths))
+	for i, path := range paths {
+		oids[i] = filepath.Base(path)
+	}
+	return oids, nil
+}
+
 // PutFile hashes path's content into the store and returns its oid and size.
 func (s Store) PutFile(path string) (oid string, size int64, err error) {
 	//nolint:gosec // G304: path is the file the caller asked PutFile to hash and ingest.

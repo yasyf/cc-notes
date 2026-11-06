@@ -1,4 +1,4 @@
-package sync_test
+package store_test
 
 import (
 	"slices"
@@ -6,7 +6,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
-	ccsync "github.com/yasyf/cc-notes/internal/sync"
+	"github.com/yasyf/cc-notes/internal/store"
 )
 
 func TestWiredRemotes(t *testing.T) {
@@ -33,7 +33,7 @@ func TestWiredRemotes(t *testing.T) {
 			for _, w := range tc.wire {
 				gittest.Git(t, dir, "config", "--add", "remote."+w[0]+".fetch", w[1])
 			}
-			got, err := ccsync.WiredRemotes(t.Context(), gitcmd.Git{Dir: dir})
+			got, err := store.WiredRemotes(t.Context(), gitcmd.Git{Dir: dir})
 			if err != nil {
 				t.Fatalf("WiredRemotes: %v", err)
 			}

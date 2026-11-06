@@ -24,7 +24,7 @@ type anchorDTO struct {
 
 // attachmentDTO is one attachment reference with its content's local
 // presence: false means the bytes are not in this repository's LFS store yet
-// and download on the next `cc-notes sync`.
+// and download on the next read.
 type attachmentDTO struct {
 	Name    string `json:"name"`
 	OID     string `json:"oid"`

@@ -58,18 +58,15 @@ func (c *Client) ResolveAttachable(ctx context.Context, prefix string) (model.Ki
 }
 
 // OpenAttachment loads the entity, finds the attachment named name, and opens
-// its bytes. An unknown name fails wrapping ErrNotFound listing the names the
-// entity carries; bytes absent from the local LFS store fail with a
-// *MissingContentError.
+// its bytes, first downloading them when this clone lacks them. An unknown name
+// fails wrapping ErrNotFound listing the names the entity carries; bytes no
+// sync remote serves fail with a *MissingContentError.
 func (c *Client) OpenAttachment(ctx context.Context, kind model.Kind, id model.EntityID, name string) (model.Attachment, io.ReadCloser, error) {
-	att, content, err := c.lookupAttachment(ctx, kind, id, name)
+	att, content, err := c.fetchAttachment(ctx, kind, id, name)
 	if err != nil {
 		return model.Attachment{}, nil, err
 	}
 	f, err := content.Open(att.OID)
-	if errors.Is(err, lfs.ErrObjectMissing) {
-		return model.Attachment{}, nil, &MissingContentError{Attachment: att}
-	}
 	if err != nil {
 		return model.Attachment{}, nil, fmt.Errorf("open attachment %s: %w", att.Name, err)
 	}
@@ -77,17 +74,27 @@ func (c *Client) OpenAttachment(ctx context.Context, kind model.Kind, id model.E
 }
 
 // AttachmentPath returns the absolute local object path of the entity's
-// attachment named name for a zero-copy read. Bytes absent from the local LFS
-// store fail with a *MissingContentError.
+// attachment named name for a zero-copy read, first downloading its bytes when
+// this clone lacks them. Bytes no sync remote serves fail with a
+// *MissingContentError.
 func (c *Client) AttachmentPath(ctx context.Context, kind model.Kind, id model.EntityID, name string) (model.Attachment, string, error) {
-	att, content, err := c.lookupAttachment(ctx, kind, id, name)
+	att, content, err := c.fetchAttachment(ctx, kind, id, name)
 	if err != nil {
 		return model.Attachment{}, "", err
 	}
-	if !content.Has(att.OID) {
-		return model.Attachment{}, "", &MissingContentError{Attachment: att}
-	}
 	return att, content.Path(att.OID), nil
+}
+
+func (c *Client) fetchAttachment(ctx context.Context, kind model.Kind, id model.EntityID, name string) (model.Attachment, lfs.Store, error) {
+	att, content, err := c.lookupAttachment(ctx, kind, id, name)
+	if err != nil {
+		return model.Attachment{}, lfs.Store{}, err
+	}
+	err = c.s.FetchAttachment(ctx, att.OID, att.Size)
+	if errors.Is(err, lfs.ErrObjectMissing) {
+		return model.Attachment{}, lfs.Store{}, &MissingContentError{Attachment: att, Cause: err}
+	}
+	return att, content, err
 }
 
 // AttachmentInfos probes each attachment for local presence, always returning a

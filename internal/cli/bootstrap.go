@@ -175,7 +175,7 @@ func resolveBranchOrBacklog(ctx context.Context, s *store.Store, value string, p
 // none is named: the sole cc-notes-wired remote when exactly one is wired, else
 // the default remote. WiredRemotes failures propagate.
 func deriveRemote(ctx context.Context, g gitcmd.Git) (string, error) {
-	wired, err := ccsync.WiredRemotes(ctx, g)
+	wired, err := store.WiredRemotes(ctx, g)
 	if err != nil {
 		return "", err
 	}

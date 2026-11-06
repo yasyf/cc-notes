@@ -142,8 +142,8 @@ func TestBlobUnreferenced(t *testing.T) {
 }
 
 // TestBlobReferencedButAbsent covers a referenced attachment whose content is
-// not in the local LFS store: the 404 names the attachment, its owning entity,
-// and the fetch hint.
+// on neither this clone nor a sync remote: the 404 names the attachment, its
+// owning entity, and the hint.
 func TestBlobReferencedButAbsent(t *testing.T) {
 	r := newGitRepo(t)
 	r.commit("c1")
@@ -158,7 +158,7 @@ func TestBlobReferencedButAbsent(t *testing.T) {
 		t.Fatalf("status = %d, want 404 (%s)", resp.StatusCode, body)
 	}
 	msg := string(body)
-	for _, want := range []string{"absent.png", "has not been fetched locally", "cc-notes sync", "note " + id.Short()} {
+	for _, want := range []string{"absent.png", "is on neither this clone nor a sync remote", "cc-notes sync", "note " + id.Short()} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("missing-content 404 = %q, want it to contain %q", msg, want)
 		}

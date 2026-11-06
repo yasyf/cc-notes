@@ -8,11 +8,10 @@
 //
 // Attachment content rides along over the LFS batch API: every referenced,
 // locally-present object uploads before the ref push (a failure blocks the
-// push — a remote ref never references content the server lacks), and every
-// referenced, locally-missing object downloads after the push loop
-// converges (an LFS outage never blocks publishing refs). Sync is the only
-// path holding that invariant: plain git push publishes entity refs through
-// the installed refspec without uploading content.
+// push — a remote ref never references content the server lacks). Sync never
+// downloads content; a read fetches the object it needs. Sync is the only
+// path holding the upload invariant: plain git push publishes entity refs
+// through the installed refspec without uploading content.
 package sync
 
 import (
@@ -95,23 +94,12 @@ type Report struct {
 	// Uploaded counts attachment objects uploaded to the remote LFS
 	// endpoint before the ref push.
 	Uploaded int
-	// Downloaded counts attachment objects fetched from the remote LFS
-	// endpoint after the push loop converged.
-	Downloaded int
 	// Withheld counts the refs in this run's scope that exist on this clone and
 	// that the final round kept off the remote.
 	Withheld int
 	// Held counts the local refs the final round left unpushed because an
 	// attachment they reference failed to upload; every other ref pushed.
 	Held int
-	// Absent counts the referenced attachment objects the remote's LFS
-	// server does not hold, which the run could not download and does not
-	// fail on.
-	Absent int
-	// Stalled names the attachment object whose download moved no bytes for
-	// the stall bound; the run downloaded nothing after it and does not fail on
-	// it, and the next sync downloads it and the rest.
-	Stalled string
 	// Deferred counts the remote refs the final round left unfolded and
 	// unpushed because the remote did not send objects their chains lack.
 	Deferred int
@@ -151,12 +139,9 @@ type engine struct {
 	endpoint    lfs.Endpoint
 	endpointSet bool
 	// clients holds one lazily-built client per LFS operation.
-	clients    map[string]*lfs.Client
-	uploaded   int
-	downloaded int
-	absent     int
-	stalled    string
-	withheld   int
+	clients  map[string]*lfs.Client
+	uploaded int
+	withheld int
 	// blocked holds the refs referencing an attachment the current round
 	// failed to upload, uploadErr that failure, and held how many pending
 	// refs the round's push left out for it.
@@ -186,9 +171,6 @@ type engine struct {
 // the push; a failed upload holds back only the refs referencing the failed
 // objects, every other ref pushes, and the run then fails naming each held
 // reference.
-// Referenced, locally-missing objects download once the push loop
-// converges; a failed download fails the sync while the returned Report
-// still carries everything the run pushed.
 //
 // A remote ref whose chain needs objects the remote will not send stays
 // unfolded and unpushed for the round while every other ref converges; the
@@ -241,12 +223,9 @@ func (r Report) plus(o Report) Report {
 		Reconciled:    r.Reconciled + o.Reconciled,
 		Rounds:        r.Rounds + o.Rounds,
 		Uploaded:      r.Uploaded + o.Uploaded,
-		Downloaded:    r.Downloaded + o.Downloaded,
 		Withheld:      o.Withheld,
 		Held:          o.Held,
 		Deferred:      o.Deferred,
-		Absent:        o.Absent,
-		Stalled:       o.Stalled,
 	}
 }
 
@@ -295,7 +274,7 @@ func converge(ctx context.Context, s *store.Store, remote string, full bool, pre
 		pending = unblocked
 		switch err := e.push(ctx, pending); {
 		case err == nil:
-			return e.finish(ctx, round, len(pending)-len(e.rejected))
+			return e.finish(round, len(pending)-len(e.rejected))
 		case errors.Is(err, gitcmd.ErrNonFastForward):
 			if err := contendedBackoff(ctx, round); err != nil {
 				return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
@@ -307,17 +286,14 @@ func converge(ctx context.Context, s *store.Store, remote string, full bool, pre
 	return e.report(maxRounds, 0), fmt.Errorf("sync %s: %w: %d rounds exhausted", remote, ErrSyncContended, maxRounds)
 }
 
-// finish runs the download phase once the push loop has converged and
-// returns the run's final report. A download failure, a held upload, or a
-// deferred ref is the run's error while the report still carries the pushes
-// that landed: refs published, the rest named, exit non-zero.
-func (e *engine) finish(ctx context.Context, round, pushed int) (Report, error) {
+// finish returns the run's final report once the push loop has converged. A
+// held upload, a refused ref, or a deferred ref is the run's error while the
+// report still carries the pushes that landed: refs published, the rest named,
+// exit non-zero.
+func (e *engine) finish(round, pushed int) (Report, error) {
 	var errs []error
 	if e.uploadErr != nil {
 		errs = append(errs, fmt.Errorf("held %d refs to the next sync: %w", e.held, e.uploadErr))
-	}
-	if err := e.downloadAttachments(ctx); err != nil {
-		errs = append(errs, err)
 	}
 	if len(e.rejected) > 0 {
 		causes := make([]error, 0, len(e.rejected))
@@ -348,12 +324,9 @@ func (e *engine) report(rounds, pushed int) Report {
 		Reconciled:    int(e.reconciled.Load()),
 		Rounds:        rounds,
 		Uploaded:      e.uploaded,
-		Downloaded:    e.downloaded,
 		Withheld:      e.withheld,
 		Held:          e.held,
 		Deferred:      len(e.deferred),
-		Absent:        e.absent,
-		Stalled:       e.stalled,
 	}
 }
 

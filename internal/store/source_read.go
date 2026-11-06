@@ -12,6 +12,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/lfs"
 	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/sourcegraph"
@@ -406,8 +407,21 @@ func (s *Store) SourceObjectChanges(ctx context.Context, from, to model.SHA) (va
 	return
 }
 
-// OpenSourceContent keeps the managed lease through exact render or LFS descriptor acquisition.
-func (s *Store) OpenSourceContent(ctx context.Context, token model.SHA, key string) (value sourceview.Object, reader io.ReadCloser, err error) {
+// OpenSourceContent keeps the managed lease through exact render or LFS
+// descriptor acquisition. An attachment this clone lacks downloads outside the
+// lease, then opens under a fresh one.
+func (s *Store) OpenSourceContent(ctx context.Context, token model.SHA, key string) (sourceview.Object, io.ReadCloser, error) {
+	value, reader, err := s.openSourceContent(ctx, token, key)
+	if value.Attachment == "" || !errors.Is(err, lfs.ErrObjectMissing) {
+		return value, reader, err
+	}
+	if err := s.FetchAttachment(ctx, value.Attachment, value.Size); err != nil {
+		return value, nil, err
+	}
+	return s.openSourceContent(ctx, token, key)
+}
+
+func (s *Store) openSourceContent(ctx context.Context, token model.SHA, key string) (value sourceview.Object, reader io.ReadCloser, err error) {
 	err = s.managedView(ctx, func(tx *bolt.Tx) error {
 		revision, err := sourceRevision(tx, token)
 		if err != nil {
