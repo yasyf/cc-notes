@@ -441,7 +441,7 @@ func (g Git) DeleteRef(ctx context.Context, ref string, old model.SHA) error {
 // outside the sync path. A rejected delete wraps ErrNonFastForward via the
 // shared push classification; the caller continues past per-ref failures.
 func (g Git) DeleteRemoteRef(ctx context.Context, remote, ref string) error {
-	_, err := g.transfer(ctx, "", "push", remote, "--delete", ref)
+	_, err := g.transfer(ctx, "", "push", "--quiet", remote, "--delete", ref)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil {
 		return fmt.Errorf("delete remote ref %s on %s: %w", ref, remote, err)
 	}
@@ -776,11 +776,15 @@ func joinSHAs(shas []model.SHA) string {
 
 // Push uploads to remote using the given refspecs, never forced and without
 // the pre-push hook: Sync has already uploaded attachment content itself, and
-// a repo hook such as git-lfs's rescans every pushed ref. A rejected update,
-// or one the remote refused because the ref moved under it, wraps
-// ErrNonFastForward; any other refusal by the remote wraps ErrRemoteRejected.
+// a repo hook such as git-lfs's rescans every pushed ref. It pushes quietly
+// because git's status table abbreviates the object id of every ref the remote
+// advertises, ten seconds of CPU against a remote with 100k refs; git still
+// prints the table when an update fails, which the classification reads. A
+// rejected update, or one the remote refused because the ref moved under it,
+// wraps ErrNonFastForward; any other refusal by the remote wraps
+// ErrRemoteRejected.
 func (g Git) Push(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.transfer(ctx, "", append([]string{"push", "--no-verify", remote}, refspecs...)...)
+	_, err := g.transfer(ctx, "", append([]string{"push", "--quiet", "--no-verify", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, remoteMovedPatterns); err != nil && !errors.Is(err, ErrNonFastForward) {
 		err = classify(err, ErrRemoteRejected, []string{"[remote rejected]"})
 	}
