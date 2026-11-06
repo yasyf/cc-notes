@@ -59,6 +59,9 @@ const (
 	// push another writer beat.
 	contendedBackoffBase = 250 * time.Millisecond
 	pushArgBudget        = 256 << 10
+	// checkpointPushBatch bounds the checkpoints one leased push carries, each
+	// a lease and a refspec of about 300 bytes, inside pushArgBudget.
+	checkpointPushBatch = 512
 )
 
 var (
@@ -407,7 +410,12 @@ func (e *engine) pushCheckpoints(ctx context.Context, listed map[string]model.SH
 		return nil
 	}
 	defer Phase(ctx, fmt.Sprintf("pushing %d checkpoints", len(updates)))()
-	return e.store.RecordsGit.PushLeased(ctx, e.remote, updates)
+	for batch := range slices.Chunk(updates, checkpointPushBatch) {
+		if err := e.store.RecordsGit.PushLeased(ctx, e.remote, batch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func trackingLockKey(remote, prefix string) string {

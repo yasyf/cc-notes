@@ -238,21 +238,21 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 // same entity — then compare-and-swaps ref from ours to it. A lost race fails
 // with gitcmd.ErrCASMismatch. The merge pack carries no ops of its own, so the
 // fold stays tolerant: a chain a newer cc-notes wrote still merges here. Its
-// lamport is one past both tips', each the top of its own history, and the
-// fold of it starts from ref's checkpoint when one covers both sides' fork.
+// lamport is one past the greatest in both sides' histories, and the fold of
+// it starts from ref's checkpoint when one covers the start of both sides.
 func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (model.SHA, error) {
 	if err := s.CheckRecords(); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	ourTip, err := s.Repo.ReadCommit(ctx, ours)
-	if err != nil {
-		return "", fmt.Errorf("merge %s: %w", ref, err)
+	var top model.Lamport
+	for _, tip := range []model.SHA{ours, theirs} {
+		side, err := s.historyTop(ctx, ref, tip)
+		if err != nil {
+			return "", fmt.Errorf("merge %s: %w", ref, err)
+		}
+		top = max(top, side)
 	}
-	theirTip, err := s.Repo.ReadCommit(ctx, theirs)
-	if err != nil {
-		return "", fmt.Errorf("merge %s: %w", ref, err)
-	}
-	pack := model.Pack{Lamport: max(ourTip.Pack.Lamport, theirTip.Pack.Lamport) + 1, Session: session()}
+	pack := model.Pack{Lamport: top + 1, Session: session()}
 	sig, _, err := s.signature(ctx)
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
@@ -273,6 +273,24 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 		s.cache.writeBatch([]cachePublication{*publication})
 	}
 	return sha, nil
+}
+
+// historyTop returns the greatest lamport in tip's history: from the fold
+// cache, else from a fold that starts at ref's checkpoint, else from the whole
+// chain. A wrapped lamport puts a tip below its history's top, so the tip's
+// own lamport is not enough.
+func (s *Store) historyTop(ctx context.Context, ref string, tip model.SHA) (model.Lamport, error) {
+	if _, top, _, ok := s.cache.getTop(tip); ok {
+		return top, nil
+	}
+	if _, top, ok, err := s.foldFromCheckpoint(ctx, ref, tip); err != nil || ok {
+		return top, err
+	}
+	chain, err := s.Repo.ReadChain(ctx, tip)
+	if err != nil {
+		return 0, err
+	}
+	return topLamport(chain), nil
 }
 
 func (s *Store) extender(ctx context.Context, tip model.SHA, ops []model.Op) (model.Lamport, func(model.PackCommit) (model.Snapshot, model.Lamport, error), error) {

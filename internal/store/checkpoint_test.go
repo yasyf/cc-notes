@@ -25,7 +25,8 @@ func checkpointedLedger(t *testing.T, s *Store, rows int) (string, []model.SHA) 
 	t.Helper()
 	ledger := create(t, s, ledgerOps("desk")).(model.Ledger)
 	ref := refs.For(model.KindLedger, ledger.ID)
-	heads := []model.SHA{ledger.Head}
+	heads := make([]model.SHA, 0, 1+rows)
+	heads = append(heads, ledger.Head)
 	for i := range rows {
 		row := model.UpsertRow{Key: fmt.Sprintf("r%d", i%7), Fields: map[string]string{"state": fmt.Sprintf("s%d", i)}, Position: fmt.Sprintf("p%d", i%5)}
 		snap, err := s.Append(t.Context(), ref, []model.Op{row})
