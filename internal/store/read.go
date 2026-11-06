@@ -35,7 +35,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if err := s.CheckRecords(); err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
-	tip, err := s.managedTip(ctx, ref)
+	tip, err := s.entityTip(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
@@ -266,6 +266,13 @@ func (s *Store) loadRootedAt(ctx context.Context, ref string, head model.SHA) (R
 func (s *Store) HasNotes(ctx context.Context) (bool, error) {
 	if err := s.CheckRecords(); err != nil {
 		return false, err
+	}
+	if fromRefs, err := s.tipsFromRefs(); err != nil || fromRefs {
+		if err != nil {
+			return false, err
+		}
+		tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
+		return len(tips) > 0, err
 	}
 	var present bool
 	err := s.managedView(ctx, func(tx *bolt.Tx) error {
@@ -509,7 +516,7 @@ func (s *Store) PinnedKinds(ctx context.Context, kinds ...model.Kind) (*Store, e
 	for i, kind := range kinds {
 		roots[i] = refs.Root(kind)
 	}
-	tips, err := s.ManagedTips(ctx, roots...)
+	tips, err := s.EntityTips(ctx, roots...)
 	if err != nil {
 		return nil, err
 	}
@@ -533,7 +540,7 @@ func (s *Store) childrenInRange(ctx context.Context, namespace, selection string
 	tips := s.pins
 	if tips == nil {
 		var err error
-		if tips, err = s.ManagedTips(ctx, selection); err != nil {
+		if tips, err = s.EntityTips(ctx, selection); err != nil {
 			return nil, err
 		}
 	}

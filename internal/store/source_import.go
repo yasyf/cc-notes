@@ -10,12 +10,14 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	bolt "go.etcd.io/bbolt"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
@@ -319,30 +321,26 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 		return revision, nil
 	}
 	manifest := imported.manifests[token]
+	described, err := s.describeManifest(ctx, imported, manifest)
+	if err != nil {
+		return revision, err
+	}
 	entities := make(map[string]sourceview.Entity, len(manifest))
-	for _, entry := range manifest {
-		rooted, publication, err := s.loadRootedAt(ctx, entry.Ref, entry.Tip)
-		if err != nil {
+	for i, entry := range manifest {
+		d := described[i]
+		if d.loadErr != nil {
 			if len(imported.applied[token]) != 0 {
-				return revision, fmt.Errorf("import Applied receipts %v token %s missing entity %s at %s: %w", imported.applied[token], token, entry.Ref, entry.Tip, err)
+				return revision, fmt.Errorf("import Applied receipts %v token %s missing entity %s at %s: %w", imported.applied[token], token, entry.Ref, entry.Tip, d.loadErr)
 			}
 			return s.metadataOnlySourceImport(ctx, revision, manifest)
 		}
-		imported.publications.add(publication)
-		if imported.current[entry.Ref] == entry.Tip {
-			if _, found := imported.rows[entry.Ref]; !found {
-				rows, err := s.managedRows(ctx, []gitcmd.RefUpdate{{Ref: entry.Ref, New: entry.Tip}}, map[model.SHA]model.Snapshot{entry.Tip: rooted.Snapshot}, nil)
-				if err != nil {
-					return revision, err
-				}
-				imported.rows[entry.Ref] = rows[0]
-			}
+		if d.err != nil {
+			return revision, d.err
 		}
-		entity, err := sourceview.Describe(entry.Ref, entry.Tip, rooted.Root, rooted.Snapshot)
-		if err != nil {
-			return revision, err
+		if d.row != nil {
+			imported.rows[entry.Ref] = *d.row
 		}
-		entities[entry.Ref] = entity
+		entities[entry.Ref] = d.entity
 	}
 	var provenance sourceindex.ImportProvenance
 	if len(imported.applied[token]) != 0 {
@@ -360,7 +358,7 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 	}
 	revision.ProjectionAvailable = true
 	revision.RenderPolicy = sourceview.RenderPolicy
-	err := s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
+	err = s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
 		var err error
 		revision, err = s.buildSourceSnapshot(objects, revision, entities)
 		if err != nil {
@@ -383,6 +381,76 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 		return nil
 	})
 	return revision, err
+}
+
+type describedEntry struct {
+	entity  sourceview.Entity
+	row     *queryMetadata
+	loadErr error
+	err     error
+}
+
+// describeManifest folds and describes every manifest entry across
+// listConcurrency workers, each reading through its own records handle, since
+// one handle reads a chain at a time. Each worker publishes its fold and keeps
+// only the entry's description and query row.
+func (s *Store) describeManifest(ctx context.Context, imported *importedSource, manifest gitobj.SourceManifest) ([]describedEntry, error) {
+	readers := make([]*Store, min(listConcurrency, len(manifest)))
+	for i := range readers {
+		repo, err := s.openRecordsReader()
+		if err != nil {
+			return nil, err
+		}
+		readers[i] = s.Pinned(s.pins)
+		readers[i].Repo = repo
+	}
+	described := make([]describedEntry, len(manifest))
+	var next atomic.Int64
+	var g errgroup.Group
+	for _, reader := range readers {
+		g.Go(func() error {
+			for i := next.Add(1) - 1; i < int64(len(manifest)); i = next.Add(1) - 1 {
+				described[i] = s.describeEntry(ctx, reader, imported, manifest[i])
+			}
+			return nil
+		})
+	}
+	return described, g.Wait()
+}
+
+func (s *Store) describeEntry(ctx context.Context, reader *Store, imported *importedSource, entry gitobj.SourceRefTip) describedEntry {
+	rooted, publication, err := reader.loadRootedAt(ctx, entry.Ref, entry.Tip)
+	if err != nil {
+		return describedEntry{loadErr: err}
+	}
+	imported.publications.add(publication)
+	var d describedEntry
+	if imported.current[entry.Ref] == entry.Tip {
+		if _, found := imported.rows[entry.Ref]; !found {
+			rows, err := s.managedRows(ctx, []gitcmd.RefUpdate{{Ref: entry.Ref, New: entry.Tip}}, map[model.SHA]model.Snapshot{entry.Tip: rooted.Snapshot}, nil)
+			if err != nil {
+				return describedEntry{err: err}
+			}
+			d.row = &rows[0]
+		}
+	}
+	d.entity, d.err = sourceview.Describe(entry.Ref, entry.Tip, rooted.Root, rooted.Snapshot)
+	return d
+}
+
+func (s *Store) openRecordsReader() (*gitobj.Repo, error) {
+	var repo *gitobj.Repo
+	var err error
+	if s.storage.bound {
+		repo, err = openRecords(s.storage.binding)
+	} else {
+		repo, err = gitobj.Open(s.gitDir, s.commonDir)
+	}
+	if err != nil {
+		return nil, err
+	}
+	repo.BackfillWith(s.hydrateChain)
+	return repo, nil
 }
 
 func (s *Store) metadataOnlySourceImport(ctx context.Context, revision sourceindex.Revision, manifest gitobj.SourceManifest) (sourceindex.Revision, error) {

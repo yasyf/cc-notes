@@ -142,6 +142,7 @@ type Store struct {
 	root             *rootMemo
 	policy           *policyMemo
 	pins             map[string]model.SHA
+	awaitImport      func(context.Context) error
 	// storage is the context's binding record; Pinned views share it.
 	storage  *storageBinding
 	lease    *storeLease
@@ -238,6 +239,7 @@ func (s *Store) Pinned(tips map[string]model.SHA) *Store {
 		root:             s.root,
 		policy:           s.policy,
 		pins:             tips,
+		awaitImport:      s.awaitImport,
 		storage:          s.storage,
 		lease:            s.lease,
 		borrowed:         true,

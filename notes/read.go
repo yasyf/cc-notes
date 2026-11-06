@@ -200,7 +200,7 @@ func (c *Client) ResolveEntity(ctx context.Context, prefix string) (model.Kind, 
 	for _, kind := range model.Kinds() {
 		prefixes = append(prefixes, refs.Root(kind)+lowered)
 	}
-	tips, err := c.s.ManagedTips(ctx, prefixes...)
+	tips, err := c.s.EntityTips(ctx, prefixes...)
 	if err != nil {
 		return "", "", err
 	}
