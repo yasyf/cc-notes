@@ -344,6 +344,12 @@ Converge `refs/cc-notes/*` with a remote and push. Fetches, union-merges diverge
 (never clobbers), and pushes, looping until stable. The lean report prints only nonzero verbs
 followed by the round count.
 
+Sync also carries each long ledger's checkpoint, `refs/cc-notes-checkpoints/ledgers/<id>`: the
+ledger's folded state at a recent commit, so a fold reads only the commits above it instead of
+the whole chain. A fold from the root writes one every 2,000 lamports, and sync pushes it. A
+fold that cannot prove a checkpoint covers the start of its history folds from the root.
+Releases without checkpoints never fetch or push the namespace, and fold from the root.
+
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--remote <name>` | every cc-notes-wired remote, else `origin` | Remote to sync with |

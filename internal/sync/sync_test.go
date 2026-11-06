@@ -1629,3 +1629,24 @@ func TestSyncWritersRacingOnOneLedgerBothLand(t *testing.T) {
 		}
 	}
 }
+
+func TestSyncCarriesCheckpointRefsBesideTheirEntities(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := clone(t, bare, "Alice", "alice@example.com")
+	b := clone(t, bare, "Bob", "bob@example.com")
+	created, err := a.Create(t.Context(), []model.Op{model.CreateLedger{Nonce: model.NewNonce(), Title: "desk", Columns: []string{"state"}}})
+	if err != nil {
+		t.Fatalf("create ledger: %v", err)
+	}
+	ledger := created.(model.Ledger)
+	checkpoint := refs.CheckpointOf(refs.For(model.KindLedger, ledger.ID))
+	gittest.Git(t, a.Git.Dir, "update-ref", checkpoint, string(ledger.Head))
+	sync(t, a)
+	if got := gittest.Git(t, bare, "rev-parse", checkpoint); got != string(ledger.Head) {
+		t.Fatalf("remote %s = %s after Alice's sync, want %s", checkpoint, got, ledger.Head)
+	}
+	sync(t, b)
+	if got := gittest.Git(t, b.Git.Dir, "rev-parse", checkpoint); got != string(ledger.Head) {
+		t.Fatalf("Bob's %s = %s after his sync, want %s", checkpoint, got, ledger.Head)
+	}
+}

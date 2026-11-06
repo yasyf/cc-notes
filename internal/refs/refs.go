@@ -53,6 +53,24 @@ func FetchRefspec(remote string) string {
 	return "+" + namespace + "*:" + syncNamespace + remote + "/*"
 }
 
+// CheckpointNamespace holds the fold checkpoints of entity refs. It sits
+// outside Namespace, so the installed refspecs, plain git push and fetch, and
+// cc-notes releases that predate it never fetch, push, or parse one.
+const CheckpointNamespace = "refs/cc-notes-checkpoints/"
+
+// CheckpointOf maps an entity ref, or a prefix of entity refs, to the
+// checkpoint ref or prefix that mirrors it under CheckpointNamespace.
+func CheckpointOf(ref string) string {
+	return CheckpointNamespace + strings.TrimPrefix(ref, namespace)
+}
+
+// CheckpointTracking maps a checkpoint ref, or a prefix of them, to the ref or
+// prefix a sync fetches remote's copy into, so a local checkpoint that covers
+// more than the remote's survives the fetch.
+func CheckpointTracking(remote, checkpoint string) string {
+	return "refs/cc-notes-checkpoints-sync/" + remote + "/" + strings.TrimPrefix(checkpoint, CheckpointNamespace)
+}
+
 var (
 	// ErrNotCCNotes reports a ref outside the cc-notes namespaces.
 	ErrNotCCNotes = errors.New("not a cc-notes ref")

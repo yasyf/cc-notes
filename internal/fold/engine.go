@@ -111,6 +111,20 @@ func stream[T model.Snapshot](base model.Snapshot, c model.PackCommit, next func
 	return r.snapshot(head)
 }
 
+func resume[T model.Snapshot](state model.Snapshot, ordered []model.PackCommit, f folder[T]) (T, error) {
+	var zero T
+	if err := f.seed(state); err != nil {
+		return zero, err
+	}
+	r := &replay[T]{f: f, m: tolerant, created: true}
+	for _, c := range ordered {
+		if err := r.step(c); err != nil {
+			return zero, err
+		}
+	}
+	return r.snapshot(ordered[len(ordered)-1].SHA)
+}
+
 func walk[T model.Snapshot](ordered []model.PackCommit, newFolder func() folder[T], fn func(Step) error) error {
 	var seeds seedTracker
 	var r *replay[T]

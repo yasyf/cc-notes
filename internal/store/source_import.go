@@ -321,7 +321,7 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 	manifest := imported.manifests[token]
 	entities := make(map[string]sourceview.Entity, len(manifest))
 	for _, entry := range manifest {
-		rooted, publication, err := s.loadRootedAt(ctx, entry.Tip)
+		rooted, publication, err := s.loadRootedAt(ctx, entry.Ref, entry.Tip)
 		if err != nil {
 			if len(imported.applied[token]) != 0 {
 				return revision, fmt.Errorf("import Applied receipts %v token %s missing entity %s at %s: %w", imported.applied[token], token, entry.Ref, entry.Tip, err)

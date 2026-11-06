@@ -42,7 +42,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 	if snap, ok := s.cache.get(tip); ok {
 		return snap, nil
 	}
-	snapshot, publication, err := s.foldAt(ctx, tip)
+	snapshot, publication, err := s.foldAt(ctx, ref, tip)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
@@ -58,7 +58,7 @@ func (s *Store) Load(ctx context.Context, ref string) (model.Snapshot, error) {
 // the base a file-edit buffer was rendered from — can reconstruct that exact
 // snapshot to diff an edit against. A head whose chain is unreadable fails.
 func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, error) {
-	snapshot, publication, err := s.loadAt(ctx, head)
+	snapshot, publication, err := s.loadAt(ctx, "", head)
 	if err != nil {
 		return nil, err
 	}
@@ -68,21 +68,24 @@ func (s *Store) LoadAt(ctx context.Context, head model.SHA) (model.Snapshot, err
 	return snapshot, nil
 }
 
-func (s *Store) loadAt(ctx context.Context, head model.SHA) (model.Snapshot, *cachePublication, error) {
+// loadAt folds head through the fold cache. ref names the entity head belongs
+// to, or is empty when the caller holds only a sha; an entity ref lets a fold
+// that misses the cache start from the entity's checkpoint.
+func (s *Store) loadAt(ctx context.Context, ref string, head model.SHA) (model.Snapshot, *cachePublication, error) {
 	if err := s.CheckRecords(); err != nil {
 		return nil, nil, fmt.Errorf("load at %s: %w", head, err)
 	}
 	if snap, ok := s.cache.get(head); ok {
 		return snap, nil, nil
 	}
-	snapshot, publication, err := s.foldAt(ctx, head)
+	snapshot, publication, err := s.foldAt(ctx, ref, head)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load at %s: %w", head, err)
 	}
 	return snapshot, publication, nil
 }
 
-func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *cachePublication, error) {
+func (s *Store) foldAt(ctx context.Context, ref string, head model.SHA) (model.Snapshot, *cachePublication, error) {
 	commit, err := s.Repo.ReadCommit(ctx, head)
 	if err == nil && len(commit.Parents) == 1 && !slices.ContainsFunc(commit.Pack.Ops, isCheckpoint) {
 		if base, top, floor, ok := s.cache.getTop(commit.Parents[0]); ok && commit.Pack.Lamport > floor {
@@ -92,9 +95,16 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 		}
 	}
 	if err == nil && !slices.ContainsFunc(commit.Pack.Ops, isCheckpoint) {
-		if snapshot, publication, ok := s.foldLinear(ctx, commit); ok {
-			return snapshot, publication, nil
+		if snapshot, publication, ok, err := s.foldLinear(ctx, ref, commit); err != nil || ok {
+			return snapshot, publication, err
 		}
+	}
+	snapshot, top, ok, cpErr := s.foldFromCheckpoint(ctx, ref, head)
+	if cpErr != nil {
+		return nil, nil, cpErr
+	}
+	if ok {
+		return snapshot, foldPublication(head, snapshot, top, 0), nil
 	}
 	var chain []model.PackCommit
 	if err == nil {
@@ -105,9 +115,14 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 	if err != nil {
 		return nil, nil, err
 	}
-	snapshot, err := fold.Fold(chain)
+	snapshot, err = fold.Fold(chain)
 	if err != nil {
 		return nil, nil, err
+	}
+	if fold.ExtendFloor(chain) == 0 {
+		if err := s.writeCheckpoint(ctx, ref, head, topLamport(chain), snapshot); err != nil {
+			return nil, nil, err
+		}
 	}
 	return snapshot, foldChainPublication(head, snapshot, chain), nil
 }
@@ -117,22 +132,34 @@ func (s *Store) foldAt(ctx context.Context, head model.SHA) (model.Snapshot, *ca
 // the root, then streams the commits above that base through the fold oldest
 // first, so memory stays at one snapshot however long the chain. A merge, a
 // checkpoint, or a commit the fold refuses leaves the chain to the full fold,
-// and foldLinear reports false.
-func (s *Store) foldLinear(ctx context.Context, head model.PackCommit) (model.Snapshot, *cachePublication, bool) {
+// and foldLinear reports false. So does an entity with a checkpoint whose
+// cached base lies more than checkpointInterval commits down, which folds from
+// its checkpoint instead. A fold from the root writes the entity's checkpoint
+// when one is due.
+func (s *Store) foldLinear(ctx context.Context, ref string, head model.PackCommit) (model.Snapshot, *cachePublication, bool, error) {
 	ctx, release := gitobj.ShareReaders(ctx)
 	defer func() { _ = release() }()
+	bounded, err := s.hasCheckpoint(ctx, ref)
+	if err != nil {
+		return nil, nil, false, err
+	}
 	var base model.Snapshot
 	var top, floor model.Lamport
 	var cached []model.SHA
+	var steps model.Lamport
+	tooDeep := false
 	walked, linear, err := s.Repo.LinearHistory(ctx, head.SHA, func(sha model.SHA) bool {
 		snap, snapTop, snapFloor, ok := s.cache.getTop(sha)
 		if ok {
 			base, top, floor, cached = snap, snapTop, snapFloor, []model.SHA{sha}
+			return true
 		}
-		return ok
+		steps++
+		tooDeep = bounded && steps > checkpointInterval
+		return tooDeep
 	})
-	if err != nil || !linear {
-		return nil, nil, false
+	if err != nil || !linear || tooDeep {
+		return nil, nil, false, nil
 	}
 	next := len(walked) - 1
 	snapshot, err := fold.Stream(base, func() (model.PackCommit, bool, error) {
@@ -155,15 +182,20 @@ func (s *Store) foldLinear(ctx context.Context, head model.PackCommit) (model.Sn
 		return c, true, nil
 	})
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
-	return snapshot, foldPublication(head.SHA, snapshot, top, floor, cached...), true
+	if base == nil {
+		if err := s.writeCheckpoint(ctx, ref, head.SHA, top, snapshot); err != nil {
+			return nil, nil, false, err
+		}
+	}
+	return snapshot, foldPublication(head.SHA, snapshot, top, floor, cached...), true, nil
 }
 
 // LoadRootedAt folds the immutable chain ending at head and returns both its
 // snapshot and unique create commit. It never resolves a mutable ref.
 func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapshot, error) {
-	rooted, publication, err := s.loadRootedAt(ctx, head)
+	rooted, publication, err := s.loadRootedAt(ctx, "", head)
 	if err != nil {
 		return RootedSnapshot{}, err
 	}
@@ -173,9 +205,22 @@ func (s *Store) LoadRootedAt(ctx context.Context, head model.SHA) (RootedSnapsho
 	return rooted, nil
 }
 
-func (s *Store) loadRootedAt(ctx context.Context, head model.SHA) (RootedSnapshot, *cachePublication, error) {
+// loadRootedAt is LoadRootedAt for the entity ref names, which may be empty as
+// loadAt's may. A fold from ref's checkpoint reads the create commit alone,
+// which the checkpoint's root fold proved the chain's only one.
+func (s *Store) loadRootedAt(ctx context.Context, ref string, head model.SHA) (RootedSnapshot, *cachePublication, error) {
 	if err := s.CheckRecords(); err != nil {
 		return RootedSnapshot{}, nil, fmt.Errorf("load rooted at %s: %w", head, err)
+	}
+	if snapshot, top, ok, err := s.foldFromCheckpoint(ctx, ref, head); err != nil || ok {
+		if err != nil {
+			return RootedSnapshot{}, nil, fmt.Errorf("load rooted at %s: %w", head, err)
+		}
+		root, err := s.Repo.ReadCommit(ctx, model.SHA(snapshot.EntityID()))
+		if err != nil {
+			return RootedSnapshot{}, nil, fmt.Errorf("root at %s: %w", head, err)
+		}
+		return RootedSnapshot{Snapshot: snapshot, Root: root}, foldPublication(head, snapshot, top, 0), nil
 	}
 	chain, err := s.Repo.ReadChain(ctx, head)
 	if err != nil {
@@ -188,6 +233,11 @@ func (s *Store) loadRootedAt(ctx context.Context, head model.SHA) (RootedSnapsho
 	root, err := uniqueRootCommit(chain)
 	if err != nil {
 		return RootedSnapshot{}, nil, fmt.Errorf("root at %s: %w", head, err)
+	}
+	if fold.ExtendFloor(chain) == 0 {
+		if err := s.writeCheckpoint(ctx, ref, head, topLamport(chain), snapshot); err != nil {
+			return RootedSnapshot{}, nil, fmt.Errorf("checkpoint at %s: %w", head, err)
+		}
 	}
 	return RootedSnapshot{Snapshot: snapshot, Root: root}, foldChainPublication(head, snapshot, chain), nil
 }

@@ -53,6 +53,7 @@ type kindFold struct {
 	walk   func([]model.PackCommit, func(Step) error) error
 	extend func(model.Snapshot, model.PackCommit) (model.Snapshot, error)
 	stream func(model.Snapshot, model.PackCommit, func() (model.PackCommit, bool, error)) (model.Snapshot, error)
+	resume func(model.Snapshot, []model.PackCommit) (model.Snapshot, error)
 }
 
 func kindFoldOf[T model.Snapshot, F folder[T]](newFolder func() F) kindFold {
@@ -68,6 +69,9 @@ func kindFoldOf[T model.Snapshot, F folder[T]](newFolder func() F) kindFold {
 		},
 		stream: func(base model.Snapshot, first model.PackCommit, next func() (model.PackCommit, bool, error)) (model.Snapshot, error) {
 			return stream[T](base, first, next, newFolder())
+		},
+		resume: func(state model.Snapshot, ordered []model.PackCommit) (model.Snapshot, error) {
+			return resume[T](state, ordered, newFolder())
 		},
 	}
 }
@@ -169,6 +173,19 @@ func Stream(base model.Snapshot, next func() (model.PackCommit, bool, error)) (m
 		return base, nil
 	}
 	return folders[meta.Kind].stream(base, first, next)
+}
+
+// Resume folds suffix onto state, Fold's snapshot of every commit below it, as
+// Fold folds them together. It equals Fold over the whole chain when every
+// commit below the suffix has a lamport no greater than every suffix commit's,
+// since Linearize then emits all of them first in their own order: the caller
+// proves that. The suffix holds no create commit and one head.
+func Resume(state model.Snapshot, suffix []model.PackCommit) (model.Snapshot, error) {
+	ordered, err := linearizeAbove(suffix)
+	if err != nil {
+		return nil, err
+	}
+	return folders[state.Meta().Kind].resume(state, ordered)
 }
 
 // ExtendFloor returns the lamport a sole child of commits' head must exceed for
