@@ -189,42 +189,116 @@ func (s *Store) resumeFrom(ctx context.Context, parsed refs.Ref, head model.SHA,
 	return snapshot, max(entry.CoversLamport, topLamport(suffix)), true, nil
 }
 
-// writeCheckpoint records snapshot, a fold from the root of head's whole
-// history, as the newest entry of ref's checkpoint once that history's top
-// lamport runs checkpointInterval past the newest entry this binary can seed
-// from. Only a fold from the root writes one, so a bad entry never seeds the
-// next. A history holding a checkpoint commit, or ops this binary skipped,
-// writes none. A writer that loses the race to another leaves the winner's.
-func (s *Store) writeCheckpoint(ctx context.Context, ref string, head model.SHA, top model.Lamport, snapshot model.Snapshot) error {
+// checkpointLags are how far below the newest commit a checkpoint's two
+// frontiers sit, newest first. A merge seeds from an entry only when its side
+// forked above the frontier, and a writer that has not synced yet holds a side
+// that forked below the newest commit, so both frontiers trail it: the first
+// past most such sides, the second past the deepest the drive ledgers show.
+func checkpointLags() []model.Lamport {
+	return []model.Lamport{checkpointInterval / 4, checkpointInterval + checkpointInterval/4}
+}
+
+// checkpointCandidate is one entry a fold from the root offers ref's
+// checkpoint: state is Fold over frontier's whole history, whose top lamport
+// is covers.
+type checkpointCandidate struct {
+	frontier model.SHA
+	covers   model.Lamport
+	state    model.Snapshot
+}
+
+// checkpointDue reports whether a fold from the root of a history whose top
+// lamport is top owes ref a checkpoint: ref keeps them and top runs
+// checkpointInterval past the newest entry.
+func (s *Store) checkpointDue(ctx context.Context, ref string, top model.Lamport) (bool, error) {
 	_, cpRef, ok := checkpointRef(ref)
-	if !ok || snapshot.Meta().SkippedOps > 0 {
+	if !ok {
+		return false, nil
+	}
+	file, _, err := s.readCheckpoint(ctx, cpRef)
+	if err != nil || file.Format > checkpointFormat {
+		return false, err
+	}
+	newest := file.covers()
+	return top >= newest && top-newest >= checkpointInterval, nil
+}
+
+// checkpointFromChain records ref's checkpoint from chain, head's whole
+// history folded from the root, when one is due. Each frontier is head's
+// first-parent ancestor one of checkpointLags lamports down, and its state is
+// Fold over that frontier's own history. A history holding a checkpoint commit
+// records none.
+func (s *Store) checkpointFromChain(ctx context.Context, ref string, head model.SHA, chain []model.PackCommit) error {
+	top := topLamport(chain)
+	if fold.ExtendFloor(chain) != 0 {
+		return nil
+	}
+	due, err := s.checkpointDue(ctx, ref, top)
+	if err != nil || !due {
+		return err
+	}
+	byID := make(map[model.SHA]model.PackCommit, len(chain))
+	for _, c := range chain {
+		byID[c.SHA] = c
+	}
+	var entries []checkpointCandidate
+	for _, lag := range checkpointLags() {
+		if top < lag {
+			break
+		}
+		frontier := byID[head]
+		for frontier.Pack.Lamport > top-lag && len(frontier.Parents) > 0 {
+			frontier = byID[frontier.Parents[0]]
+		}
+		covered := []model.PackCommit{frontier}
+		seen := map[model.SHA]bool{frontier.SHA: true}
+		for i := 0; i < len(covered); i++ {
+			for _, parent := range covered[i].Parents {
+				if !seen[parent] {
+					seen[parent] = true
+					covered = append(covered, byID[parent])
+				}
+			}
+		}
+		state, err := fold.Fold(covered)
+		if err != nil {
+			return nil
+		}
+		entries = append(entries, checkpointCandidate{frontier: frontier.SHA, covers: topLamport(covered), state: state})
+	}
+	return s.recordCheckpoint(ctx, ref, entries)
+}
+
+// recordCheckpoint makes entries, newest first, ref's checkpoint. Only a fold
+// from the root records one, so a bad entry never seeds the next. Nothing is
+// recorded when the newest entry covers no more than the current checkpoint's,
+// or when any state skipped ops. A writer that loses the race to another
+// leaves the winner's.
+func (s *Store) recordCheckpoint(ctx context.Context, ref string, entries []checkpointCandidate) error {
+	_, cpRef, ok := checkpointRef(ref)
+	if !ok || len(entries) == 0 {
 		return nil
 	}
 	file, old, err := s.readCheckpoint(ctx, cpRef)
-	if err != nil || file.Format > checkpointFormat {
+	if err != nil || file.Format > checkpointFormat || entries[0].covers <= file.covers() {
 		return err
 	}
-	usable := file.usable()
-	var newest model.Lamport
-	if len(usable) > 0 {
-		newest = usable[0].CoversLamport
+	written := checkpointFile{Format: checkpointFormat}
+	for _, entry := range entries {
+		if entry.state.Meta().SkippedOps > 0 {
+			return nil
+		}
+		state, err := json.Marshal(entry.state)
+		if err != nil {
+			return err
+		}
+		written.Entries = append(written.Entries, checkpointEntry{Generation: checkpointGeneration, Frontier: entry.frontier, CoversLamport: entry.covers, StateKind: entry.state.Meta().Kind, State: state})
 	}
-	if top < newest || top-newest < checkpointInterval {
-		return nil
-	}
-	state, err := json.Marshal(snapshot)
+	encoded, err := json.Marshal(written)
 	if err != nil {
 		return err
 	}
-	entries := []checkpointEntry{{Generation: checkpointGeneration, Frontier: head, CoversLamport: top, StateKind: snapshot.Meta().Kind, State: state}}
-	if len(usable) > 0 {
-		entries = append(entries, usable[0])
-	}
-	data, err := json.Marshal(checkpointFile{Format: checkpointFormat, Entries: entries})
-	if err != nil {
-		return err
-	}
-	sha, err := s.Repo.WriteCheckpointCommit(ctx, data)
+	sha, err := s.Repo.WriteCheckpointCommit(ctx, encoded)
 	if err != nil {
 		return err
 	}

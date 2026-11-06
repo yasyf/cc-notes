@@ -119,10 +119,8 @@ func (s *Store) foldAt(ctx context.Context, ref string, head model.SHA) (model.S
 	if err != nil {
 		return nil, nil, err
 	}
-	if fold.ExtendFloor(chain) == 0 {
-		if err := s.writeCheckpoint(ctx, ref, head, topLamport(chain), snapshot); err != nil {
-			return nil, nil, err
-		}
+	if err := s.checkpointFromChain(ctx, ref, head, chain); err != nil {
+		return nil, nil, err
 	}
 	return snapshot, foldChainPublication(head, snapshot, chain), nil
 }
@@ -134,8 +132,9 @@ func (s *Store) foldAt(ctx context.Context, ref string, head model.SHA) (model.S
 // checkpoint, or a commit the fold refuses leaves the chain to the full fold,
 // and foldLinear reports false. So does an entity with a checkpoint whose
 // cached base lies more than checkpointInterval commits down, which folds from
-// its checkpoint instead. A fold from the root writes the entity's checkpoint
-// when one is due.
+// its checkpoint instead. A fold from the root that a checkpoint is due on
+// streams in legs, recording the snapshot at each of checkpointLags below head
+// on the way.
 func (s *Store) foldLinear(ctx context.Context, ref string, head model.PackCommit) (model.Snapshot, *cachePublication, bool, error) {
 	ctx, release := gitobj.ShareReaders(ctx)
 	defer func() { _ = release() }()
@@ -161,33 +160,53 @@ func (s *Store) foldLinear(ctx context.Context, ref string, head model.PackCommi
 	if err != nil || !linear || tooDeep {
 		return nil, nil, false, nil
 	}
-	next := len(walked) - 1
-	snapshot, err := fold.Stream(base, func() (model.PackCommit, bool, error) {
-		if next < 0 {
-			return model.PackCommit{}, false, nil
+	var legs []int
+	if base == nil {
+		due, err := s.checkpointDue(ctx, ref, head.Pack.Lamport)
+		if err != nil {
+			return nil, nil, false, err
 		}
-		sha := walked[next]
-		next--
-		c := head
-		if sha != head.SHA {
-			var err error
-			if c, err = s.Repo.ReadCommit(ctx, sha); err != nil {
-				return model.PackCommit{}, false, err
+		for _, lag := range checkpointLags() {
+			if due && int(lag) < len(walked) {
+				legs = append(legs, int(lag))
 			}
 		}
-		if base != nil && c.Pack.Lamport <= floor {
-			return model.PackCommit{}, false, fmt.Errorf("%s at lamport %d is not above the cached floor %d", c.SHA, c.Pack.Lamport, floor)
+	}
+	next := len(walked) - 1
+	stream := func(stop int) func() (model.PackCommit, bool, error) {
+		return func() (model.PackCommit, bool, error) {
+			if next < stop {
+				return model.PackCommit{}, false, nil
+			}
+			sha := walked[next]
+			next--
+			c := head
+			if sha != head.SHA {
+				var err error
+				if c, err = s.Repo.ReadCommit(ctx, sha); err != nil {
+					return model.PackCommit{}, false, err
+				}
+			}
+			if base != nil && c.Pack.Lamport <= floor {
+				return model.PackCommit{}, false, fmt.Errorf("%s at lamport %d is not above the cached floor %d", c.SHA, c.Pack.Lamport, floor)
+			}
+			top = max(top, c.Pack.Lamport)
+			return c, true, nil
 		}
-		top = max(top, c.Pack.Lamport)
-		return c, true, nil
-	})
+	}
+	var entries []checkpointCandidate
+	for _, leg := range slices.Backward(legs) {
+		if base, err = fold.Stream(base, stream(leg)); err != nil {
+			return nil, nil, false, nil
+		}
+		entries = append([]checkpointCandidate{{frontier: walked[leg], covers: top, state: base}}, entries...)
+	}
+	snapshot, err := fold.Stream(base, stream(0))
 	if err != nil {
 		return nil, nil, false, nil
 	}
-	if base == nil {
-		if err := s.writeCheckpoint(ctx, ref, head.SHA, top, snapshot); err != nil {
-			return nil, nil, false, err
-		}
+	if err := s.recordCheckpoint(ctx, ref, entries); err != nil {
+		return nil, nil, false, err
 	}
 	return snapshot, foldPublication(head.SHA, snapshot, top, floor, cached...), true, nil
 }
@@ -234,10 +253,8 @@ func (s *Store) loadRootedAt(ctx context.Context, ref string, head model.SHA) (R
 	if err != nil {
 		return RootedSnapshot{}, nil, fmt.Errorf("root at %s: %w", head, err)
 	}
-	if fold.ExtendFloor(chain) == 0 {
-		if err := s.writeCheckpoint(ctx, ref, head, topLamport(chain), snapshot); err != nil {
-			return RootedSnapshot{}, nil, fmt.Errorf("checkpoint at %s: %w", head, err)
-		}
+	if err := s.checkpointFromChain(ctx, ref, head, chain); err != nil {
+		return RootedSnapshot{}, nil, fmt.Errorf("checkpoint at %s: %w", head, err)
 	}
 	return RootedSnapshot{Snapshot: snapshot, Root: root}, foldChainPublication(head, snapshot, chain), nil
 }

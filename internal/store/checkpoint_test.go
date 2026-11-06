@@ -80,9 +80,10 @@ func TestCheckpointSeedsAMergeWhoseSideForkedBelowIt(t *testing.T) {
 	s := initStore(t)
 	ref, heads := checkpointedLedger(t, s, 12)
 	coldLoad(t, s, ref)
+	lags := checkpointLags()
 	file, _, err := s.readCheckpoint(t.Context(), refs.CheckpointOf(ref))
-	if err != nil || len(file.usable()) != 1 || file.Entries[0].Frontier != heads[12] {
-		t.Fatalf("checkpoint after a root fold of 13 commits = %+v, %v; want one entry at %s", file, err, heads[12])
+	if err != nil || len(file.usable()) != 2 || file.Entries[0].Frontier != heads[12-lags[0]] || file.Entries[1].Frontier != heads[12-lags[1]] {
+		t.Fatalf("checkpoint after a root fold of 13 commits = %+v, %v; want entries %v commits below the tip", file, err, lags)
 	}
 	covers := file.Entries[0].CoversLamport
 	side := sideCommits(t, s, heads[4], covers+1, covers+2)
@@ -111,13 +112,13 @@ func TestCheckpointRefusesASideAtOrBelowItsLamport(t *testing.T) {
 	s := initStore(t)
 	ref, heads := checkpointedLedger(t, s, 12)
 	coldLoad(t, s, ref)
-	side := sideCommits(t, s, heads[4], 7, 8)
+	side := sideCommits(t, s, heads[0], 2, 3)
 	merged, err := s.Merge(t.Context(), ref, heads[12], side)
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
 	if _, _, ok, err := s.foldFromCheckpoint(t.Context(), ref, merged); err != nil || ok {
-		t.Fatalf("foldFromCheckpoint over a side commit at lamport 7, below the checkpoint's = ok %v, %v; want refused", ok, err)
+		t.Fatalf("foldFromCheckpoint over a side at lamports 2 and 3, under both entries' = ok %v, %v; want refused", ok, err)
 	}
 	if got, want := coldLoad(t, s, ref), rootFold(t, s, merged); !reflect.DeepEqual(got, want) {
 		t.Fatalf("cold Load after a refused checkpoint =\n%+v\nwant the root fold\n%+v", got, want)
@@ -161,7 +162,7 @@ func TestColdFoldReadsUnderOneCheckpointIntervalAtAnyDepth(t *testing.T) {
 		s := initStore(t)
 		ref, _ := checkpointedLedger(t, s, intervals*interval)
 		coldLoad(t, s, ref)
-		for i := range interval / 2 {
+		for i := range interval/2 - interval/4 {
 			if _, err := s.Append(t.Context(), ref, []model.Op{model.AddComment{Body: fmt.Sprintf("after %d", i)}}); err != nil {
 				t.Fatalf("Append: %v", err)
 			}
