@@ -3728,13 +3728,15 @@ ramped to 50%
 
 ### `cc-notes log entry list LOG`
 
-MCP: log_entry_list (id)
+MCP: log_entry_list (id, since)
 
 List every entry of a log, uncapped and oldest-first — the read past `log show --json`'s 20-entry
-cap. Entries print as the same `-- <author> <rfc3339>` blocks a show prints.
+cap. Entries print as the same `-- <author> <rfc3339>` blocks a show prints. `--since 24h` keeps
+the last day's entries.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--since <when>` | (all) | Only entries at or after this time: a Go duration back from now, or an RFC3339 timestamp |
 | `--json` | off | Emit JSON |
 
 `--json` emits the entries as an array —

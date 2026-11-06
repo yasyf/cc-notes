@@ -1057,7 +1057,7 @@ func newTaskArchivedCmd() *cobra.Command {
 			}
 			cutoff := now.Add(-defaultArchiveAge)
 			if cmd.Flags().Changed("closed-before") {
-				if cutoff, err = parseWhen(closedBefore, now); err != nil {
+				if cutoff, err = parseWhen("closed-before", closedBefore, now); err != nil {
 					return err
 				}
 			}
