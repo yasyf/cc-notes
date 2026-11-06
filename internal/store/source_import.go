@@ -10,12 +10,14 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	bolt "go.etcd.io/bbolt"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
@@ -319,9 +321,13 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 		return revision, nil
 	}
 	manifest := imported.manifests[token]
+	loaded, err := s.loadRootedManifest(ctx, manifest)
+	if err != nil {
+		return revision, err
+	}
 	entities := make(map[string]sourceview.Entity, len(manifest))
-	for _, entry := range manifest {
-		rooted, publication, err := s.loadRootedAt(ctx, entry.Ref, entry.Tip)
+	for i, entry := range manifest {
+		rooted, publication, err := loaded[i].rooted, loaded[i].publication, loaded[i].err
 		if err != nil {
 			if len(imported.applied[token]) != 0 {
 				return revision, fmt.Errorf("import Applied receipts %v token %s missing entity %s at %s: %w", imported.applied[token], token, entry.Ref, entry.Tip, err)
@@ -360,7 +366,7 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 	}
 	revision.ProjectionAvailable = true
 	revision.RenderPolicy = sourceview.RenderPolicy
-	err := s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
+	err = s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
 		var err error
 		revision, err = s.buildSourceSnapshot(objects, revision, entities)
 		if err != nil {
@@ -383,6 +389,55 @@ func (s *Store) materializeSourceImport(ctx context.Context, imported *importedS
 		return nil
 	})
 	return revision, err
+}
+
+type rootedLoad struct {
+	rooted      RootedSnapshot
+	publication *cachePublication
+	err         error
+}
+
+// loadRootedManifest folds every manifest entry across listConcurrency
+// workers, each reading through its own records handle, since one handle reads
+// a chain at a time.
+func (s *Store) loadRootedManifest(ctx context.Context, manifest gitobj.SourceManifest) ([]rootedLoad, error) {
+	readers := make([]*Store, min(listConcurrency, len(manifest)))
+	for i := range readers {
+		repo, err := s.openRecordsReader()
+		if err != nil {
+			return nil, err
+		}
+		readers[i] = s.Pinned(s.pins)
+		readers[i].Repo = repo
+	}
+	loaded := make([]rootedLoad, len(manifest))
+	var next atomic.Int64
+	var g errgroup.Group
+	for _, reader := range readers {
+		g.Go(func() error {
+			for i := next.Add(1) - 1; i < int64(len(manifest)); i = next.Add(1) - 1 {
+				entry := manifest[i]
+				loaded[i].rooted, loaded[i].publication, loaded[i].err = reader.loadRootedAt(ctx, entry.Ref, entry.Tip)
+			}
+			return nil
+		})
+	}
+	return loaded, g.Wait()
+}
+
+func (s *Store) openRecordsReader() (*gitobj.Repo, error) {
+	var repo *gitobj.Repo
+	var err error
+	if s.storage.bound {
+		repo, err = openRecords(s.storage.binding)
+	} else {
+		repo, err = gitobj.Open(s.gitDir, s.commonDir)
+	}
+	if err != nil {
+		return nil, err
+	}
+	repo.BackfillWith(s.hydrateChain)
+	return repo, nil
 }
 
 func (s *Store) metadataOnlySourceImport(ctx context.Context, revision sourceindex.Revision, manifest gitobj.SourceManifest) (sourceindex.Revision, error) {

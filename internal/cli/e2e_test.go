@@ -801,60 +801,89 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 	mustBin(t, dir, actorA, "task", "add", "Second write", "--no-validation-criteria")
 }
 
-// TestFirstCommandImportsAMissingAuthority pins that a repository holding records
-// but no authority, as after an upgrade or a fresh clone, works without a manual
-// reindex and keeps its records.
-func TestFirstCommandImportsAMissingAuthority(t *testing.T) {
+// TestReadsWithoutAnAuthorityAnswerFromTheRefsAndAWriteImportsIt pins that a
+// repository holding records but no authority, as after an upgrade or a fresh
+// clone, answers reads at once from its refs with the output the authority
+// gives, imports nothing for them, and imports the authority on its first write.
+func TestReadsWithoutAnAuthorityAnswerFromTheRefsAndAWriteImportsIt(t *testing.T) {
 	dir := initRepo(t)
-	id := strings.TrimSpace(mustBin(t, dir, actorA, "note", "add", "Kept across the import", "--json"))
+	mustBin(t, dir, actorA, "note", "add", "Kept across the import")
+	mustBin(t, dir, actorA, "answer", "add", "--body", "Use memcached", "--", "Which cache?")
+	plan := jsonID(t, mustBin(t, dir, actorA, "plan", "add", "Cache rollout", "--body", "## Approach\nship it", "--json"))
+	addTaskBin(t, dir, "Wire the cache", "--plan", plan)
+	reads := [][]string{{"note", "list", "--json"}, {"answer", "search", "memcached", "--json"}, {"plan", "show", plan, "--json"}}
+	want := make([]string, len(reads))
+	for i, read := range reads {
+		want[i] = mustBin(t, dir, actorA, read...)
+	}
 	authority := managed.Path(filepath.Join(dir, ".git"))
 	if err := os.Remove(authority); err != nil {
 		t.Fatal(err)
 	}
-	listed := mustBin(t, dir, actorA, "note", "list")
-	if !strings.Contains(listed, "Kept across the import") {
-		t.Fatalf("note list after a missing authority = %q (added %s)", listed, id)
+	for i, read := range reads {
+		if got := mustBin(t, dir, actorA, read...); got != want[i] {
+			t.Fatalf("cc-notes %s with no authority =\n%s\nwant the authority's\n%s", strings.Join(read, " "), got, want[i])
+		}
 	}
-	if _, err := os.Stat(authority); err != nil {
-		t.Fatalf("authority not imported: %v", err)
+	if _, err := os.Stat(authority); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reads imported the authority: %v", err)
 	}
 	mustBin(t, dir, actorA, "note", "add", "Written after the import")
+	if _, err := os.Stat(authority); err != nil {
+		t.Fatalf("the first write did not import the authority: %v", err)
+	}
+	if listed := mustBin(t, dir, actorA, "note", "list"); !strings.Contains(listed, "Kept across the import") || !strings.Contains(listed, "Written after the import") {
+		t.Fatalf("note list after the import = %q", listed)
+	}
 }
 
-// TestReadDuringARunningImportWaitsForIt pins that a command arriving while
-// another import holds the rebuild waits for the authority instead of failing
-// with a request to retry, and imports it itself when that import left none.
-func TestReadDuringARunningImportWaitsForIt(t *testing.T) {
+// TestReadDuringARunningImportAnswersAtOnceAndAWriteWaits pins that while an
+// import holds the rebuild, a read answers from the refs, including a ref the
+// stale authority lacks, and a write waits for the authority, importing it
+// itself when that import left none.
+func TestReadDuringARunningImportAnswersAtOnceAndAWriteWaits(t *testing.T) {
 	dir := initRepo(t)
 	mustBin(t, dir, actorA, "note", "add", "Kept across the import")
+	other := gittest.InitRepo(t)
+	mustBin(t, other, actorA, "note", "add", "Fetched outside cc-notes")
+	gittest.Git(t, dir, "fetch", "-q", other, "+refs/cc-notes/notes/*:refs/cc-notes/notes/*")
 	common := filepath.Join(dir, ".git")
-	if err := os.Remove(managed.Path(common)); err != nil {
-		t.Fatal(err)
-	}
 	running, err := managed.LockRebuild(t.Context(), common)
 	if err != nil {
+		t.Fatal(err)
+	}
+	listed := mustBin(t, dir, actorA, "note", "list")
+	if !strings.Contains(listed, "Kept across the import") || !strings.Contains(listed, "Fetched outside cc-notes") {
+		t.Fatalf("note list during a rebuild = %q, want both notes from the refs", listed)
+	}
+	if err := os.Remove(managed.Path(common)); err != nil {
 		t.Fatal(err)
 	}
 	type outcome struct {
 		res binResult
 		err error
 	}
-	listed := make(chan outcome, 1)
+	added := make(chan outcome, 1)
 	go func() {
-		res, err := execBin(dir, actorA, "note", "list")
-		listed <- outcome{res, err}
+		res, err := execBin(dir, actorA, "note", "add", "Written after the import")
+		added <- outcome{res, err}
 	}()
 	select {
-	case got := <-listed:
-		t.Fatalf("note list returned while the import ran: %+v, %v", got.res, got.err)
+	case got := <-added:
+		t.Fatalf("note add returned while the import ran: %+v, %v", got.res, got.err)
 	case <-time.After(time.Second):
 	}
 	if err := running.Close(); err != nil {
 		t.Fatal(err)
 	}
-	got := <-listed
-	if got.err != nil || got.res.Code != 0 || got.res.Stderr != "" || !strings.Contains(got.res.Stdout, "Kept across the import") {
-		t.Fatalf("note list after the import = %+v, %v", got.res, got.err)
+	if got := <-added; got.err != nil || got.res.Code != 0 {
+		t.Fatalf("note add after the import = %+v, %v", got.res, got.err)
+	}
+	listed = mustBin(t, dir, actorA, "note", "list")
+	for _, title := range []string{"Kept across the import", "Fetched outside cc-notes", "Written after the import"} {
+		if !strings.Contains(listed, title) {
+			t.Fatalf("note list after the import = %q, missing %q", listed, title)
+		}
 	}
 }
 

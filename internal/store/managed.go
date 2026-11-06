@@ -48,8 +48,34 @@ func (s *Store) openManaged(readOnly bool) (*bolt.DB, error) {
 	return db, nil
 }
 
+// ReadWhileImporting lets s read while its managed authority is missing or
+// being rebuilt from the records refs: entity tips then come from those refs,
+// which the import copies unchanged, and anything that needs a missing
+// authority itself first calls await, which returns once the import finishes.
+func (s *Store) ReadWhileImporting(await func(context.Context) error) { s.awaitImport = await }
+
+func (s *Store) tipsFromRefs() (bool, error) {
+	if s.awaitImport == nil {
+		return false, nil
+	}
+	if !s.AuthorityExists() {
+		return true, nil
+	}
+	return managed.Rebuilding(s.recordsCommonDir)
+}
+
+func (s *Store) awaitAuthority(ctx context.Context) error {
+	if s.awaitImport == nil || s.AuthorityExists() {
+		return nil
+	}
+	return s.awaitImport(ctx)
+}
+
 func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err error) {
 	if err := s.CheckRecords(); err != nil {
+		return err
+	}
+	if err := s.awaitAuthority(ctx); err != nil {
 		return err
 	}
 	lock, err := managed.TryLock(s.recordsCommonDir, false)
@@ -123,6 +149,15 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 
 // ManagedTips selects managed entity refs by prefix from one authority snapshot.
 func (s *Store) ManagedTips(ctx context.Context, prefixes ...string) (map[string]model.SHA, error) {
+	if fromRefs, err := s.tipsFromRefs(); err != nil || fromRefs {
+		if err != nil {
+			return nil, err
+		}
+		if err := s.CheckRecords(); err != nil {
+			return nil, err
+		}
+		return s.Repo.ListPrefixes(ctx, prefixes...)
+	}
 	tips := make(map[string]model.SHA)
 	err := s.managedView(ctx, func(tx *bolt.Tx) error {
 		root, err := managedRoot(tx)
@@ -145,6 +180,19 @@ func (s *Store) ManagedTips(ctx context.Context, prefixes ...string) (map[string
 }
 
 func (s *Store) managedTip(ctx context.Context, ref string) (model.SHA, error) {
+	if fromRefs, err := s.tipsFromRefs(); err != nil || fromRefs {
+		if err != nil {
+			return "", err
+		}
+		if err := s.CheckRecords(); err != nil {
+			return "", err
+		}
+		tip, err := s.Repo.Tip(ctx, ref)
+		if errors.Is(err, gitobj.ErrRefNotFound) {
+			return "", gitobj.ErrRefNotFound
+		}
+		return tip, err
+	}
 	var tip model.SHA
 	err := s.managedView(ctx, func(tx *bolt.Tx) error {
 		root, err := managedRoot(tx)
@@ -357,6 +405,9 @@ func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (
 	}()
 
 	if err := s.CheckRecords(); err != nil {
+		return err
+	}
+	if err := s.awaitAuthority(ctx); err != nil {
 		return err
 	}
 	lock, err := managed.Lock(ctx, s.recordsCommonDir, true)

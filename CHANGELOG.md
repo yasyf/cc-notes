@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **A read in a fresh clone answers at once.** With no managed authority, or
+  while an import or `cc-notes reindex` runs, a read takes entity tips from the
+  Git refs and folds only what it reads, instead of waiting for the import of
+  every record. On a Sprite holding the monorepo's 18,782 refs, the first
+  `answer search` took 4.4 s instead of 158 s, and `plan show` 2.2 s, both
+  byte-identical to the output after the import. Writes still wait for the
+  import, which now folds its records on eight readers: 65 s instead of 160 s.
+
 ### Added
 - **`answer match` finds an answer by words only in its body, and draws far
   fewer on a line that merely shares a word.** An answer whose deciding words sit

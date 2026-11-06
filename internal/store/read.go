@@ -267,6 +267,13 @@ func (s *Store) HasNotes(ctx context.Context) (bool, error) {
 	if err := s.CheckRecords(); err != nil {
 		return false, err
 	}
+	if fromRefs, err := s.tipsFromRefs(); err != nil || fromRefs {
+		if err != nil {
+			return false, err
+		}
+		tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
+		return len(tips) > 0, err
+	}
 	var present bool
 	err := s.managedView(ctx, func(tx *bolt.Tx) error {
 		root, err := managedRoot(tx)

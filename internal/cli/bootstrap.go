@@ -57,15 +57,16 @@ func repoDir(cmd *cobra.Command) (string, error) {
 }
 
 // openStore opens the store for the repository containing the working
-// directory, or the one named by --repo or $CCN_REPO.
+// directory, or the one named by --repo or $CCN_REPO. While its managed
+// authority is missing or rebuilding, reads answer from the records refs at
+// once, and only what needs a missing authority waits for its import.
 func openStore(cmd *cobra.Command) (*store.Store, error) {
 	s, err := openRawStore(cmd)
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureAuthority(cmd.Context(), s, cmd.ErrOrStderr()); err != nil {
-		return nil, err
-	}
+	progress := cmd.ErrOrStderr()
+	s.ReadWhileImporting(func(ctx context.Context) error { return ensureAuthority(ctx, s, progress) })
 	return s, nil
 }
 
