@@ -348,6 +348,7 @@ func (e *engine) report(rounds, pushed int) Report {
 }
 
 func refreshTracking(ctx context.Context, s *store.Store, remote, prefix, trackingPrefix, trackingScope, fetchSpec string) (err error) {
+	defer Phase(ctx, "fetching "+prefix+" from "+remote)()
 	listed, err := s.RecordsGit.LsRemote(ctx, remote, prefix)
 	if err != nil {
 		return err
@@ -429,6 +430,7 @@ func trackingView(ctx context.Context, s *store.Store, trackingPrefix string) (m
 // still fails in e.deferred, which reconcile and pending skip for the round,
 // so one unavailable object holds back only the ref whose chain needs it.
 func (e *engine) hydrate(ctx context.Context, scope map[string]model.SHA) error {
+	defer Phase(ctx, "fetching the objects the remote's refs need")()
 	e.deferred = make(map[string]error)
 	return e.hydrateRefs(ctx, scope, slices.Sorted(maps.Keys(scope)))
 }
@@ -464,6 +466,7 @@ func (e *engine) hydrateRefs(ctx context.Context, scope map[string]model.SHA, na
 // runs to its own verdict and the error joins each failure, so a binding moved
 // mid-run names every ref it hid rather than the first.
 func (e *engine) reconcile(ctx context.Context, scope map[string]model.SHA) error {
+	defer Phase(ctx, fmt.Sprintf("folding %d refs", len(scope)))()
 	var ordered []string
 	for _, ref := range slices.Sorted(maps.Keys(scope)) {
 		if _, deferred := e.deferred[ref]; !deferred {
@@ -585,6 +588,7 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 }
 
 func (e *engine) push(ctx context.Context, pending []string) (err error) {
+	defer Phase(ctx, fmt.Sprintf("pushing %d refs", len(pending)))()
 	e.rejected = make(map[string]error)
 	if len(pending) == 0 {
 		return nil
