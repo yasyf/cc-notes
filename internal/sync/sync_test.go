@@ -1562,6 +1562,33 @@ func TestSyncCreatesEveryFreshRefButOneThatCannotFold(t *testing.T) {
 	}
 }
 
+func TestSyncFastForwardDecodesOnlyTheCommitsItFetched(t *testing.T) {
+	decodes := make(map[int]int64)
+	for _, depth := range []int{1, 40} {
+		bare := gittest.InitBare(t)
+		a := clone(t, bare, "Alice", "alice@example.com")
+		b := clone(t, bare, "Bob", "bob@example.com")
+		ref := refs.For(model.KindTask, createTask(t, a, "deep", "main").ID)
+		for i := range depth {
+			appendOps(t, a, ref, model.AddComment{Body: fmt.Sprintf("comment %d", i)})
+		}
+		sync(t, a)
+		sync(t, b)
+		appendOps(t, a, ref, model.AddComment{Body: "fetched"})
+		sync(t, a)
+
+		ctx, work := gitobj.WithReadWork(t.Context())
+		report, err := ccsync.Sync(ctx, b, "origin", false)
+		if err != nil || report.FastForwarded != 1 {
+			t.Fatalf("Sync of one appended commit over %d of history = %+v, %v; want one fast-forward", depth, report, err)
+		}
+		_, _, decodes[depth] = work.Snapshot()
+	}
+	if decodes[40] != decodes[1] {
+		t.Fatalf("fast-forwarding a ref over 40 commits of history decoded %d packs and over 1 decoded %d, want the same: only the fetched commit", decodes[40], decodes[1])
+	}
+}
+
 func TestSyncWritersRacingOnOneLedgerBothLand(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")

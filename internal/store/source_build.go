@@ -97,6 +97,8 @@ func (s *Store) prepareManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 	for tip, snapshot := range snapshots {
 		prepared[tip] = snapshot
 	}
+	folds := newFoldPublicationBatch(ctx, s.cache)
+	defer folds.discard()
 	for _, update := range updates {
 		parsed, err := refs.Parse(update.Ref)
 		if errors.Is(err, refs.ErrNotCCNotes) {
@@ -114,20 +116,22 @@ func (s *Store) prepareManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 			if snapshot != nil && update.Old == "" && update.New == model.SHA(snapshot.EntityID()) {
 				root.SHA = update.New
 			} else {
-				rooted, _, err := s.loadRootedAt(ctx, update.New)
+				rooted, publication, err := s.loadRootedAt(ctx, update.New)
 				if err != nil {
 					return nil, err
 				}
+				folds.add(publication)
 				root = rooted.Root
 				snapshot = rooted.Snapshot
 			}
 		}
 		if snapshot == nil {
-			var err error
-			snapshot, _, err = s.loadAt(ctx, update.New)
+			var publication *cachePublication
+			snapshot, publication, err = s.loadAt(ctx, update.New)
 			if err != nil {
 				return nil, err
 			}
+			folds.add(publication)
 		}
 		if snapshot.EntityID() != parsed.ID || snapshot.Meta().Kind != parsed.Kind {
 			return nil, fmt.Errorf("source entity differs from %s", update.Ref)
@@ -143,6 +147,7 @@ func (s *Store) prepareManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 	if err != nil {
 		return nil, err
 	}
+	folds.flush()
 	return &managedPreparation{Rows: rows, Entities: values}, nil
 }
 
