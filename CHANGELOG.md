@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt names its topic.
 
 ### Fixed
+- **`--commit` anchors a full sha this clone has not fetched.** A shallow clone,
+  such as a Sprite's, lacks a PR head it never fetched, so `note add --commit
+  <sha>` refused with "no commit". A full sha the clone lacks is now fetched
+  from the derived remote first, and only a sha the remote lacks too is
+  refused. An abbreviated sha or a revision still has to name a local commit.
 - **A write no longer grows with the number of records.** The query generations
   a pinned reader reads now live as versions of each query key, pruned once
   neither the current nor the active generation can see them, instead of a graph
