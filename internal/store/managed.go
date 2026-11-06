@@ -58,10 +58,50 @@ func (s *Store) tipsFromRefs() (bool, error) {
 	if s.awaitImport == nil {
 		return false, nil
 	}
-	if !s.AuthorityExists() {
+	if s.AuthorityExists() {
+		return managed.Rebuilding(s.recordsCommonDir)
+	}
+	_, err := os.Stat(managed.LegacyPath(s.recordsCommonDir))
+	if errors.Is(err, os.ErrNotExist) {
 		return true, nil
 	}
-	return managed.Rebuilding(s.recordsCommonDir)
+	return false, err
+}
+
+// EntityTips selects entity refs by prefix for a read: from the authority, or
+// from the records refs while ReadWhileImporting allows it.
+func (s *Store) EntityTips(ctx context.Context, prefixes ...string) (map[string]model.SHA, error) {
+	if fromRefs, err := s.tipsFromRefs(); err != nil || !fromRefs {
+		if err != nil {
+			return nil, err
+		}
+		return s.ManagedTips(ctx, prefixes...)
+	}
+	if err := s.CheckRecords(); err != nil {
+		return nil, err
+	}
+	return s.Repo.ListPrefixes(ctx, prefixes...)
+}
+
+func (s *Store) entityTip(ctx context.Context, ref string) (model.SHA, error) {
+	if fromRefs, err := s.tipsFromRefs(); err != nil || !fromRefs {
+		if err != nil {
+			return "", err
+		}
+		return s.managedTip(ctx, ref)
+	}
+	if err := s.CheckRecords(); err != nil {
+		return "", err
+	}
+	tips, err := s.Repo.ListPrefix(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	tip, found := tips[ref]
+	if !found {
+		return "", gitobj.ErrRefNotFound
+	}
+	return tip, nil
 }
 
 func (s *Store) awaitAuthority(ctx context.Context) error {
@@ -149,15 +189,6 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 
 // ManagedTips selects managed entity refs by prefix from one authority snapshot.
 func (s *Store) ManagedTips(ctx context.Context, prefixes ...string) (map[string]model.SHA, error) {
-	if fromRefs, err := s.tipsFromRefs(); err != nil || fromRefs {
-		if err != nil {
-			return nil, err
-		}
-		if err := s.CheckRecords(); err != nil {
-			return nil, err
-		}
-		return s.Repo.ListPrefixes(ctx, prefixes...)
-	}
 	tips := make(map[string]model.SHA)
 	err := s.managedView(ctx, func(tx *bolt.Tx) error {
 		root, err := managedRoot(tx)
@@ -180,19 +211,6 @@ func (s *Store) ManagedTips(ctx context.Context, prefixes ...string) (map[string
 }
 
 func (s *Store) managedTip(ctx context.Context, ref string) (model.SHA, error) {
-	if fromRefs, err := s.tipsFromRefs(); err != nil || fromRefs {
-		if err != nil {
-			return "", err
-		}
-		if err := s.CheckRecords(); err != nil {
-			return "", err
-		}
-		tip, err := s.Repo.Tip(ctx, ref)
-		if errors.Is(err, gitobj.ErrRefNotFound) {
-			return "", gitobj.ErrRefNotFound
-		}
-		return tip, err
-	}
 	var tip model.SHA
 	err := s.managedView(ctx, func(tx *bolt.Tx) error {
 		root, err := managedRoot(tx)

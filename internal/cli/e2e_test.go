@@ -852,6 +852,7 @@ func TestReadDuringARunningImportAnswersAtOnceAndAWriteWaits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = running.Close() })
 	listed := mustBin(t, dir, actorA, "note", "list")
 	if !strings.Contains(listed, "Kept across the import") || !strings.Contains(listed, "Fetched outside cc-notes") {
 		t.Fatalf("note list during a rebuild = %q, want both notes from the refs", listed)
