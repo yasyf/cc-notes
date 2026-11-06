@@ -532,7 +532,7 @@ func (e *engine) create(ctx context.Context, scope map[string]model.SHA, names [
 		updates[i] = gitcmd.RefUpdate{Ref: ref, New: scope[ref]}
 	}
 	e.authority.Lock()
-	err := e.store.PublishRefs(ctx, updates)
+	err := e.store.PublishFetchedRefs(ctx, updates)
 	e.authority.Unlock()
 	if err == nil || store.Published(err) {
 		e.created.Add(int64(len(names)))
@@ -758,7 +758,7 @@ func advance(ctx context.Context, s *store.Store, authority *stdsync.Mutex, ref 
 	if errors.Is(err, gitobj.ErrRefNotFound) {
 		authority.Lock()
 		defer authority.Unlock()
-		if err := s.PublishRef(ctx, ref, tip, ""); err != nil {
+		if err := s.PublishFetchedRefs(ctx, []gitcmd.RefUpdate{{Ref: ref, New: tip}}); err != nil {
 			return refKept, err
 		}
 		return refCreated, nil
@@ -801,7 +801,7 @@ func advance(ctx context.Context, s *store.Store, authority *stdsync.Mutex, ref 
 	authority.Lock()
 	defer authority.Unlock()
 	if behind {
-		if err := s.PublishRef(ctx, ref, tip, current); err != nil {
+		if err := s.PublishFetchedRefs(ctx, []gitcmd.RefUpdate{{Ref: ref, New: tip, Old: current}}); err != nil {
 			return refKept, err
 		}
 		return refFastForwarded, nil

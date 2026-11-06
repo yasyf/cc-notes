@@ -213,7 +213,7 @@ func (s *Store) ImportFetchedRef(ctx context.Context, ref string, expectedTip mo
 	if err != nil {
 		return err
 	}
-	return s.managedWrite(ctx, func(db *bolt.DB) (*managedIntent, error) {
+	err = s.managedWrite(ctx, func(db *bolt.DB) (*managedIntent, error) {
 		intent, err := s.buildManagedIntent(ctx, db, updates, preparation)
 		if err != nil {
 			return nil, err
@@ -221,6 +221,33 @@ func (s *Store) ImportFetchedRef(ctx context.Context, ref string, expectedTip mo
 		intent.Imported = ref
 		return intent, nil
 	})
+	if err == nil || Published(err) {
+		s.cacheFolds(ctx, preparation.Folds)
+	}
+	return err
+}
+
+// PublishFetchedRefs publishes refs a sync fetched as PublishRefs does, and
+// once the transaction stands caches every snapshot its preparation folded, so
+// the next fetch of those refs extends them instead of refolding their history.
+func (s *Store) PublishFetchedRefs(ctx context.Context, updates []gitcmd.RefUpdate) error {
+	preparation, err := s.prepareManaged(ctx, updates, nil)
+	if err != nil {
+		return err
+	}
+	err = s.managedWrite(ctx, func(db *bolt.DB) (*managedIntent, error) { return s.buildManagedIntent(ctx, db, updates, preparation) })
+	if err == nil || Published(err) {
+		s.cacheFolds(ctx, preparation.Folds)
+	}
+	return err
+}
+
+func (s *Store) cacheFolds(ctx context.Context, folds []*cachePublication) {
+	batch := newFoldPublicationBatch(ctx, s.cache)
+	for _, publication := range folds {
+		batch.add(publication)
+	}
+	batch.flush()
 }
 
 func (s *Store) publishManaged(ctx context.Context, updates []gitcmd.RefUpdate, snapshots map[model.SHA]model.Snapshot) error {
