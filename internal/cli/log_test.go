@@ -383,6 +383,26 @@ func TestLogAppendAckIsSummary(t *testing.T) {
 	}
 }
 
+func TestLogEntryListSinceKeepsOnlyTheWindow(t *testing.T) {
+	dir := initRepo(t)
+	id := jsonID(t, mustRun(t, dir, "log", "add", "Rollout", "--json"))
+	for i := range 3 {
+		mustRun(t, dir, "log", "append", id, fmt.Sprintf("entry %d", i))
+	}
+
+	for since, want := range map[string]int{"1h": 3, "2099-01-01T00:00:00Z": 0} {
+		if got := mustJSON[[]logEntryJSON](t, mustRun(t, dir, "log", "entry", "list", id, "--since", since, "--json")); len(got) != want {
+			t.Errorf("entry list --since %s = %d entries, want %d", since, len(got), want)
+		}
+	}
+	if all := mustJSON[[]logEntryJSON](t, mustRun(t, dir, "log", "entry", "list", id, "--json")); len(all) != 3 {
+		t.Errorf("entry list without --since = %d entries, want all 3", len(all))
+	}
+	if _, _, err := runCLI(t, dir, "log", "entry", "list", id, "--since", "yesterday"); err == nil || !strings.Contains(err.Error(), "invalid --since") {
+		t.Errorf("entry list --since yesterday err = %v, want an invalid --since usage error", err)
+	}
+}
+
 // isZeroJSON reports whether a decoded JSON value sits at its Go zero value —
 // the shape a DTO field must omit rather than emit.
 func isZeroJSON(value any) bool {

@@ -74,15 +74,15 @@ func resolveNoteStaleAfter(ctx context.Context, g gitcmd.Git, flag string) (time
 	return noteStaleAfter(ctx, g)
 }
 
-// parseWhen parses a --closed-before value: a valid Go duration is relative
+// parseWhen parses an instant-cutoff flag value: a valid Go duration is relative
 // (now - d); anything else is tried as an absolute RFC3339 timestamp.
-func parseWhen(s string, now time.Time) (time.Time, error) {
+func parseWhen(flag, s string, now time.Time) (time.Time, error) {
 	if d, err := time.ParseDuration(s); err == nil {
 		return now.Add(-d), nil
 	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		return time.Time{}, &UsageError{Err: fmt.Errorf("invalid --closed-before %q (want a Go duration or RFC3339 timestamp)", s)}
+		return time.Time{}, &UsageError{Err: fmt.Errorf("invalid --%s %q (want a Go duration or RFC3339 timestamp)", flag, s)}
 	}
 	return t, nil
 }

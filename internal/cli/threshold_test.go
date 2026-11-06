@@ -139,7 +139,7 @@ func TestIsArchived(t *testing.T) {
 func TestParseWhen(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	t.Run("relative duration", func(t *testing.T) {
-		got, err := parseWhen("2h", now)
+		got, err := parseWhen("closed-before", "2h", now)
 		if err != nil {
 			t.Fatalf("parseWhen: %v", err)
 		}
@@ -148,7 +148,7 @@ func TestParseWhen(t *testing.T) {
 		}
 	})
 	t.Run("absolute rfc3339", func(t *testing.T) {
-		got, err := parseWhen("2026-01-02T03:04:05Z", now)
+		got, err := parseWhen("closed-before", "2026-01-02T03:04:05Z", now)
 		if err != nil {
 			t.Fatalf("parseWhen: %v", err)
 		}
@@ -158,7 +158,7 @@ func TestParseWhen(t *testing.T) {
 		}
 	})
 	t.Run("invalid", func(t *testing.T) {
-		if _, err := parseWhen("not-a-time", now); err == nil {
+		if _, err := parseWhen("closed-before", "not-a-time", now); err == nil {
 			t.Fatal("parseWhen want error, got nil")
 		}
 	})

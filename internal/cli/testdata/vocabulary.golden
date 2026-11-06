@@ -1198,6 +1198,7 @@ command: cc-notes log entry list
   hidden: false
   flags:
     --json shorthand=none type=bool default="false" usage="emit JSON"
+    --since shorthand=none type=string default="" usage="only entries at or after this time (Go duration relative, or RFC3339 absolute)"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
 

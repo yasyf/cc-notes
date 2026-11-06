@@ -3,7 +3,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -174,6 +176,7 @@ func newLogEntryCmd() *cobra.Command {
 }
 
 func newLogEntryListCmd() *cobra.Command {
+	var since string
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list LOG",
@@ -181,6 +184,13 @@ func newLogEntryListCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			var cutoff time.Time
+			if since != "" {
+				var err error
+				if cutoff, err = parseWhen("since", since, time.Now()); err != nil {
+					return err
+				}
+			}
 			c, err := openClient(cmd)
 			if err != nil {
 				return err
@@ -193,15 +203,18 @@ func newLogEntryListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			entries := slices.DeleteFunc(log.Entries, func(e model.LogEntry) bool { return e.TS < cutoff.Unix() })
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				return printJSON(out, logEntryDTOs(log.Entries))
+				return printJSON(out, logEntryDTOs(entries))
 			}
-			_, err = fmt.Fprint(out, renderEntryList(log.Entries))
+			_, err = fmt.Fprint(out, renderEntryList(entries))
 			return err
 		},
 	}
-	bindJSON(cmd.Flags(), &jsonOut)
+	flags := cmd.Flags()
+	flags.StringVar(&since, "since", "", "only entries at or after this time (Go duration relative, or RFC3339 absolute)")
+	bindJSON(flags, &jsonOut)
 	return cmd
 }
 
