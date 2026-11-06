@@ -86,8 +86,9 @@ func (s *Store) hasCheckpoint(ctx context.Context, ref string) (bool, error) {
 
 // AdoptCheckpoints moves each local checkpoint ref in fetched, keyed to the
 // tracking ref a fetch just wrote the remote's copy to, onto the remote's copy
-// unless the local one's newest entry covers more: that one is a write this
-// clone has not pushed yet. A tie takes the remote's, so clones converge.
+// unless the local one's newest entry this binary can seed from covers more:
+// that one is a write this clone has not pushed yet. A tie takes the remote's,
+// so clones converge.
 func (s *Store) AdoptCheckpoints(ctx context.Context, fetched map[string]string) error {
 	for local, tracking := range fetched {
 		ours, oursSHA, err := s.readCheckpoint(ctx, local)
@@ -98,7 +99,7 @@ func (s *Store) AdoptCheckpoints(ctx context.Context, fetched map[string]string)
 		if err != nil {
 			return err
 		}
-		if theirsSHA == "" || theirsSHA == oursSHA || (oursSHA != "" && ours.covers() > theirs.covers()) {
+		if theirsSHA == "" || theirsSHA == oursSHA || (oursSHA != "" && ours.newest() > theirs.newest()) {
 			continue
 		}
 		if err := s.RecordsGit.UpdateRef(ctx, local, theirsSHA, oursSHA); err != nil && !errors.Is(err, gitcmd.ErrCASMismatch) {
@@ -108,11 +109,14 @@ func (s *Store) AdoptCheckpoints(ctx context.Context, fetched map[string]string)
 	return nil
 }
 
-func (f checkpointFile) covers() model.Lamport {
-	if f.Format != checkpointFormat || len(f.Entries) == 0 {
+// newest returns the lamport the newest entry this binary can seed from
+// covers, or zero when it can seed from none.
+func (f checkpointFile) newest() model.Lamport {
+	usable := f.usable()
+	if len(usable) == 0 {
 		return 0
 	}
-	return f.Entries[0].CoversLamport
+	return usable[0].CoversLamport
 }
 
 func (f checkpointFile) usable() []checkpointEntry {
@@ -209,7 +213,7 @@ type checkpointCandidate struct {
 
 // checkpointDue reports whether a fold from the root of a history whose top
 // lamport is top owes ref a checkpoint: ref keeps them and top runs
-// checkpointInterval past the newest entry.
+// checkpointInterval past the newest entry this binary can seed from.
 func (s *Store) checkpointDue(ctx context.Context, ref string, top model.Lamport) (bool, error) {
 	_, cpRef, ok := checkpointRef(ref)
 	if !ok {
@@ -219,7 +223,7 @@ func (s *Store) checkpointDue(ctx context.Context, ref string, top model.Lamport
 	if err != nil || file.Format > checkpointFormat {
 		return false, err
 	}
-	newest := file.covers()
+	newest := file.newest()
 	return top >= newest && top-newest >= checkpointInterval, nil
 }
 
@@ -271,7 +275,7 @@ func (s *Store) checkpointFromChain(ctx context.Context, ref string, head model.
 
 // recordCheckpoint makes entries, newest first, ref's checkpoint. Only a fold
 // from the root records one, so a bad entry never seeds the next. Nothing is
-// recorded when the newest entry covers no more than the current checkpoint's,
+// recorded when the newest entry covers no more than the newest usable one,
 // or when any state skipped ops. A writer that loses the race to another
 // leaves the winner's.
 func (s *Store) recordCheckpoint(ctx context.Context, ref string, entries []checkpointCandidate) error {
@@ -280,7 +284,7 @@ func (s *Store) recordCheckpoint(ctx context.Context, ref string, entries []chec
 		return nil
 	}
 	file, old, err := s.readCheckpoint(ctx, cpRef)
-	if err != nil || file.Format > checkpointFormat || entries[0].covers <= file.covers() {
+	if err != nil || file.Format > checkpointFormat || entries[0].covers <= file.newest() {
 		return err
 	}
 	written := checkpointFile{Format: checkpointFormat}
