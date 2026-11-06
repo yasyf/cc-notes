@@ -73,6 +73,51 @@ func Linearize(commits []model.PackCommit) ([]model.PackCommit, error) {
 	if heads > 1 {
 		return nil, fmt.Errorf("%w: found %d", ErrMultipleHeads, heads)
 	}
+	return kahn(commits, byID, children, indegree)
+}
+
+// linearizeAbove orders a suffix of a chain as Linearize orders the whole
+// chain, counting every parent outside commits as already emitted. That
+// equals the suffix's order within the whole chain when every commit below the
+// suffix sorts before every commit in it. The suffix holds no root and exactly
+// one head.
+func linearizeAbove(commits []model.PackCommit) ([]model.PackCommit, error) {
+	if len(commits) == 0 {
+		return nil, ErrEmptyChain
+	}
+	byID := make(map[model.SHA]model.PackCommit, len(commits))
+	for _, c := range commits {
+		if _, ok := byID[c.SHA]; ok {
+			return nil, fmt.Errorf("%w: duplicate commit %s", ErrCorruptChain, c.SHA)
+		}
+		byID[c.SHA] = c
+	}
+	children := make(map[model.SHA][]model.SHA, len(commits))
+	indegree := make(map[model.SHA]int, len(commits))
+	for _, c := range commits {
+		if len(c.Parents) == 0 {
+			return nil, fmt.Errorf("%w: suffix holds root %s", ErrMultipleRoots, c.SHA)
+		}
+		for _, p := range c.Parents {
+			if _, ok := byID[p]; ok {
+				indegree[c.SHA]++
+				children[p] = append(children[p], c.SHA)
+			}
+		}
+	}
+	heads := 0
+	for _, c := range commits {
+		if len(children[c.SHA]) == 0 {
+			heads++
+		}
+	}
+	if heads > 1 {
+		return nil, fmt.Errorf("%w: found %d", ErrMultipleHeads, heads)
+	}
+	return kahn(commits, byID, children, indegree)
+}
+
+func kahn(commits []model.PackCommit, byID map[model.SHA]model.PackCommit, children map[model.SHA][]model.SHA, indegree map[model.SHA]int) ([]model.PackCommit, error) {
 	frontier := &commitHeap{}
 	for _, c := range commits {
 		if indegree[c.SHA] == 0 {

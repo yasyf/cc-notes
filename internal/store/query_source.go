@@ -80,7 +80,7 @@ func (q queryMetadataSource) load(ctx context.Context, id model.EntityID, tip mo
 	if work, ok := ctx.Value(answerCorpusMetadataWorkKey{}).(*atomic.Int64); ok {
 		work.Add(1)
 	}
-	snapshot, publication, err := q.store.loadAt(ctx, tip)
+	snapshot, publication, err := q.store.loadAt(ctx, refs.For(q.kind, id), tip)
 	if err != nil {
 		return queryMetadata{}, nil, err
 	}

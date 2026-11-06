@@ -116,7 +116,7 @@ func (s *Store) prepareManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 			if snapshot != nil && update.Old == "" && update.New == model.SHA(snapshot.EntityID()) {
 				root.SHA = update.New
 			} else {
-				rooted, publication, err := s.loadRootedAt(ctx, update.New)
+				rooted, publication, err := s.loadRootedAt(ctx, update.Ref, update.New)
 				if err != nil {
 					return nil, err
 				}
@@ -127,7 +127,7 @@ func (s *Store) prepareManaged(ctx context.Context, updates []gitcmd.RefUpdate, 
 		}
 		if snapshot == nil {
 			var publication *cachePublication
-			snapshot, publication, err = s.loadAt(ctx, update.New)
+			snapshot, publication, err = s.loadAt(ctx, update.Ref, update.New)
 			if err != nil {
 				return nil, err
 			}

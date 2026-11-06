@@ -176,7 +176,7 @@ func (s *Store) managedRows(ctx context.Context, updates []gitcmd.RefUpdate, sna
 		var publication *cachePublication
 		snapshot := snapshots[update.New]
 		if snapshot == nil {
-			snapshot, publication, err = s.loadAt(ctx, update.New)
+			snapshot, publication, err = s.loadAt(ctx, update.Ref, update.New)
 			if err != nil {
 				return nil, err
 			}

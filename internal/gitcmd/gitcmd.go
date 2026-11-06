@@ -716,10 +716,16 @@ func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error
 	return nil
 }
 
-// LsRemote maps every ref remote advertises under prefix to its tip, reading
-// the advertisement over the remote's transport and writing nothing locally.
-func (g Git) LsRemote(ctx context.Context, remote, prefix string) (map[string]model.SHA, error) {
-	out, err := g.transfer(ctx, "", "ls-remote", "--refs", remote, prefix+"*")
+// LsRemote maps every ref remote advertises under any of prefixes to its tip,
+// in one read of the advertisement over the remote's transport, writing
+// nothing locally.
+func (g Git) LsRemote(ctx context.Context, remote string, prefixes ...string) (map[string]model.SHA, error) {
+	args := make([]string, 0, 3+len(prefixes))
+	args = append(args, "ls-remote", "--refs", remote)
+	for _, prefix := range prefixes {
+		args = append(args, prefix+"*")
+	}
+	out, err := g.transfer(ctx, "", args...)
 	if err != nil {
 		return nil, fmt.Errorf("ls-remote %s: %w", remote, err)
 	}
@@ -729,11 +735,44 @@ func (g Git) LsRemote(ctx context.Context, remote, prefix string) (map[string]mo
 		if !ok {
 			return nil, fmt.Errorf("ls-remote %s: malformed line %q", remote, line)
 		}
-		if strings.HasPrefix(ref, prefix) {
+		if slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(ref, prefix) }) {
 			listed[ref] = model.SHA(tip)
 		}
 	}
 	return listed, nil
+}
+
+// PushLeased pushes each update's local ref to the same name on remote, forced
+// but only while the remote ref still holds the update's Old, empty meaning
+// absent. A remote ref another push moved first stays as that push left it.
+func (g Git) PushLeased(ctx context.Context, remote string, updates []RefUpdate) error {
+	args := make([]string, 0, 5+2*len(updates))
+	args = append(args, "push", "--quiet", "--no-verify", "--porcelain", remote)
+	for _, u := range updates {
+		args = append(args, "--force-with-lease="+u.Ref+":"+string(u.Old))
+	}
+	for _, u := range updates {
+		args = append(args, u.Ref+":"+u.Ref)
+	}
+	out, err := g.transfer(ctx, "", args...)
+	if err == nil {
+		return nil
+	}
+	stale := false
+	for _, line := range nonEmptyLines(out) {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 || fields[0] != "!" {
+			continue
+		}
+		if !strings.Contains(fields[2], "stale info") {
+			return fmt.Errorf("push %s: %w", remote, err)
+		}
+		stale = true
+	}
+	if !stale {
+		return fmt.Errorf("push %s: %w", remote, err)
+	}
+	return nil
 }
 
 // MissingObjects lists the objects reachable from tips that the object

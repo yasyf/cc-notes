@@ -59,6 +59,9 @@ const (
 	// push another writer beat.
 	contendedBackoffBase = 250 * time.Millisecond
 	pushArgBudget        = 256 << 10
+	// checkpointPushBatch bounds the checkpoints one leased push carries, each
+	// a lease and a refspec of about 300 bytes, inside pushArgBudget.
+	checkpointPushBatch = 512
 )
 
 var (
@@ -239,7 +242,8 @@ func converge(ctx context.Context, s *store.Store, remote string, full bool, pre
 		if err != nil {
 			return e.report(round, 0), fmt.Errorf("sync %s: %w", remote, err)
 		}
-		switch err := refreshTracking(ctx, s, remote, prefix, trackingPrefix, trackingScope, fetchSpec); {
+		checkpoints, err := refreshTracking(ctx, s, remote, prefix, trackingPrefix, trackingScope, fetchSpec)
+		switch {
 		case errors.Is(err, gitcmd.ErrCASMismatch):
 			continue
 		case err != nil:
@@ -274,6 +278,9 @@ func converge(ctx context.Context, s *store.Store, remote string, full bool, pre
 		pending = unblocked
 		switch err := e.push(ctx, pending); {
 		case err == nil:
+			if err := e.pushCheckpoints(ctx, checkpoints); err != nil {
+				return e.report(round, len(pending)-len(e.rejected)), fmt.Errorf("sync %s: %w", remote, err)
+			}
 			return e.finish(round, len(pending)-len(e.rejected))
 		case errors.Is(err, gitcmd.ErrNonFastForward):
 			if err := contendedBackoff(ctx, round); err != nil {
@@ -330,25 +337,85 @@ func (e *engine) report(rounds, pushed int) Report {
 	}
 }
 
-func refreshTracking(ctx context.Context, s *store.Store, remote, prefix, trackingPrefix, trackingScope, fetchSpec string) (err error) {
+// refreshTracking fetches the remote's entity refs under prefix into their
+// tracking refs, and its checkpoints of them into theirs, skipping either fetch
+// the remote's listing shows would change nothing, then adopts each fetched
+// checkpoint that covers at least as much as the local one. It returns the
+// checkpoint refs the remote listed, the leases a push of local checkpoints
+// holds.
+func refreshTracking(ctx context.Context, s *store.Store, remote, prefix, trackingPrefix, trackingScope, fetchSpec string) (_ map[string]model.SHA, err error) {
 	defer Phase(ctx, "fetching "+prefix+" from "+remote)()
-	listed, err := s.RecordsGit.LsRemote(ctx, remote, prefix)
+	checkpointScope := refs.CheckpointOf(prefix)
+	listed, err := s.RecordsGit.LsRemote(ctx, remote, prefix, checkpointScope)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	checkpoints := make(map[string]model.SHA)
+	for ref, tip := range listed {
+		if strings.HasPrefix(ref, refs.CheckpointNamespace) {
+			checkpoints[ref] = tip
+			delete(listed, ref)
+		}
 	}
 	lock, err := s.TrackingLock(ctx, trackingLockKey(remote, prefix))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
 	tracking, err := recordRefs(ctx, s, trackingScope)
 	if err != nil {
+		return nil, err
+	}
+	local, err := s.Repo.ListPrefix(ctx, checkpointScope)
+	if err != nil {
+		return nil, err
+	}
+	fetched := make(map[string]string)
+	for ref, tip := range checkpoints {
+		if local[ref] != tip {
+			fetched[ref] = refs.CheckpointTracking(remote, ref)
+		}
+	}
+	var specs []string
+	if !mirrors(listed, tracking, trackingPrefix) {
+		specs = append(specs, fetchSpec)
+	}
+	if len(fetched) > 0 {
+		specs = append(specs, "+"+checkpointScope+"*:"+refs.CheckpointTracking(remote, checkpointScope)+"*")
+	}
+	if len(specs) == 0 {
+		return checkpoints, nil
+	}
+	if err := s.RecordsGit.Holding(lock).Fetch(ctx, remote, specs...); err != nil {
+		return nil, err
+	}
+	return checkpoints, s.AdoptCheckpoints(ctx, fetched)
+}
+
+// pushCheckpoints pushes every local checkpoint ref in scope that differs from
+// the remote's listed one, leased on the listed value, so a checkpoint another
+// clone pushed first stands.
+func (e *engine) pushCheckpoints(ctx context.Context, listed map[string]model.SHA) error {
+	local, err := e.store.Repo.ListPrefix(ctx, refs.CheckpointOf(e.prefix))
+	if err != nil {
 		return err
 	}
-	if mirrors(listed, tracking, trackingPrefix) {
+	var updates []gitcmd.RefUpdate
+	for _, ref := range slices.Sorted(maps.Keys(local)) {
+		if local[ref] != listed[ref] {
+			updates = append(updates, gitcmd.RefUpdate{Ref: ref, New: local[ref], Old: listed[ref]})
+		}
+	}
+	if len(updates) == 0 {
 		return nil
 	}
-	return s.RecordsGit.Holding(lock).Fetch(ctx, remote, fetchSpec)
+	defer Phase(ctx, fmt.Sprintf("pushing %d checkpoints", len(updates)))()
+	for batch := range slices.Chunk(updates, checkpointPushBatch) {
+		if err := e.store.RecordsGit.PushLeased(ctx, e.remote, batch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func trackingLockKey(remote, prefix string) string {

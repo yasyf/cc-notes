@@ -237,31 +237,23 @@ func (s *Store) Compact(ctx context.Context, ref string) (model.Snapshot, error)
 // Merge writes the union merge commit joining ours and theirs — two tips of the
 // same entity — then compare-and-swaps ref from ours to it. A lost race fails
 // with gitcmd.ErrCASMismatch. The merge pack carries no ops of its own, so the
-// fold stays tolerant: a chain a newer cc-notes wrote still merges here.
+// fold stays tolerant: a chain a newer cc-notes wrote still merges here. Its
+// lamport is one past the greatest in both sides' histories, and the fold of
+// it starts from ref's checkpoint when one covers the start of both sides.
 func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (model.SHA, error) {
 	if err := s.CheckRecords(); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	ourChain, err := s.Repo.ReadChain(ctx, ours)
-	if err != nil {
-		return "", fmt.Errorf("merge %s: %w", ref, err)
-	}
-	theirChain, err := s.Repo.ReadChain(ctx, theirs)
-	if err != nil {
-		return "", fmt.Errorf("merge %s: %w", ref, err)
-	}
-	seen := make(map[model.SHA]bool, len(ourChain)+len(theirChain))
-	combined := make([]model.PackCommit, 0, len(ourChain)+len(theirChain)+1)
-	for _, chain := range [][]model.PackCommit{ourChain, theirChain} {
-		for _, c := range chain {
-			if !seen[c.SHA] {
-				seen[c.SHA] = true
-				combined = append(combined, c)
-			}
+	var top model.Lamport
+	for _, tip := range []model.SHA{ours, theirs} {
+		side, err := s.historyTop(ctx, ref, tip)
+		if err != nil {
+			return "", fmt.Errorf("merge %s: %w", ref, err)
 		}
+		top = max(top, side)
 	}
-	pack := model.Pack{Lamport: topLamport(combined) + 1, Session: session()}
-	sig, actor, err := s.signature(ctx)
+	pack := model.Pack{Lamport: top + 1, Session: session()}
+	sig, _, err := s.signature(ctx)
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
@@ -269,16 +261,36 @@ func (s *Store) Merge(ctx context.Context, ref string, ours, theirs model.SHA) (
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	merge := model.PackCommit{SHA: sha, Parents: []model.SHA{ours, theirs}, Author: actor, AuthorTime: sig.When.Unix(), Pack: pack}
-	merged, err := fold.Fold(append(combined, merge))
+	merged, publication, err := s.foldAt(ctx, ref, sha)
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
 	if err := s.publishSnapshot(ctx, ref, sha, ours, merged); err != nil {
 		return "", fmt.Errorf("merge %s: %w", ref, err)
 	}
-	s.cache.putChain(sha, merged, append(combined, merge), ours, theirs)
+	if publication != nil {
+		publication.supersedes = []string{string(ours), string(theirs)}
+		s.cache.writeBatch([]cachePublication{*publication})
+	}
 	return sha, nil
+}
+
+// historyTop returns the greatest lamport in tip's history: from the fold
+// cache, else from a fold that starts at ref's checkpoint, else from the whole
+// chain. A wrapped lamport puts a tip below its history's top, so the tip's
+// own lamport is not enough.
+func (s *Store) historyTop(ctx context.Context, ref string, tip model.SHA) (model.Lamport, error) {
+	if _, top, _, ok := s.cache.getTop(tip); ok {
+		return top, nil
+	}
+	if _, top, ok, err := s.foldFromCheckpoint(ctx, ref, tip); err != nil || ok {
+		return top, err
+	}
+	chain, err := s.Repo.ReadChain(ctx, tip)
+	if err != nil {
+		return 0, err
+	}
+	return topLamport(chain), nil
 }
 
 func (s *Store) extender(ctx context.Context, tip model.SHA, ops []model.Op) (model.Lamport, func(model.PackCommit) (model.Snapshot, model.Lamport, error), error) {
