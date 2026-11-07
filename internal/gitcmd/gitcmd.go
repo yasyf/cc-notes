@@ -15,6 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
@@ -75,11 +77,12 @@ var remoteMovedPatterns = append(slices.Clone(nonFFPatterns), "but expected")
 // Backend handle names a git directory outright and never discovers one; it
 // runs from workDir.
 type Git struct {
-	Dir     string
-	workDir string
-	backend bool
-	held    *os.File
-	scratch string
+	Dir      string
+	workDir  string
+	backend  bool
+	held     *os.File
+	scratch  string
+	refStore string
 }
 
 // Held runs the git commands that write a remote's tracking refs, none of
@@ -100,9 +103,9 @@ func (h Held) UpdateRefs(ctx context.Context, updates []RefUpdate) error {
 	return h.git.UpdateRefs(ctx, updates)
 }
 
-// Fetch is Git.Fetch holding the lease.
-func (h Held) Fetch(ctx context.Context, remote string, refspecs ...string) error {
-	return h.git.Fetch(ctx, remote, refspecs...)
+// FetchTracked is Git.FetchTracked holding the lease.
+func (h Held) FetchTracked(ctx context.Context, remote string, tracked map[string]model.SHA, refspecs ...string) error {
+	return h.git.FetchTracked(ctx, remote, tracked, refspecs...)
 }
 
 // Push is Git.Push holding the lease.
@@ -186,7 +189,8 @@ func routesRepository(kv string) bool {
 // environ returns the environment one command runs under: env as given for a
 // checkout handle (nil inherits the process environment), the inherited or
 // given environment minus routingEnv for a backend handle, then the routing to
-// a scratch object store PushUpdates set.
+// the scratch object store PushUpdates sets and the scratch ref store
+// FetchTracked sets.
 func (g Git) environ(env []string) []string {
 	if g.backend {
 		if env == nil {
@@ -194,13 +198,20 @@ func (g Git) environ(env []string) []string {
 		}
 		env = scrubRouting(env)
 	}
-	if g.scratch == "" {
+	var routes []string
+	if g.scratch != "" {
+		routes = append(routes, "GIT_OBJECT_DIRECTORY="+filepath.Join(g.scratch, "objects"), "GIT_SHALLOW_FILE="+filepath.Join(g.scratch, "shallow"))
+	}
+	if g.refStore != "" {
+		routes = append(routes, "GIT_REFERENCE_BACKEND=files://"+g.refStore)
+	}
+	if len(routes) == 0 {
 		return env
 	}
 	if env == nil {
 		env = os.Environ()
 	}
-	return append(slices.Clone(env), "GIT_OBJECT_DIRECTORY="+filepath.Join(g.scratch, "objects"), "GIT_SHALLOW_FILE="+filepath.Join(g.scratch, "shallow"))
+	return append(slices.Clone(env), routes...)
 }
 
 func scrubRouting(env []string) []string {
@@ -712,7 +723,8 @@ func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
 
 // Fetch downloads cc-notes metadata refs from remote using exactly the given
 // refspecs, with the user's credential and SSH configuration. Submodule
-// recursion is off because the metadata records contain no gitlinks.
+// recursion and tag following are off because the metadata records contain no
+// gitlinks and no tags.
 // --refmap= keeps git from also mapping the fetched refs through the
 // configured remote.<r>.fetch refspecs: that opportunistic update would
 // force-clobber a diverged local entity ref in a repo wired by Install before
@@ -720,7 +732,7 @@ func (g Git) CheckRefFormat(ctx context.Context, branch string) error {
 // does not fast-forward — wraps ErrNonFastForward; a local ref another writer
 // moved or locked meanwhile wraps ErrCASMismatch.
 func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
-	_, err := g.transfer(ctx, "", append([]string{"fetch", "--recurse-submodules=no", "--no-auto-maintenance", "--refmap=", remote}, refspecs...)...)
+	_, err := g.transfer(ctx, "", append([]string{"fetch", "--no-tags", "--recurse-submodules=no", "--no-auto-maintenance", "--refmap=", remote}, refspecs...)...)
 	if err = classify(err, ErrNonFastForward, nonFFPatterns); err != nil && !errors.Is(err, ErrNonFastForward) {
 		err = classify(err, ErrCASMismatch, casPatterns)
 	}
@@ -728,6 +740,83 @@ func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}
 	return nil
+}
+
+// FetchTracked is Fetch of refspecs with git reading and writing refs in a
+// scratch store holding only tracked, so its negotiation and connectivity check
+// walk those refs, not every ref the repository holds. Each change the fetch
+// made there then lands as one UpdateRefs compare-and-swap on its tracked tip.
+// Git before 2.54 ignores the store and writes the repository's refs itself.
+func (g Git) FetchTracked(ctx context.Context, remote string, tracked map[string]model.SHA, refspecs ...string) (err error) {
+	_, common, _, err := g.Dirs(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch %s: %w", remote, err)
+	}
+	dir, err := os.MkdirTemp(common, "cc-notes-fetch-")
+	if err != nil {
+		return fmt.Errorf("fetch %s: %w", remote, err)
+	}
+	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
+	var packed strings.Builder
+	for _, ref := range slices.Sorted(maps.Keys(tracked)) {
+		fmt.Fprintf(&packed, "%s %s\n", tracked[ref], ref)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "packed-refs"), []byte(packed.String()), 0o600); err != nil {
+		return fmt.Errorf("fetch %s: %w", remote, err)
+	}
+	scoped := g
+	scoped.refStore = dir
+	if err := scoped.Fetch(ctx, remote, refspecs...); err != nil {
+		return err
+	}
+	fetched, err := storedRefs(dir)
+	if err != nil {
+		return fmt.Errorf("fetch %s: %w", remote, err)
+	}
+	var updates []RefUpdate
+	for ref, tip := range fetched {
+		if tracked[ref] != tip {
+			updates = append(updates, RefUpdate{Ref: ref, New: tip, Old: tracked[ref]})
+		}
+	}
+	for ref, tip := range tracked {
+		if _, kept := fetched[ref]; !kept {
+			updates = append(updates, RefUpdate{Ref: ref, Old: tip})
+		}
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return g.UpdateRefs(ctx, updates)
+}
+
+func storedRefs(dir string) (map[string]model.SHA, error) {
+	packed, err := os.ReadFile(filepath.Join(dir, "packed-refs"))
+	if err != nil {
+		return nil, err
+	}
+	stored := make(map[string]model.SHA)
+	for line := range strings.Lines(string(packed)) {
+		if tip, ref, ok := strings.Cut(strings.TrimSpace(line), " "); ok && !strings.HasPrefix(tip, "#") {
+			stored[ref] = model.SHA(tip)
+		}
+	}
+	err = filepath.WalkDir(filepath.Join(dir, "refs"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		tip, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		ref, err := filepath.Rel(dir, path)
+		stored[filepath.ToSlash(ref)] = model.SHA(strings.TrimSpace(string(tip)))
+		return err
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return stored, nil
+	}
+	return stored, err
 }
 
 // LsRemote maps every ref remote advertises under any of prefixes to its tip,

@@ -468,8 +468,10 @@ func heldWriterPairs(t *testing.T) []writerPair {
 		},
 		{
 			"fetch",
-			func() error { return g.Fetch(ctx, missing, "refs/cc-notes/*:refs/cc-notes-sync/origin/*") },
-			func() error { return held.Fetch(ctx, missing, "refs/cc-notes/*:refs/cc-notes-sync/origin/*") },
+			func() error { return g.FetchTracked(ctx, missing, nil, "refs/cc-notes/*:refs/cc-notes-sync/origin/*") },
+			func() error {
+				return held.FetchTracked(ctx, missing, nil, "refs/cc-notes/*:refs/cc-notes-sync/origin/*")
+			},
 		},
 	}
 }
@@ -607,7 +609,7 @@ func TestHeldFetchAndRejectedPushRoundTrip(t *testing.T) {
 	gittest.Git(t, b.Dir, "config", "user.name", "Other User")
 	gittest.Git(t, b.Dir, "config", "user.email", "other@example.com")
 	held := b.Holding(leaseFile(t))
-	if err := held.Fetch(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
+	if err := held.FetchTracked(ctx, "origin", nil, "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
 		t.Fatalf("held fetch: %v", err)
 	}
 	if got := resolve(t, b.Dir, ref); got != c1 {
