@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -43,7 +44,7 @@ func newShowCmd() *cobra.Command {
 			case model.KindDoc:
 				return showDoc(cmd, s, c, id, jsonOut)
 			case model.KindLog:
-				return showLog(cmd, s, c, id, jsonOut)
+				return showLog(cmd, s, c, id, "", jsonOut)
 			case model.KindTask:
 				return showTask(cmd, s, c, id, jsonOut)
 			case model.KindSprint:
@@ -165,12 +166,17 @@ func showAnswer(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix stri
 	return err
 }
 
-func showLog(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
+func showLog(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix, since string, jsonOut bool) error {
 	ctx := cmd.Context()
+	cutoff, err := parseSince(since, time.Now())
+	if err != nil {
+		return err
+	}
 	_, log, err := logSpec.load(ctx, s, prefix)
 	if err != nil {
 		return err
 	}
+	log.Entries = entriesSince(log.Entries, cutoff)
 	atts, err := entityAttachments(ctx, c, log.Attachments)
 	if err != nil {
 		return err

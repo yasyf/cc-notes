@@ -403,6 +403,29 @@ func TestLogEntryListSinceKeepsOnlyTheWindow(t *testing.T) {
 	}
 }
 
+func TestLogShowSinceBoundsTheEntries(t *testing.T) {
+	dir := initRepo(t)
+	id := jsonID(t, mustRun(t, dir, "log", "add", "Rollout", "--json"))
+	for i := range 3 {
+		mustRun(t, dir, "log", "append", id, fmt.Sprintf("entry %d", i))
+	}
+
+	for since, want := range map[string]int{"1h": 3, "2099-01-01T00:00:00Z": 0} {
+		if got := mustJSON[logJSON](t, mustRun(t, dir, "log", "show", id, "--since", since, "--json")); len(got.Entries) != want {
+			t.Errorf("log show --since %s --json = %d entries, want %d", since, len(got.Entries), want)
+		}
+		if got := strings.Count(mustRun(t, dir, "log", "show", id, "--since", since), "\n-- "); got != want {
+			t.Errorf("log show --since %s = %d entry blocks, want %d", since, got, want)
+		}
+	}
+	if lean := mustRun(t, dir, "log", "show", id, "--since", "2099-01-01T00:00:00Z"); !strings.Contains(lean, "title: Rollout") {
+		t.Errorf("log show --since past every entry dropped the header:\n%s", lean)
+	}
+	if _, _, err := runCLI(t, dir, "log", "show", id, "--since", "yesterday"); err == nil || !strings.Contains(err.Error(), "invalid --since") {
+		t.Errorf("log show --since yesterday err = %v, want an invalid --since usage error", err)
+	}
+}
+
 // isZeroJSON reports whether a decoded JSON value sits at its Go zero value —
 // the shape a DTO field must omit rather than emit.
 func isZeroJSON(value any) bool {

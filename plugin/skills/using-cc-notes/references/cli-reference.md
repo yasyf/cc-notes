@@ -3700,10 +3700,12 @@ MCP: log_show (id)
 Show one log: a fixed-order header block (id, title, tags, anchors, author, created, updated) then
 each entry as a `-- <author> <rfc3339>` block in chronological order, after a blank line. An entry
 that carries a model identity (recorded by `cc-notes papercut --model`) renders as
-`-- <model> — <author> <rfc3339>`.
+`-- <model> — <author> <rfc3339>`. `--since 24h` keeps the last
+day's entries.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
+| `--since <when>` | (all) | Only entries at or after this time: a Go duration back from now, or an RFC3339 timestamp |
 | `--json` | off | Emit JSON |
 
 ```console
