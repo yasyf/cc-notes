@@ -369,7 +369,8 @@ func refreshTracking(ctx context.Context, s *store.Store, remote, prefix, tracki
 	if err != nil {
 		return nil, err
 	}
-	local, err := s.Repo.ListPrefix(ctx, checkpointScope)
+	checkpointTracking := refs.CheckpointTracking(remote, checkpointScope)
+	local, err := s.Repo.ListPrefixes(ctx, checkpointScope, checkpointTracking)
 	if err != nil {
 		return nil, err
 	}
@@ -384,12 +385,17 @@ func refreshTracking(ctx context.Context, s *store.Store, remote, prefix, tracki
 		specs = append(specs, fetchSpec)
 	}
 	if len(fetched) > 0 {
-		specs = append(specs, "+"+checkpointScope+"*:"+refs.CheckpointTracking(remote, checkpointScope)+"*")
+		specs = append(specs, "+"+checkpointScope+"*:"+checkpointTracking+"*")
 	}
 	if len(specs) == 0 {
 		return checkpoints, nil
 	}
-	if err := s.RecordsGit.Holding(lock).Fetch(ctx, remote, specs...); err != nil {
+	for ref, tip := range local {
+		if strings.HasPrefix(ref, checkpointTracking) {
+			tracking[ref] = tip
+		}
+	}
+	if err := s.RecordsGit.Holding(lock).FetchTracked(ctx, remote, tracking, specs...); err != nil {
 		return nil, err
 	}
 	return checkpoints, s.AdoptCheckpoints(ctx, fetched)

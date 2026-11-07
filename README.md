@@ -8,7 +8,7 @@
 
 ## Get started
 
-Requires Git 2.45 or newer on `PATH`.
+Requires Git 2.45 or newer on `PATH`. With Git 2.54 or newer, a sync's fetch reads only the refs it syncs; older Git reads every local ref.
 
 ```bash
 brew install yasyf/tap/cc-notes
