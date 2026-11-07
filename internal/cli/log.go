@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
 	"github.com/yasyf/cc-notes/notes"
 )
@@ -184,12 +185,9 @@ func newLogEntryListCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			var cutoff time.Time
-			if since != "" {
-				var err error
-				if cutoff, err = parseWhen("since", since, time.Now()); err != nil {
-					return err
-				}
+			cutoff, err := parseSince(since, time.Now())
+			if err != nil {
+				return err
 			}
 			c, err := openClient(cmd)
 			if err != nil {
@@ -203,7 +201,7 @@ func newLogEntryListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			entries := slices.DeleteFunc(log.Entries, func(e model.LogEntry) bool { return e.TS < cutoff.Unix() })
+			entries := entriesSince(log.Entries, cutoff)
 			out := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(out, logEntryDTOs(entries))
@@ -213,9 +211,20 @@ func newLogEntryListCmd() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&since, "since", "", "only entries at or after this time (Go duration relative, or RFC3339 absolute)")
+	bindSince(flags, &since)
 	bindJSON(flags, &jsonOut)
 	return cmd
+}
+
+func parseSince(since string, now time.Time) (time.Time, error) {
+	if since == "" {
+		return time.Time{}, nil
+	}
+	return parseWhen("since", since, now)
+}
+
+func entriesSince(entries []model.LogEntry, cutoff time.Time) []model.LogEntry {
+	return slices.DeleteFunc(entries, func(e model.LogEntry) bool { return e.TS < cutoff.Unix() })
 }
 
 // renderEntryList renders a timeline as the same "-- <author> <RFC3339>" blocks
@@ -259,7 +268,12 @@ func newLogListCmd() *cobra.Command {
 }
 
 func newLogShowCmd() *cobra.Command {
-	return logSpec.showVerb("Show one log with its entries in chronological order", showLog)
+	var since string
+	cmd := logSpec.showVerb("Show one log with its entries in chronological order", func(cmd *cobra.Command, s *store.Store, c *notes.Client, prefix string, jsonOut bool) error {
+		return showLog(cmd, s, c, prefix, since, jsonOut)
+	})
+	bindSince(cmd.Flags(), &since)
+	return cmd
 }
 
 func newLogEditCmd() *cobra.Command {
