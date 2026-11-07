@@ -157,6 +157,9 @@ type engine struct {
 	// rejected maps each ref the current round's push left out because the
 	// remote refused it alone to that refusal.
 	rejected map[string]error
+	// outgoing maps each ref the current round's push carries to its local tip
+	// and the tip the remote last showed.
+	outgoing map[string]gitcmd.RefUpdate
 }
 
 // Sync converges the local refs/cc-notes/ namespace with remote and pushes
@@ -644,6 +647,7 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 		return nil, nil, err
 	}
 	var add, pending []string
+	e.outgoing = make(map[string]gitcmd.RefUpdate)
 	for ref, tip := range local {
 		if remoteView[ref] == tip || secluded[ref] {
 			continue
@@ -664,6 +668,7 @@ func (e *engine) pending(ctx context.Context, remoteView map[string]model.SHA) (
 			continue
 		}
 		pending = append(pending, ref)
+		e.outgoing[ref] = gitcmd.RefUpdate{Ref: ref, New: tip, Old: remoteView[ref]}
 	}
 	if len(add) > 0 {
 		if err := e.store.Seclude(ctx, add, nil); err != nil {
@@ -715,7 +720,11 @@ func (e *engine) push(ctx context.Context, pending []string) (err error) {
 }
 
 func (e *engine) pushRefs(ctx context.Context, git gitcmd.Held, refs []string) error {
-	err := git.Push(ctx, e.remote, refs...)
+	updates := make([]gitcmd.RefUpdate, len(refs))
+	for i, ref := range refs {
+		updates[i] = e.outgoing[ref]
+	}
+	err := git.PushUpdates(ctx, e.remote, updates)
 	switch {
 	case !errors.Is(err, gitcmd.ErrRemoteRejected):
 		return err
