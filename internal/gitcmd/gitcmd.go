@@ -18,6 +18,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -78,6 +79,7 @@ type Git struct {
 	workDir string
 	backend bool
 	held    *os.File
+	scratch string
 }
 
 // Held runs the git commands that write a remote's tracking refs, none of
@@ -106,6 +108,11 @@ func (h Held) Fetch(ctx context.Context, remote string, refspecs ...string) erro
 // Push is Git.Push holding the lease.
 func (h Held) Push(ctx context.Context, remote string, refspecs ...string) error {
 	return h.git.Push(ctx, remote, refspecs...)
+}
+
+// PushUpdates is Git.PushUpdates holding the lease.
+func (h Held) PushUpdates(ctx context.Context, remote string, updates []RefUpdate) error {
+	return h.git.PushUpdates(ctx, remote, updates)
 }
 
 // DeleteRemoteRef is Git.DeleteRemoteRef holding the lease.
@@ -178,15 +185,22 @@ func routesRepository(kv string) bool {
 
 // environ returns the environment one command runs under: env as given for a
 // checkout handle (nil inherits the process environment), the inherited or
-// given environment minus routingEnv for a backend handle.
+// given environment minus routingEnv for a backend handle, then the routing to
+// a scratch object store PushUpdates set.
 func (g Git) environ(env []string) []string {
-	if !g.backend {
+	if g.backend {
+		if env == nil {
+			env = os.Environ()
+		}
+		env = scrubRouting(env)
+	}
+	if g.scratch == "" {
 		return env
 	}
 	if env == nil {
 		env = os.Environ()
 	}
-	return scrubRouting(env)
+	return append(slices.Clone(env), "GIT_OBJECT_DIRECTORY="+filepath.Join(g.scratch, "objects"), "GIT_SHALLOW_FILE="+filepath.Join(g.scratch, "shallow"))
 }
 
 func scrubRouting(env []string) []string {
@@ -824,6 +838,52 @@ func joinSHAs(shas []model.SHA) string {
 // ErrRemoteRejected.
 func (g Git) Push(ctx context.Context, remote string, refspecs ...string) error {
 	_, err := g.transfer(ctx, "", append([]string{"push", "--quiet", "--no-verify", remote}, refspecs...)...)
+	if err = classify(err, ErrNonFastForward, remoteMovedPatterns); err != nil && !errors.Is(err, ErrNonFastForward) {
+		err = classify(err, ErrRemoteRejected, []string{"[remote rejected]"})
+	}
+	if err != nil {
+		return fmt.Errorf("push %s: %w", remote, err)
+	}
+	return nil
+}
+
+// PushUpdates is Push of each New to its Ref with git reading objects from a
+// scratch store holding only New's history down to Old, the tip remote last
+// showed (empty if absent), each Old a shallow boundary. A shallow clone's push
+// otherwise parses the commit of every advertised ref it holds.
+func (g Git) PushUpdates(ctx context.Context, remote string, updates []RefUpdate) (err error) {
+	_, common, _, err := g.Dirs(ctx)
+	if err != nil {
+		return fmt.Errorf("push %s: %w", remote, err)
+	}
+	dir, err := os.MkdirTemp(common, "cc-notes-push-")
+	if err != nil {
+		return fmt.Errorf("push %s: %w", remote, err)
+	}
+	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
+	objects, shallow := filepath.Join(dir, "objects"), filepath.Join(dir, "shallow")
+	if err := os.MkdirAll(filepath.Join(objects, "pack"), 0o750); err != nil {
+		return fmt.Errorf("push %s: %w", remote, err)
+	}
+	var tips, olds strings.Builder
+	args := []string{"push", "--quiet", "--no-verify", remote}
+	for _, u := range updates {
+		fmt.Fprintf(&tips, "%s\n", u.New)
+		args = append(args, string(u.New)+":"+u.Ref)
+		if u.Old != "" {
+			fmt.Fprintf(&tips, "%s\n", u.Old)
+			fmt.Fprintf(&olds, "%s\n", u.Old)
+		}
+	}
+	if err := os.WriteFile(shallow, []byte(olds.String()), 0o600); err != nil {
+		return fmt.Errorf("push %s: %w", remote, err)
+	}
+	if _, err := g.run(ctx, tips.String(), "--shallow-file", shallow, "pack-objects", "--revs", "--quiet", filepath.Join(objects, "pack", "pack")); err != nil {
+		return fmt.Errorf("push %s: %w", remote, err)
+	}
+	scoped := g
+	scoped.scratch = dir
+	_, err = scoped.transfer(ctx, "", args...)
 	if err = classify(err, ErrNonFastForward, remoteMovedPatterns); err != nil && !errors.Is(err, ErrNonFastForward) {
 		err = classify(err, ErrRemoteRejected, []string{"[remote rejected]"})
 	}

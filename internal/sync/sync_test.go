@@ -493,7 +493,7 @@ if [ ! -e %q ]; then
   for arg in "$@"; do
     if [ "$arg" = push ]; then
       : > %q
-      %q -C %q update-ref %q %q
+      env -u GIT_OBJECT_DIRECTORY -u GIT_SHALLOW_FILE %q -C %q update-ref %q %q
       break
     fi
   done
