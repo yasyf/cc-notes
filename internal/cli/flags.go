@@ -60,6 +60,10 @@ func bindLimit(f *pflag.FlagSet, p *int, def int) {
 	f.IntVar(p, "limit", def, "maximum results (0 = all)")
 }
 
+func bindSince(f *pflag.FlagSet, p *string) {
+	f.StringVar(p, "since", "", "only entries at or after this time (Go duration relative, or RFC3339 absolute)")
+}
+
 // bindRemote binds --remote; verb names the action ("wire", "sync with") and an
 // empty def carries the derive-from-wiring fallback note (as `sync` does).
 func bindRemote(f *pflag.FlagSet, p *string, def, verb string) {

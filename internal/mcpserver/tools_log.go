@@ -31,7 +31,7 @@ type logEditArgs struct {
 	RmAttachments []string `json:"rm_attachments,omitempty" jsonschema:"attachment names to remove"`
 }
 
-type logEntryListArgs struct {
+type logSinceArgs struct {
 	ID    string `json:"id" jsonschema:"log id prefix"`
 	Since string `json:"since,omitempty" jsonschema:"only entries at or after this time: a Go duration back from now (24h) or an RFC3339 timestamp"`
 }
@@ -95,10 +95,13 @@ func registerLog(ts *toolset, b *bridge) {
 			return b.run(ctx, argvFor([]string{"log", "list"}, flags)...)
 		})
 
-	idTool(ts, b, "log_show", "Show one log with its entries in chronological order.", "log", "show")
+	addTool(ts, &mcp.Tool{Name: "log_show", Description: "Show one log with its entries in chronological order, or only its entries since a time."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in logSinceArgs) (*mcp.CallToolResult, any, error) {
+			return b.run(ctx, argvFor([]string{"log", "show"}, optStr([]string{"--json"}, "--since", in.Since), in.ID)...)
+		})
 
 	addTool(ts, &mcp.Tool{Name: "log_entry_list", Description: "Read a log's complete entry timeline, uncapped, or only its entries since a time — log_show caps entries at the 20 most recent and reports the rest as entries_omitted."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in logEntryListArgs) (*mcp.CallToolResult, any, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, in logSinceArgs) (*mcp.CallToolResult, any, error) {
 			return b.run(ctx, argvFor([]string{"log", "entry", "list"}, optStr([]string{"--json"}, "--since", in.Since), in.ID)...)
 		})
 
