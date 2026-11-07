@@ -748,11 +748,7 @@ func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error
 // made there then lands as one UpdateRefs compare-and-swap on its tracked tip.
 // Git before 2.54 ignores the store and writes the repository's refs itself.
 func (g Git) FetchTracked(ctx context.Context, remote string, tracked map[string]model.SHA, refspecs ...string) (err error) {
-	_, common, _, err := g.Dirs(ctx)
-	if err != nil {
-		return fmt.Errorf("fetch %s: %w", remote, err)
-	}
-	dir, err := os.MkdirTemp(common, "cc-notes-fetch-")
+	dir, err := os.MkdirTemp("", "cc-notes-fetch-")
 	if err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}
@@ -791,7 +787,8 @@ func (g Git) FetchTracked(ctx context.Context, remote string, tracked map[string
 }
 
 func storedRefs(dir string) (map[string]model.SHA, error) {
-	packed, err := os.ReadFile(filepath.Join(dir, "packed-refs"))
+	store := os.DirFS(dir)
+	packed, err := fs.ReadFile(store, "packed-refs")
 	if err != nil {
 		return nil, err
 	}
@@ -801,16 +798,12 @@ func storedRefs(dir string) (map[string]model.SHA, error) {
 			stored[ref] = model.SHA(tip)
 		}
 	}
-	err = filepath.WalkDir(filepath.Join(dir, "refs"), func(path string, entry fs.DirEntry, err error) error {
+	err = fs.WalkDir(store, "refs", func(ref string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return err
 		}
-		tip, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		ref, err := filepath.Rel(dir, path)
-		stored[filepath.ToSlash(ref)] = model.SHA(strings.TrimSpace(string(tip)))
+		tip, err := fs.ReadFile(store, ref)
+		stored[ref] = model.SHA(strings.TrimSpace(string(tip)))
 		return err
 	})
 	if errors.Is(err, fs.ErrNotExist) {

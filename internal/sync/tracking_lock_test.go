@@ -231,8 +231,12 @@ func TestSyncFetchKeepsTheTrackingLockPastItsParent(t *testing.T) {
 			killParentWhileHolding(t, b, marker, lockPath)
 			assertOrphanHoldsThenReleases(t, b, release)
 
+			if got := gittest.Git(t, b.Git.Dir, "for-each-ref", "--format=%(refname)", tracking); got != "" {
+				t.Fatalf("tracking %s exists after the orphaned fetch, want it left to the next sync's compare-and-swap", tracking)
+			}
+			sync(t, b)
 			if got, want := gittest.Git(t, b.Git.Dir, "rev-parse", tracking), gittest.Git(t, bare, "rev-parse", noteRef); got != want {
-				t.Fatalf("tracking %s = %s after the orphaned fetch, want the remote tip %s", tracking, got, want)
+				t.Fatalf("tracking %s = %s after the next sync, want the remote tip %s", tracking, got, want)
 			}
 		})
 	}
