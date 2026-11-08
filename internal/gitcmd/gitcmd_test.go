@@ -1551,3 +1551,40 @@ func TestWorktreeBlobOID(t *testing.T) {
 		t.Fatalf("WorktreeBlobOID on absent path = %v, want ErrPathNotFound", err)
 	}
 }
+
+func TestAHeldFetchReplacesTheStoreAKilledFetchLeftAndLeavesNone(t *testing.T) {
+	bare := gittest.InitBare(t)
+	a := initRepo(t)
+	gittest.Git(t, a.Dir, "remote", "add", "origin", bare)
+	ctx := t.Context()
+	c1 := commitEmpty(t, a, "c1")
+	ref := "refs/cc-notes/notes/" + string(c1)
+	if err := a.UpdateRef(ctx, ref, c1, ""); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := a.Holding(leaseFile(t)).Push(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
+		t.Fatalf("held push: %v", err)
+	}
+	b := gitcmd.Git{Dir: t.TempDir()}
+	gittest.Git(t, b.Dir, "init", "-q", "-b", "main")
+	gittest.Git(t, b.Dir, "remote", "add", "origin", bare)
+	lease := leaseFile(t)
+	killed := lease.Name() + ".fetch"
+	if err := os.MkdirAll(filepath.Join(killed, "objects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(killed, "objects", "pack.tmp"), make([]byte, 1<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.Holding(lease).FetchTracked(ctx, "origin", nil, "refs/cc-notes/*:refs/cc-notes/*"); err != nil {
+		t.Fatalf("held fetch over a killed fetch's store: %v", err)
+	}
+
+	if got := resolve(t, b.Dir, ref); got != c1 {
+		t.Fatalf("held fetch put ref at %s, want %s", got, c1)
+	}
+	if _, err := os.Stat(killed); !os.IsNotExist(err) {
+		t.Fatalf("store %s after the fetch: %v, want it gone", killed, err)
+	}
+}

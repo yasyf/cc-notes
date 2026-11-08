@@ -747,8 +747,10 @@ func (g Git) Fetch(ctx context.Context, remote string, refspecs ...string) error
 // walk those refs, not every ref the repository holds. Each change the fetch
 // made there then lands as one UpdateRefs compare-and-swap on its tracked tip.
 // Git before 2.54 ignores the store and writes the repository's refs itself.
+// A held fetch keeps the store beside its lease file and replaces the one a
+// killed fetch under the same lease left there.
 func (g Git) FetchTracked(ctx context.Context, remote string, tracked map[string]model.SHA, refspecs ...string) (err error) {
-	dir, err := os.MkdirTemp("", "cc-notes-fetch-")
+	dir, err := g.fetchStore()
 	if err != nil {
 		return fmt.Errorf("fetch %s: %w", remote, err)
 	}
@@ -784,6 +786,17 @@ func (g Git) FetchTracked(ctx context.Context, remote string, tracked map[string
 		return nil
 	}
 	return g.UpdateRefs(ctx, updates)
+}
+
+func (g Git) fetchStore() (string, error) {
+	if g.held == nil {
+		return os.MkdirTemp("", "cc-notes-fetch-")
+	}
+	dir := g.held.Name() + ".fetch"
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	return dir, os.Mkdir(dir, 0o700)
 }
 
 func storedRefs(dir string) (map[string]model.SHA, error) {
