@@ -608,6 +608,9 @@ func (c *Client) crossAuthorSet(ctx context.Context, in *relevantInputs) (map[st
 	if in.head == "" {
 		return nil, nil
 	}
+	if in.base == "" && in.filter.Base == "" && in.baseTarget == "" {
+		return nil, fmt.Errorf("relevant: origin/HEAD is unset and %s names no commit, so the base for teammates' changes is unknown; run `git remote set-head origin --auto` or pass --base: %w", in.baseRef, gitcmd.ErrRevNotFound)
+	}
 	if in.base == "" {
 		return nil, fmt.Errorf("merge base %s %s: %w", in.baseRef, in.head, gitcmd.ErrRevNotFound)
 	}
