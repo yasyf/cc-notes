@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 
@@ -181,6 +182,11 @@ const noLazyFetchEnv = "GIT_NO_LAZY_FETCH=1"
 // caller, and the tracking lock its waiters queue behind, indefinitely.
 var transferEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_HTTP_LOW_SPEED_LIMIT=1", "GIT_HTTP_LOW_SPEED_TIME=300"}
 
+// transferLimit bounds a fetch or push that stalls with no transfer under
+// way, such as send-pack and its remote helper each waiting on the other's
+// pipe, which the low-speed limit never sees.
+const transferLimit = 15 * time.Minute
+
 func routesRepository(kv string) bool {
 	name, _, _ := strings.Cut(kv, "=")
 	return slices.Contains(routingEnv, name)
@@ -263,8 +269,11 @@ func (g Git) probe(ctx context.Context, stdin string, args ...string) (string, e
 	return g.runEnv(ctx, append(os.Environ(), noLazyFetchEnv), stdin, args...)
 }
 
-// transfer runs a command that talks to a remote, under transferEnv.
+// transfer runs a command that talks to a remote, under transferEnv and
+// transferLimit.
 func (g Git) transfer(ctx context.Context, stdin string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, transferLimit)
+	defer cancel()
 	return g.runEnv(ctx, append(os.Environ(), transferEnv...), stdin, args...)
 }
 

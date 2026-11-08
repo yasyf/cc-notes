@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -44,7 +45,9 @@ func init() {
 // under env. Once git exits, the guardian writes git's output to stdout and
 // stderr and "exit N" or "signal N" to status, closes lease, and exits with
 // N, or 128+N for a signal. Cancelling ctx sends it SIGTERM, which kills
-// git. The guardian writes its own stderr only on its own failure, exit 125.
+// git. The guardian kills git itself at ctx's deadline, so a git that hangs
+// after its caller died still releases lease. The guardian writes its own
+// stderr only on its own failure, exit 125.
 func Command(ctx context.Context, lease, stdout, stderr, status *os.File, env, argv []string) (*exec.Cmd, error) {
 	exe, err := executable()
 	if err != nil {
@@ -53,17 +56,23 @@ func Command(ctx context.Context, lease, stdout, stderr, status *os.File, env, a
 	//nolint:gosec // G204: re-executes this binary as the git guardian; argv is an internal git subcommand, not user-shell input.
 	cmd := exec.CommandContext(ctx, exe, append([]string{childArg, "--"}, argv...)...)
 	cmd.Env = guardianEnvironment(env)
+	if deadline, ok := ctx.Deadline(); ok {
+		cmd.Env = append(cmd.Env, deadlineEnvironment+"="+strconv.FormatInt(deadline.UnixNano(), 10))
+	}
 	cmd.ExtraFiles = []*os.File{lease, stdout, stderr, status}
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	return cmd, nil
 }
 
-const parentRaceEnvironment = "CC_NOTES_GITGUARD_PARENT_GORACE"
+const (
+	parentRaceEnvironment = "CC_NOTES_GITGUARD_PARENT_GORACE"
+	deadlineEnvironment   = "CC_NOTES_GITGUARD_DEADLINE"
+)
 
-func withoutRaceEnvironment(env []string) []string {
+func withoutGuardianEnvironment(env []string) []string {
 	return slices.DeleteFunc(slices.Clone(env), func(entry string) bool {
 		name, _, _ := strings.Cut(entry, "=")
-		return name == "GORACE" || name == parentRaceEnvironment
+		return name == "GORACE" || name == parentRaceEnvironment || name == deadlineEnvironment
 	})
 }
 
@@ -78,13 +87,13 @@ func guardianEnvironment(env []string) []string {
 			original, options = "1"+value, value
 		}
 	}
-	return append(withoutRaceEnvironment(env), parentRaceEnvironment+"="+original, "GORACE="+options+" atexit_sleep_ms=0")
+	return append(withoutGuardianEnvironment(env), parentRaceEnvironment+"="+original, "GORACE="+options+" atexit_sleep_ms=0")
 }
 
 func gitEnvironment(env []string) []string {
 	for _, entry := range env {
 		if original, ok := strings.CutPrefix(entry, parentRaceEnvironment+"="); ok {
-			out := withoutRaceEnvironment(env)
+			out := withoutGuardianEnvironment(env)
 			if original[0] == '1' {
 				out = append(out, "GORACE="+original[1:])
 			}
@@ -128,6 +137,15 @@ func serve(argv []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
 	defer stop()
+	if raw, ok := os.LookupEnv(deadlineEnvironment); ok {
+		nanos, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return fail(err)
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, time.Unix(0, nanos))
+		defer cancel()
+	}
 	outRead, outWrite, err := os.Pipe()
 	if err != nil {
 		return fail(err)
