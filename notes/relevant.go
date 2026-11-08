@@ -643,15 +643,14 @@ func hasOther(emails []string, me string) bool {
 }
 
 // resolveRelevantBase returns the base reference for cross-author detection: the
-// flag verbatim when set, otherwise the remote default branch, falling back to
-// "main" when origin/HEAD is unset.
+// flag verbatim when set, otherwise the repository's trunk.
 func (c *Client) resolveRelevantBase(ctx context.Context, flag string) (model.Branch, error) {
 	if flag != "" {
 		return model.Branch(flag), nil
 	}
-	base, err := c.s.Git.DefaultBranch(ctx)
-	if errors.Is(err, gitcmd.ErrNoDefaultBranch) {
-		return "main", nil
+	base, err := c.s.Git.TrunkBranch(ctx)
+	if errors.Is(err, gitcmd.ErrNoTrunk) {
+		return "", fmt.Errorf("relevant: origin/HEAD is unset and no local main or master exists, so the base for teammates' changes is unknown; run `git remote set-head origin --auto` or pass --base: %w", err)
 	}
 	if err != nil {
 		return "", err

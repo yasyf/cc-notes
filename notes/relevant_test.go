@@ -1,6 +1,7 @@
 package notes_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
@@ -265,6 +267,21 @@ func TestRelevantCrossAuthorNeverMatchesAlone(t *testing.T) {
 	if len(scored) != 0 {
 		t.Fatalf("cross-author surfaced a note alone: %v", scoredIDs(scored))
 	}
+}
+
+func TestRelevantBaseIsTheRemoteDefaultBranch(t *testing.T) {
+	c, dir := newClient(t)
+	commitFile(t, dir, "base.go", "v1\n")
+	gittest.Git(t, dir, "branch", "-m", "dev")
+
+	_, err := c.Relevant(t.Context(), "pkg/target.go", notes.RelevantFilter{})
+	if !errors.Is(err, gitcmd.ErrNoTrunk) || !strings.Contains(err.Error(), "git remote set-head origin --auto") {
+		t.Fatalf("Relevant with no trunk: err = %v, want ErrNoTrunk naming git remote set-head", err)
+	}
+
+	gittest.Git(t, dir, "update-ref", "refs/remotes/origin/dev", "HEAD")
+	gittest.Git(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/dev")
+	mustRelevant(t, c, dir, "pkg/target.go", notes.RelevantFilter{})
 }
 
 func TestRelevantAttachedDropsLooseSignals(t *testing.T) {
