@@ -608,6 +608,9 @@ func (c *Client) crossAuthorSet(ctx context.Context, in *relevantInputs) (map[st
 	if in.head == "" {
 		return nil, nil
 	}
+	if in.base == "" && in.filter.Base == "" && in.baseTarget == "" {
+		return nil, fmt.Errorf("relevant: origin/HEAD is unset and %s names no commit, so the base for teammates' changes is unknown; run `git remote set-head origin --auto` or pass --base: %w", in.baseRef, gitcmd.ErrRevNotFound)
+	}
 	if in.base == "" {
 		return nil, fmt.Errorf("merge base %s %s: %w", in.baseRef, in.head, gitcmd.ErrRevNotFound)
 	}
@@ -643,14 +646,15 @@ func hasOther(emails []string, me string) bool {
 }
 
 // resolveRelevantBase returns the base reference for cross-author detection: the
-// flag verbatim when set, otherwise the repository's trunk.
+// flag verbatim when set, otherwise the remote default branch, falling back to
+// "main" when origin/HEAD is unset.
 func (c *Client) resolveRelevantBase(ctx context.Context, flag string) (model.Branch, error) {
 	if flag != "" {
 		return model.Branch(flag), nil
 	}
-	base, err := c.s.Git.TrunkBranch(ctx)
-	if errors.Is(err, gitcmd.ErrNoTrunk) {
-		return "", fmt.Errorf("relevant: origin/HEAD is unset and no local main or master exists, so the base for teammates' changes is unknown; run `git remote set-head origin --auto` or pass --base: %w", err)
+	base, err := c.s.Git.DefaultBranch(ctx)
+	if errors.Is(err, gitcmd.ErrNoDefaultBranch) {
+		return "main", nil
 	}
 	if err != nil {
 		return "", err

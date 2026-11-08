@@ -275,8 +275,8 @@ func TestRelevantBaseIsTheRemoteDefaultBranch(t *testing.T) {
 	gittest.Git(t, dir, "branch", "-m", "dev")
 
 	_, err := c.Relevant(t.Context(), "pkg/target.go", notes.RelevantFilter{})
-	if !errors.Is(err, gitcmd.ErrNoTrunk) || !strings.Contains(err.Error(), "git remote set-head origin --auto") {
-		t.Fatalf("Relevant with no trunk: err = %v, want ErrNoTrunk naming git remote set-head", err)
+	if !errors.Is(err, gitcmd.ErrRevNotFound) || !strings.Contains(err.Error(), "git remote set-head origin --auto") {
+		t.Fatalf("Relevant with no origin/HEAD and no main: err = %v, want ErrRevNotFound naming git remote set-head", err)
 	}
 
 	gittest.Git(t, dir, "update-ref", "refs/remotes/origin/dev", "HEAD")
