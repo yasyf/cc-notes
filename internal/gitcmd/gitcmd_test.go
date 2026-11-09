@@ -2,6 +2,7 @@ package gitcmd_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -650,6 +651,57 @@ func TestPushSkipsPrePushHook(t *testing.T) {
 	if got := resolve(t, bare, ref); got != c1 {
 		t.Fatalf("remote ref at %s, want %s", got, c1)
 	}
+}
+
+func TestPushUpdatesFromAPartialCloneNeverFetchesTaggedHistory(t *testing.T) {
+	bare := gittest.InitBare(t)
+	gittest.Git(t, bare, "config", "uploadpack.allowFilter", "true")
+	gittest.Git(t, bare, "config", "uploadpack.allowAnySHA1InWant", "true")
+	seed := initRepo(t)
+	const tags = 8
+	for i := range tags {
+		commitEmpty(t, seed, fmt.Sprintf("release %d", i))
+		gittest.Git(t, seed.Dir, "tag", fmt.Sprintf("release-%d", i))
+	}
+	gittest.Git(t, seed.Dir, "push", "-q", bare, "main", "--tags")
+
+	thin := gitcmd.Git{Dir: t.TempDir()}
+	gittest.Git(t, filepath.Dir(thin.Dir), "clone", "-q", "--filter=blob:none", "file://"+bare, thin.Dir)
+	gittest.Git(t, thin.Dir, "config", "user.name", "Test User")
+	gittest.Git(t, thin.Dir, "config", "user.email", "test@example.com")
+	record := model.SHA(gittest.Git(t, thin.Dir, "commit-tree", "-m", "cc-notes: note create", "HEAD^{tree}"))
+	ref := "refs/cc-notes/notes/" + string(record)
+	trace := filepath.Join(t.TempDir(), "trace2.json")
+	t.Setenv("GIT_TRACE2_EVENT", trace)
+
+	if err := thin.PushUpdates(t.Context(), "origin", []gitcmd.RefUpdate{{Ref: ref, New: record}}); err != nil {
+		t.Fatalf("push from the partial clone: %v", err)
+	}
+	if got := resolve(t, bare, ref); got != record {
+		t.Fatalf("remote ref at %s, want %s", got, record)
+	}
+	if fetches := promisorFetches(t, trace); fetches != 0 {
+		t.Fatalf("push lazily fetched tagged history from the promisor remote %d times for %d tags, want none", fetches, tags)
+	}
+}
+
+func promisorFetches(t *testing.T, path string) int {
+	t.Helper()
+	trace, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read trace2 events: %v", err)
+	}
+	fetches := 0
+	for line := range strings.Lines(string(trace)) {
+		var event struct{ Event, Category, Key string }
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode trace2 event %q: %v", line, err)
+		}
+		if event.Event == "data" && event.Category == "promisor" && event.Key == "fetch_count" {
+			fetches++
+		}
+	}
+	return fetches
 }
 
 func TestConfig(t *testing.T) {

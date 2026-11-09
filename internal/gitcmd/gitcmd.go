@@ -172,8 +172,8 @@ var routingEnv = []string{
 	"GIT_IMPLICIT_WORK_TREE",
 }
 
-// noLazyFetchEnv keeps a commit probe from fetching a missing object from a
-// promisor remote: a partial clone answers "missing" instead of dialing out.
+// noLazyFetchEnv keeps git from fetching a missing object from a promisor
+// remote: a partial clone answers "missing" instead of dialing out.
 const noLazyFetchEnv = "GIT_NO_LAZY_FETCH=1"
 
 // transferEnv bounds a fetch or push: git never blocks on a terminal prompt
@@ -195,8 +195,8 @@ func routesRepository(kv string) bool {
 // environ returns the environment one command runs under: env as given for a
 // checkout handle (nil inherits the process environment), the inherited or
 // given environment minus routingEnv for a backend handle, then the routing to
-// the scratch object store PushUpdates sets and the scratch ref store
-// FetchTracked sets.
+// the scratch object store PushUpdates sets, which never lazily fetches, and
+// the scratch ref store FetchTracked sets.
 func (g Git) environ(env []string) []string {
 	if g.backend {
 		if env == nil {
@@ -206,7 +206,7 @@ func (g Git) environ(env []string) []string {
 	}
 	var routes []string
 	if g.scratch != "" {
-		routes = append(routes, "GIT_OBJECT_DIRECTORY="+filepath.Join(g.scratch, "objects"), "GIT_SHALLOW_FILE="+filepath.Join(g.scratch, "shallow"))
+		routes = append(routes, "GIT_OBJECT_DIRECTORY="+filepath.Join(g.scratch, "objects"), "GIT_SHALLOW_FILE="+filepath.Join(g.scratch, "shallow"), noLazyFetchEnv)
 	}
 	if g.refStore != "" {
 		routes = append(routes, "GIT_REFERENCE_BACKEND=files://"+g.refStore)
@@ -955,6 +955,10 @@ func (g Git) Push(ctx context.Context, remote string, refspecs ...string) error 
 // scratch store holding only New's history down to Old, the tip remote last
 // showed (empty if absent), each Old a shallow boundary. A shallow clone's push
 // otherwise parses the commit of every advertised ref it holds.
+//
+// The push never lazily fetches: pack-objects peels every local tag, and in a
+// partial clone each tagged commit the scratch store lacks would download its
+// whole history from the promisor remote, one tag after another.
 func (g Git) PushUpdates(ctx context.Context, remote string, updates []RefUpdate) (err error) {
 	_, common, _, err := g.Dirs(ctx)
 	if err != nil {
