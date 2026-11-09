@@ -669,7 +669,7 @@ func TestPushUpdatesFromAPartialCloneNeverFetchesTaggedHistory(t *testing.T) {
 	gittest.Git(t, filepath.Dir(thin.Dir), "clone", "-q", "--filter=blob:none", "file://"+bare, thin.Dir)
 	gittest.Git(t, thin.Dir, "config", "user.name", "Test User")
 	gittest.Git(t, thin.Dir, "config", "user.email", "test@example.com")
-	record := model.SHA(gittest.Git(t, thin.Dir, "commit-tree", "-m", "cc-notes: note create", "HEAD^{tree}"))
+	record := model.SHA(gittest.Git(t, thin.Dir, "commit-tree", "-m", "cc-notes: note create", "origin/main^{tree}"))
 	ref := "refs/cc-notes/notes/" + string(record)
 	trace := filepath.Join(t.TempDir(), "trace2.json")
 	t.Setenv("GIT_TRACE2_EVENT", trace)
