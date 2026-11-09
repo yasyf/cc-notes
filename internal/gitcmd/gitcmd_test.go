@@ -2,6 +2,7 @@ package gitcmd_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +13,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gittest"
@@ -545,6 +548,54 @@ func TestReportIgnoredSignals(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatalf("close signal report: %v", err)
 	}
+}
+
+func TestAPushPastItsDeadlineKillsEveryProcessItsGitStarted(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		t.Run(fmt.Sprintf("held=%t", held), func(t *testing.T) {
+			g := initRepo(t)
+			pidFile := filepath.Join(t.TempDir(), "child.pid")
+			stubGit(t, fmt.Sprintf("sleep 300 >/dev/null 2>&1 &\necho $! >%q\nwait", pidFile))
+			push := g.Push
+			if held {
+				push = g.Holding(leaseFile(t)).Push
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+
+			if err := push(ctx, "origin", "refs/cc-notes/*:refs/cc-notes/*"); err == nil {
+				t.Fatal("push past its deadline returned nil, want an error")
+			}
+			raw, err := os.ReadFile(pidFile)
+			if err != nil {
+				t.Fatalf("read the stub's child pid: %v", err)
+			}
+			child, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+			if err != nil {
+				t.Fatalf("parse the stub's child pid %q: %v", raw, err)
+			}
+			for deadline := time.Now().Add(10 * time.Second); processRuns(t, child); time.Sleep(50 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					_ = syscall.Kill(child, syscall.SIGKILL)
+					t.Fatalf("child %d of the git killed at its deadline still runs, want it killed with git", child)
+				}
+			}
+		})
+	}
+}
+
+func processRuns(t *testing.T, pid int) bool {
+	t.Helper()
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	state := strings.TrimSpace(string(out))
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 && state == "" {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("ps -p %d: %v", pid, err)
+	}
+	return !strings.HasPrefix(state, "Z")
 }
 
 func TestHeldPushInheritsTheCallersIgnoredSignals(t *testing.T) {

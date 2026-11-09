@@ -283,6 +283,7 @@ func (g Git) runEnv(ctx context.Context, env []string, stdin string, args ...str
 	}
 	//nolint:gosec // G204: git is a fixed argv[0]; args are internal git subcommands, not user-shell input, in this CLI's own repo.
 	cmd := exec.CommandContext(ctx, "git", g.argv(args...)...)
+	cmd.Cancel = func() error { return gitguard.KillTree(cmd.Process) }
 	cmd.Env = g.environ(env)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
