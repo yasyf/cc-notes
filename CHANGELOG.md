@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **A read waits out a long sync instead of failing.** A read that finds the
+  managed authority held now waits up to 60 seconds for it, twice a write's 30,
+  so a `cc-notes sync` that holds the lock for over 30 seconds no longer fails
+  the reads queued behind it with `managed authority busy`. `CCN_LOCK_WAIT`
+  still shortens either wait.
 - **A read in a fresh clone answers at once.** With no managed authority, or
   while an import or `cc-notes reindex` runs, a read takes entity tips from the
   Git refs and folds only what it reads, instead of waiting for the import of
