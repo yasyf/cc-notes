@@ -45,9 +45,10 @@ func init() {
 // under env. Once git exits, the guardian writes git's output to stdout and
 // stderr and "exit N" or "signal N" to status, closes lease, and exits with
 // N, or 128+N for a signal. Cancelling ctx sends it SIGTERM, which kills
-// git. The guardian kills git itself at ctx's deadline, so a git that hangs
-// after its caller died still releases lease. The guardian writes its own
-// stderr only on its own failure, exit 125.
+// git's process tree. The guardian kills that tree itself at ctx's deadline,
+// so a git that hangs after its caller died still releases lease and leaves
+// no child behind. The guardian writes its own stderr only on its own
+// failure, exit 125.
 func Command(ctx context.Context, lease, stdout, stderr, status *os.File, env, argv []string) (*exec.Cmd, error) {
 	exe, err := executable()
 	if err != nil {
@@ -156,6 +157,7 @@ func serve(argv []string) int {
 	}
 	//nolint:gosec // G204: git is a fixed argv[0]; argv is the caller's internal git subcommand.
 	git := exec.CommandContext(ctx, "git", argv...)
+	git.Cancel = func() error { return KillTree(git.Process) }
 	git.Env = gitEnvironment(os.Environ())
 	git.Stdin = os.Stdin
 	git.Stdout, git.Stderr = outWrite, errWrite
