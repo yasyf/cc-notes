@@ -41,6 +41,26 @@ func TestLockFailsBehindAHeldLock(t *testing.T) {
 	}
 }
 
+func TestReadOutwaitsAWriterHeldPastTheWriteWait(t *testing.T) {
+	previous := lockWait
+	lockWait = 200 * time.Millisecond
+	t.Cleanup(func() { lockWait = previous })
+	dir := t.TempDir()
+	writer, err := Lock(t.Context(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := time.AfterFunc(3*lockWait/2, func() { _ = writer.Close() })
+	t.Cleanup(func() { released.Stop() })
+	reader, err := Lock(t.Context(), dir, false)
+	if err != nil {
+		t.Fatalf("Lock(shared) behind a writer held for 1.5x lockWait: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLockWaitEnvShortensTheWait(t *testing.T) {
 	dir := t.TempDir()
 	held, err := TryLock(dir, true)

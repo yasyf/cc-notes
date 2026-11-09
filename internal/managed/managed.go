@@ -133,10 +133,14 @@ func Wait(within time.Duration) (time.Duration, error) {
 }
 
 // Lock retains the stable authority lock until its returned file is closed,
-// failing with ErrBusy once another holder has kept it past Wait(lockWait).
+// failing with ErrBusy once another holder has kept it past Wait(lockWait), or
+// twice that for a shared lock, so a read outlasts a sync's long write.
 // Its identity stays fixed across authority cache generations.
 func Lock(ctx context.Context, commonDir string, exclusive bool) (*os.File, error) {
-	return lockAt(ctx, authorityLockPath(commonDir), exclusive, lockWait)
+	if exclusive {
+		return lockAt(ctx, authorityLockPath(commonDir), true, lockWait)
+	}
+	return lockAt(ctx, authorityLockPath(commonDir), false, 2*lockWait)
 }
 
 // LockRebuild serializes authority rebuilds, which build without the authority
