@@ -2,6 +2,7 @@ package gitguard
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -105,4 +106,36 @@ func TestJoinDrainsWaitsForEveryResult(t *testing.T) {
 		t.Fatalf("second drain was not stopped: %v", err)
 	}
 	_ = second.SetReadDeadline(time.Time{})
+}
+
+func TestGuardianKillsAHungGitAtItsCallersDeadlineWithoutTheCaller(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	files := make([]*os.File, 0, 4)
+	for range 4 {
+		f, err := os.CreateTemp(t.TempDir(), "capture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		files = append(files, f)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	cmd, err := Command(ctx, files[0], files[1], files[2], files[3], []string{"PATH=" + dir + ":/usr/bin:/bin"}, []string{"push"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Cancel = func() error { return nil }
+	started := time.Now()
+	_ = cmd.Run()
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("guardian ran %s, want it to kill git at the one-second deadline though its caller never signaled it", elapsed)
+	}
+	got, err := io.ReadAll(io.NewSectionReader(files[3], 0, 1<<20))
+	if err != nil || string(got) != "signal 9" {
+		t.Fatalf("status = %q, %v, want git killed", got, err)
+	}
 }
