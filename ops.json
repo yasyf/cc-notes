@@ -1,1 +1,1 @@
-{"v":1,"lamport":1,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"create_task","nonce":"7c87cad2a63d3f893846a555c37204fb","title":"write timing probe floor 2167916334, safe to ignore","description":"","type":"task","priority":2,"branch":"announce-once-no-spawn","parent":"","labels":null,"anchors":[]}]}
+{"v":1,"lamport":2,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"set_status","status":"cancelled"}]}
