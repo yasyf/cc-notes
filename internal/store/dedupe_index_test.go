@@ -181,6 +181,9 @@ func TestIndexedDuplicateSurvivorOrderCollisionAndPins(t *testing.T) {
 	if values, hit, err := indexedDuplicateList(t.Context(), s, model.KindNote, fingerprint, fold.Note); err != nil || !hit || len(values) != 2 || values[0].ID == same[0].EntityID() {
 		t.Fatalf("refreshed candidates = %v, %t, %v", values, hit, err)
 	}
+	if _, err := s.ListNotes(t.Context(), false, false); err != nil {
+		t.Fatal(err)
+	}
 	if _, hit, err := indexedDuplicateList(t.Context(), pinned, model.KindNote, fingerprint, fold.Note); err != nil || hit {
 		t.Fatalf("stale pinned = %t, %v", hit, err)
 	}

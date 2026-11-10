@@ -276,7 +276,7 @@ func readIndexedQuery[T any](ctx context.Context, q queryMetadataSource, read fu
 		}
 		advance := (!q.pinned && active != current) || bucket.Get(queryActiveRoot) == nil
 		if advance && !writable {
-			if !q.deferActivation {
+			if !q.deferActivation || q.pinned {
 				activate = true
 				return nil
 			}

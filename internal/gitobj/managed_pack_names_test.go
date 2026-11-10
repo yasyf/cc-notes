@@ -14,8 +14,8 @@ func TestManagedPackNamesReuseTheListUntilTheDirectoryChanges(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	const real = "ccn0-1111111111111111111111111111111111111111.idx"
-	for _, name := range []string{real, "pack-2222222222222222222222222222222222222222.idx"} {
+	const managed = "ccn0-1111111111111111111111111111111111111111.idx"
+	for _, name := range []string{managed, "pack-2222222222222222222222222222222222222222.idx"} {
 		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -30,7 +30,7 @@ func TestManagedPackNamesReuseTheListUntilTheDirectoryChanges(t *testing.T) {
 		return info
 	}
 	names, err := storage.managedPackNames(dir, modified().ModTime())
-	if err != nil || !reflect.DeepEqual(names, []string{real}) {
+	if err != nil || !reflect.DeepEqual(names, []string{managed}) {
 		t.Fatalf("listed %q, %v", names, err)
 	}
 	const remembered = "ccn1-3333333333333333333333333333333333333333.idx"
@@ -45,7 +45,7 @@ func TestManagedPackNamesReuseTheListUntilTheDirectoryChanges(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, added), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if names, err = storage.managedPackNames(dir, modified().ModTime()); err != nil || !reflect.DeepEqual(names, []string{real, added}) {
+	if names, err = storage.managedPackNames(dir, modified().ModTime()); err != nil || !reflect.DeepEqual(names, []string{managed, added}) {
 		t.Fatalf("a changed directory kept the old list: %q, %v", names, err)
 	}
 }

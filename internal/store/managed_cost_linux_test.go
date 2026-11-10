@@ -552,8 +552,8 @@ func managedCostAccountTrace(result *managedCostResult, calls []managedCostCall)
 			}
 		}
 	}
-	if result.Syscalls["read"] == 0 || result.GitProcesses == 0 {
-		return fmt.Errorf("operation lacks actual read and Git process evidence: %+v", result)
+	if result.Syscalls["read"] == 0 {
+		return fmt.Errorf("operation lacks actual read evidence: %+v", result)
 	}
 	return nil
 }

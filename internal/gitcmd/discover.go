@@ -111,21 +111,26 @@ func gitDirs(worktree, gitDir string) (string, string, bool) {
 }
 
 func looksLikeGitDir(dir string) bool {
+	//nolint:gosec // G703: dir is a candidate repository directory walked up from the caller's own checkout.
 	head, err := os.Stat(filepath.Join(dir, "HEAD"))
 	if err != nil || !head.Mode().IsRegular() {
 		return false
 	}
+	//nolint:gosec // G703: as above.
 	if refs, err := os.Stat(filepath.Join(dir, "refs")); err != nil || !refs.IsDir() {
 		return false
 	}
+	//nolint:gosec // G703: as above.
 	if objects, err := os.Stat(filepath.Join(dir, "objects")); err == nil && objects.IsDir() {
 		return true
 	}
+	//nolint:gosec // G703: as above.
 	_, err = os.Stat(filepath.Join(dir, "commondir"))
 	return err == nil
 }
 
 func ownedDevice(dir string) (uint64, bool) {
+	//nolint:gosec // G703: dir is the caller's checkout or a directory above it.
 	info, err := os.Stat(dir)
 	if err != nil {
 		return 0, false
@@ -176,13 +181,10 @@ func configMayBeBare(path string, depth int) bool {
 			return true
 		case (section == "include" || section == "includeif") && key == "path":
 			included := value
-			if home, ok := strings.CutPrefix(included, "~/"); ok {
-				dir, err := os.UserHomeDir()
-				if err != nil {
-					return true
-				}
-				included = filepath.Join(dir, home)
-			} else if !filepath.IsAbs(included) {
+			if strings.HasPrefix(included, "~") {
+				return true
+			}
+			if !filepath.IsAbs(included) {
 				included = filepath.Join(filepath.Dir(path), included)
 			}
 			if strings.ContainsAny(value, "\"\\") || configMayBeBare(included, depth+1) {
