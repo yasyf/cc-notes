@@ -1,1 +1,1 @@
-{"v":1,"lamport":1,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"create_task","nonce":"af753c198d331a69c0c414a348efc335","title":"write timing probe trace, safe to ignore","description":"","type":"task","priority":2,"branch":"announce-once-no-spawn","parent":"","labels":null,"anchors":[]}]}
+{"v":1,"lamport":2,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"set_status","status":"cancelled"}]}
