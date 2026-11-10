@@ -1,1 +1,1 @@
-{"v":1,"lamport":1,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"create_task","nonce":"ddc4229c7e35289cb30a4b46116ef1a6","title":"write timing probe phases, safe to ignore","description":"","type":"task","priority":2,"branch":"announce-once-no-spawn","parent":"","labels":null,"anchors":[]}]}
+{"v":1,"lamport":2,"session":"5ac2f509-a69e-4dab-9045-263f917a727c","ops":[{"kind":"set_status","status":"cancelled"}]}
