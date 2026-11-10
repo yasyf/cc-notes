@@ -583,6 +583,9 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 	if err != nil {
 		return err
 	}
+	if err := s.activations.apply(tx); err != nil {
+		return err
+	}
 	tips := root.Bucket([]byte("refs"))
 	batch := make(queryGenerationBatch)
 	for _, update := range intent.Updates {

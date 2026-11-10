@@ -141,6 +141,7 @@ type Store struct {
 	bare             bool
 	root             *rootMemo
 	policy           *policyMemo
+	activations      *queryActivations
 	pins             map[string]model.SHA
 	awaitImport      func(context.Context) error
 	// storage is the context's binding record; Pinned views share it.
@@ -199,6 +200,7 @@ func OpenContext(ctx context.Context, dir string) (*Store, error) {
 		bare:             bare,
 		root:             &rootMemo{},
 		policy:           &policyMemo{},
+		activations:      newQueryActivations(),
 	}
 	s.storage, err = openBinding(commonDir)
 	if err != nil {
@@ -238,6 +240,7 @@ func (s *Store) Pinned(tips map[string]model.SHA) *Store {
 		bare:             s.bare,
 		root:             s.root,
 		policy:           s.policy,
+		activations:      s.activations,
 		pins:             tips,
 		awaitImport:      s.awaitImport,
 		storage:          s.storage,
