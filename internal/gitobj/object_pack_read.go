@@ -23,6 +23,10 @@ import (
 // managedPackListFile, under the common directory, holds managedPackNames' listing.
 const managedPackListFile = "cc-notes/managed-packs"
 
+// racyPackListing is how long after the pack directory last changed a listing
+// must start before managedPackNames keeps it.
+const racyPackListing = time.Second
+
 // managedPacks serves objects from the packs source scopes wrote, in process.
 // These packs hold no deltas, so one mapped lookup replaces a round trip to a
 // git child. A pack this list has not seen falls through to that child, which
@@ -130,6 +134,7 @@ func (s *objectStorage) managedPackNames(dir string, modified time.Time) ([]stri
 			return strings.Fields(names), nil
 		}
 	}
+	listed := time.Now()
 	listing, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -140,9 +145,13 @@ func (s *objectStorage) managedPackNames(dir string, modified time.Time) ([]stri
 			names = append(names, entry.Name())
 		}
 	}
-	// The list only saves the next process a directory read, so failing to
-	// store it costs nothing but that.
-	_ = writeManagedPackNames(cache, key, names)
+	// A pack added within the filesystem's timestamp granularity of the
+	// listing can leave the modification time unchanged, so a listing that
+	// close to it is not kept. The list only saves the next process a
+	// directory read, so failing to store it costs nothing but that.
+	if listed.Sub(modified) > racyPackListing {
+		_ = writeManagedPackNames(cache, key, names)
+	}
 	return names, nil
 }
 

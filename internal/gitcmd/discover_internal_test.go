@@ -3,6 +3,7 @@ package gitcmd
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/yasyf/cc-notes/internal/gittest"
@@ -31,6 +32,49 @@ func TestDiscoverDirsMatchesGitOrDeclines(t *testing.T) {
 		t.Fatal(err)
 	}
 	gittest.Git(t, included, "config", "include.path", "bare.config")
+	nested := filepath.Join(normal, "nested")
+	for _, name := range []string{"objects", "refs"} {
+		if err := os.MkdirAll(filepath.Join(nested, ".git", name), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(nested, ".git", "HEAD"), []byte("not a ref\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	future := filepath.Join(root, "future")
+	gittest.Git(t, root, "init", "-q", future)
+	escaped := filepath.Join(root, "escaped")
+	gittest.Git(t, root, "init", "-q", escaped)
+	for dir, extra := range map[string]string{future: "[core]\n\trepositoryformatversion = 99\n", escaped: "[x]\n\tv = a\\q\n"} {
+		config, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := config.WriteString(extra); err != nil {
+			t.Fatal(err)
+		}
+		if err := config.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hollow := filepath.Join(root, "hollow")
+	for _, dir := range []string{filepath.Join(hollow, ".git", "refs"), filepath.Join(root, "empty-common")} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, data := range map[string]string{"HEAD": "ref: refs/heads/main\n", "commondir": "../../empty-common\n"} {
+		if err := os.WriteFile(filepath.Join(hollow, ".git", name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	piped := filepath.Join(root, "piped")
+	if err := os.MkdirAll(piped, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(piped, ".git"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	gittest.Git(t, normal, "branch", "a-bare-name")
 	gittest.Git(t, normal, "config", "branch.a-bare-name.description", "bare")
 	for _, dir := range []string{normal, sub, linked} {
@@ -48,7 +92,17 @@ func TestDiscoverDirsMatchesGitOrDeclines(t *testing.T) {
 			}
 		})
 	}
-	for name, dir := range map[string]string{"bare": bare, "core.bare set": flagged, "core.bare included": included, "inside the git dir": filepath.Join(normal, ".git", "refs")} {
+	for name, dir := range map[string]string{
+		"bare":                   bare,
+		"core.bare set":          flagged,
+		"core.bare included":     included,
+		"inside the git dir":     filepath.Join(normal, ".git", "refs"),
+		"an invalid nested HEAD": nested,
+		"a future format":        future,
+		"an escaped value":       escaped,
+		"a hollow common dir":    hollow,
+		"a .git FIFO":            piped,
+	} {
 		t.Run("declines "+name, func(t *testing.T) {
 			if _, _, found := (Git{Dir: dir}).discoverDirs(); found {
 				t.Fatal("answered for a layout it must leave to git")
@@ -59,6 +113,12 @@ func TestDiscoverDirsMatchesGitOrDeclines(t *testing.T) {
 		t.Setenv("GIT_DIR", filepath.Join(normal, ".git"))
 		if _, _, found := (Git{Dir: sub}).discoverDirs(); found {
 			t.Fatal("ignored GIT_DIR")
+		}
+	})
+	t.Run("declines config from the environment", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_COUNT", "1")
+		if _, _, found := (Git{Dir: sub}).discoverDirs(); found {
+			t.Fatal("ignored GIT_CONFIG_COUNT")
 		}
 	})
 }
