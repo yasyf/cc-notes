@@ -137,22 +137,57 @@ func ownedDevice(dir string) (uint64, bool) {
 	return uint64(stat.Dev), true //nolint:gosec // G115: device numbers are never negative.
 }
 
-// mayBeBare reports whether the config file at path sets core.bare to anything
-// but false, or names it in a way a line scan cannot rule out.
+// mayBeBare reports whether the config file at path, or a file it includes,
+// may set core.bare to anything but false. A line it cannot place counts as
+// setting it.
 func mayBeBare(path string) bool {
-	//nolint:gosec // G304: path is a config file inside a validated git directory.
+	return configMayBeBare(path, 0)
+}
+
+func configMayBeBare(path string, depth int) bool {
+	//nolint:gosec // G304: path is a config file inside a validated git directory, or one it includes.
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return false
 	}
-	if err != nil {
+	if err != nil || depth > 4 {
 		return true
 	}
+	section := ""
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
-		line := strings.ToLower(strings.TrimSpace(scanner.Text()))
-		if strings.Contains(line, "bare") && line != "bare = false" {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || line[0] == '#' || line[0] == ';' {
+			continue
+		}
+		if line[0] == '[' {
+			header, rest, closed := strings.Cut(line, "]")
+			if !closed || strings.TrimSpace(rest) != "" && rest[0] != '#' && rest[0] != ';' {
+				return true
+			}
+			name, _, _ := strings.Cut(strings.TrimPrefix(header, "["), " ")
+			section = strings.ToLower(strings.Trim(name, "\t "))
+			continue
+		}
+		key, value, _ := strings.Cut(line, "=")
+		key, value = strings.ToLower(strings.TrimSpace(key)), strings.TrimSpace(value)
+		switch {
+		case section == "core" && key == "bare" && value != "false":
 			return true
+		case (section == "include" || section == "includeif") && key == "path":
+			included := value
+			if home, ok := strings.CutPrefix(included, "~/"); ok {
+				dir, err := os.UserHomeDir()
+				if err != nil {
+					return true
+				}
+				included = filepath.Join(dir, home)
+			} else if !filepath.IsAbs(included) {
+				included = filepath.Join(filepath.Dir(path), included)
+			}
+			if strings.ContainsAny(value, "\"\\") || configMayBeBare(included, depth+1) {
+				return true
+			}
 		}
 	}
 	return scanner.Err() != nil

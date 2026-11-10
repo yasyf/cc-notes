@@ -25,6 +25,14 @@ func TestDiscoverDirsMatchesGitOrDeclines(t *testing.T) {
 	flagged := filepath.Join(root, "flagged")
 	gittest.Git(t, root, "init", "-q", flagged)
 	gittest.Git(t, flagged, "config", "core.bare", "true")
+	included := filepath.Join(root, "included")
+	gittest.Git(t, root, "init", "-q", included)
+	if err := os.WriteFile(filepath.Join(included, ".git", "bare.config"), []byte("[core]\n\tbare = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, included, "config", "include.path", "bare.config")
+	gittest.Git(t, normal, "branch", "a-bare-name")
+	gittest.Git(t, normal, "config", "branch.a-bare-name.description", "bare")
 	for _, dir := range []string{normal, sub, linked} {
 		t.Run("matches "+filepath.Base(dir), func(t *testing.T) {
 			gitDir, commonDir, found := (Git{Dir: dir}).discoverDirs()
@@ -40,7 +48,7 @@ func TestDiscoverDirsMatchesGitOrDeclines(t *testing.T) {
 			}
 		})
 	}
-	for name, dir := range map[string]string{"bare": bare, "core.bare set": flagged, "inside the git dir": filepath.Join(normal, ".git", "refs")} {
+	for name, dir := range map[string]string{"bare": bare, "core.bare set": flagged, "core.bare included": included, "inside the git dir": filepath.Join(normal, ".git", "refs")} {
 		t.Run("declines "+name, func(t *testing.T) {
 			if _, _, found := (Git{Dir: dir}).discoverDirs(); found {
 				t.Fatal("answered for a layout it must leave to git")
