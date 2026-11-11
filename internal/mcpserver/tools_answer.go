@@ -44,6 +44,7 @@ func registerAnswer(ts *toolset, b *bridge) {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in answerMatchArgs) (*mcp.CallToolResult, any, error) {
 			flags := optRepeated([]string{"--json"}, "--label", in.Labels)
 			flags = optInt(flags, "--limit", in.Limit)
+			flags = optBool(flags, "--nearest", in.Nearest)
 			return b.run(ctx, argvFor([]string{"answer", "match"}, flags, in.Text)...)
 		})
 }

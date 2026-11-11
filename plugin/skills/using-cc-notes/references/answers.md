@@ -133,6 +133,7 @@ The CLI and MCP verbs follow the doc equivalents, without `when`:
 | `answer show ID` | `answer_show` | Read the full record |
 | `answer search QUERY` | `answer_search` | Search answers |
 | `answer match TEXT` | `answer_match` | Find the answers a brief, alert or line touches, ranked and capped |
+| `answer match --nearest TEXT` | `answer_match` with `nearest` | Rank every answer sharing a rare word with TEXT, for a reader who checks each hit |
 | `answer edit ID` | `answer_edit` | Correct the body, labels, or anchors |
 | `answer verify ID` | `answer_verify` | Re-confirm the answer against current code |
 | `answer supersede OLD --by NEW` | `answer_supersede` | Replace an earlier reply to the same question |

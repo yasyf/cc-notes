@@ -60,16 +60,29 @@ type AnswerMatch struct {
 // floors keep a record that merely shares a word or two from drawing a ruling,
 // and the result stays at f's limit however many answers the store holds.
 func (c *Client) MatchAnswers(ctx context.Context, text string, f SearchFilter) ([]AnswerMatch, error) {
+	return c.rankAnswers(ctx, text, f, true)
+}
+
+// NearestAnswers ranks the same answers by the same score as MatchAnswers
+// without its floors: every answer sharing one rare word with text competes,
+// and f's limit keeps the best. It is for a reader who checks each hit, such as
+// a gate asking whether a question is already answered, where a long text would
+// otherwise never reach a ruling whose subject sits only in its body.
+func (c *Client) NearestAnswers(ctx context.Context, text string, f SearchFilter) ([]AnswerMatch, error) {
+	return c.rankAnswers(ctx, text, f, false)
+}
+
+func (c *Client) rankAnswers(ctx context.Context, text string, f SearchFilter, floored bool) ([]AnswerMatch, error) {
 	answers, err := c.s.ListAnswers(ctx, false, false)
 	if err != nil {
 		return nil, err
 	}
 	return matchAnswers(slices.DeleteFunc(answers, func(a model.Answer) bool {
 		return a.StaleAt != 0 || !hasAll(a.Tags, f.Labels)
-	}), text, f.Limit), nil
+	}), text, f.Limit, floored), nil
 }
 
-func matchAnswers(answers []model.Answer, text string, limit int) []AnswerMatch {
+func matchAnswers(answers []model.Answer, text string, limit int, floored bool) []AnswerMatch {
 	lowered := strings.ToLower(text)
 	asked := matchTerms(text)
 	questions := make([]map[string]struct{}, len(answers))
@@ -118,7 +131,7 @@ func matchAnswers(answers []model.Answer, text string, limit int) []AnswerMatch 
 		}
 		namedInQuestion := inQuestion >= matchTitleTerms && questionRarity >= matchTitleRarity
 		mostOfText := len(match.Terms) >= matchBodyTerms && rarity >= matchBodyRarity && len(match.Terms)*2 >= askedRare
-		if match.Phrase == "" && !namedInQuestion && !mostOfText {
+		if match.Phrase == "" && !namedInQuestion && !mostOfText && (floored || len(match.Terms) == 0) {
 			continue
 		}
 		match.Score /= math.Log(float64(matchLengthBias + len(questions[i]) + len(bodies[i])))

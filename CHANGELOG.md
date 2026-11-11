@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import, which now folds its records on eight readers: 49.5 s instead of 158 s.
 
 ### Added
+- **`answer match --nearest` ranks without the floors.** Every answer sharing
+  one rare word with the text competes on the same score, and `--limit` keeps
+  the best; the MCP `answer_match` tool takes `nearest`. A question checked with
+  its findings no longer misses a ruling whose subject sits only in its body:
+  the floors reach a long text's ruling only through two rare words in the
+  ruling's own question, so a ruling given under a narrower question never
+  came back.
 - **A write that a local default keeps on this clone says so.** An entity
   with a `*.log` attachment, an attachment over 10 MiB, or a `lane-brief` label
   stays off the remote. Until now, only `cc-notes sync` mentioned this, so a

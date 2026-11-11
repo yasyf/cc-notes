@@ -124,6 +124,7 @@ command: cc-notes answer match
     --json shorthand=none type=bool default="false" usage="emit JSON"
     --label shorthand=none type=stringArray default="[]" usage="require label (repeatable, ANDed)"
     --limit shorthand=none type=int default="5" usage="maximum results"
+    --nearest shorthand=none type=bool default="false" usage="rank every answer sharing a rare word of TEXT, without the floors, for a reader who checks each one"
   inherited:
     --repo shorthand=-R type=string default="" usage="operate on the repository at this path (any path inside it) instead of the working directory (default $CCN_REPO)"
 

@@ -106,9 +106,10 @@ type entitySearchArgs struct {
 }
 
 type answerMatchArgs struct {
-	Text   string   `json:"text" jsonschema:"the text to find answers for: a brief, an alert, or a line about to be sent"`
-	Labels []string `json:"labels,omitempty" jsonschema:"require every label (ANDed)"`
-	Limit  *int     `json:"limit,omitempty" jsonschema:"maximum results (default 5)"`
+	Text    string   `json:"text" jsonschema:"the text to find answers for: a brief, an alert, or a line about to be sent"`
+	Labels  []string `json:"labels,omitempty" jsonschema:"require every label (ANDed)"`
+	Limit   *int     `json:"limit,omitempty" jsonschema:"maximum results (default 5)"`
+	Nearest bool     `json:"nearest,omitempty" jsonschema:"rank every answer sharing a rare word of the text, without the floors, for a reader who checks each one"`
 }
 
 type supersedeArgs struct {
