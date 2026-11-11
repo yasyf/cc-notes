@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Builds with Go 1.26.11.** It fixes the `net/http` vulnerability
+  [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) that `govulncheck`
+  reports against Go 1.26.10.
+
 ### Changed
 - **A read waits out a long sync instead of failing.** A read that finds the
   managed authority held now waits up to 60 seconds for it, twice a write's 30,
