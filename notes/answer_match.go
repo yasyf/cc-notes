@@ -3,6 +3,7 @@ package notes
 import (
 	"cmp"
 	"context"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -59,6 +60,8 @@ type AnswerMatch struct {
 // anywhere that sum to 2 and make up at least half of text's rare words. Those
 // floors keep a record that merely shares a word or two from drawing a ruling,
 // and the result stays at f's limit however many answers the store holds.
+// Scores sum in term order, so answers sharing the same words with text score
+// alike and a text ranks the same answers in the same order on every call.
 func (c *Client) MatchAnswers(ctx context.Context, text string, f SearchFilter) ([]AnswerMatch, error) {
 	return c.rankAnswers(ctx, text, f, true)
 }
@@ -84,7 +87,7 @@ func (c *Client) rankAnswers(ctx context.Context, text string, f SearchFilter, f
 
 func matchAnswers(answers []model.Answer, text string, limit int, floored bool) []AnswerMatch {
 	lowered := strings.ToLower(text)
-	asked := matchTerms(text)
+	asked := slices.Sorted(maps.Keys(matchTerms(text)))
 	questions := make([]map[string]struct{}, len(answers))
 	bodies := make([]map[string]struct{}, len(answers))
 	seen := map[string]int{}
@@ -102,7 +105,7 @@ func matchAnswers(answers []model.Answer, text string, limit int, floored bool) 
 	}
 	rare := max(matchRareFloor, len(answers)/matchRareShare)
 	askedRare := 0
-	for term := range asked {
+	for _, term := range asked {
 		if seen[term] <= rare {
 			askedRare++
 		}
@@ -113,7 +116,7 @@ func matchAnswers(answers []model.Answer, text string, limit int, floored bool) 
 		match := AnswerMatch{Answer: a, Phrase: phraseIn(a.Tags, lowered)}
 		inQuestion := 0
 		var questionRarity, rarity float64
-		for term := range asked {
+		for _, term := range asked {
 			_, question := questions[i][term]
 			_, body := bodies[i][term]
 			if (!question && !body) || seen[term] > rare {
@@ -135,7 +138,6 @@ func matchAnswers(answers []model.Answer, text string, limit int, floored bool) 
 			continue
 		}
 		match.Score /= math.Log(float64(matchLengthBias + len(questions[i]) + len(bodies[i])))
-		slices.Sort(match.Terms)
 		found = append(found, match)
 	}
 	slices.SortFunc(found, func(a, b AnswerMatch) int {
