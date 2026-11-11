@@ -12,10 +12,10 @@ permissions:
 
 jobs:
   release:
-    uses: yasyf/cc-skills/.github/workflows/plugin-release-tag.yml@25d2bccaf0d1d1f19aad8847ab824d54b7578534
+    uses: yasyf/cc-skills/.github/workflows/plugin-release-tag.yml@64dfeead8756405a13ecb86fb51fd0b3bb5d83b4
     with:
       release-workflow: release.yml
-      script-ref: 25d2bccaf0d1d1f19aad8847ab824d54b7578534
+      script-ref: 64dfeead8756405a13ecb86fb51fd0b3bb5d83b4
       paths: |
         cmd
         internal
