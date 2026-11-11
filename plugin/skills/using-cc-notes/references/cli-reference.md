@@ -3169,7 +3169,7 @@ List answers, most recently updated first. Default drops superseded and tombston
 
 ### `cc-notes answer match TEXT`
 
-MCP: answer_match (text, labels, limit)
+MCP: answer_match (text, labels, limit, nearest)
 
 Rank answers by the rare words they share with TEXT, for a caller holding a brief, an alert or a
 line and no idea what was ruled on it; `-` reads stdin. An answer with a `match:<phrase>` label
@@ -3179,10 +3179,17 @@ least half of TEXT's rare words. A word is rare when at most 1 in 25 answers use
 runs from 1 for a word one answer uses toward 0 for one they all use. Answers that are expired or
 superseded never match.
 
+`--nearest` drops those floors: every answer sharing one rare word with TEXT is ranked by the same
+score, and `--limit` keeps the best. It is for a reader who checks each hit, such as a gate asking
+whether a question is already answered. Under the floors a long TEXT, such as a question with its
+findings, reaches a ruling only through two rare words in its question, so one whose subject sits
+in its body alone never comes back.
+
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--label <label>` | none | Require label; repeatable, ANDed |
 | `--limit N` | `5` | Maximum results |
+| `--nearest` | off | Rank every answer sharing a rare word, without the floors |
 | `--json` | off | Emit JSON: the answer summary plus `phrase`, `terms` and `score` |
 
 ### `cc-notes answer search QUERY`

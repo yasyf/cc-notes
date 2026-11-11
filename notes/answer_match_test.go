@@ -91,6 +91,19 @@ func TestMatchAnswersLeavesALongTextThatSharesAFewBodyWords(t *testing.T) {
 	}
 }
 
+func TestNearestAnswersRanksTheRulingALongTextSharesBodyWordsWith(t *testing.T) {
+	c, _ := newClient(t)
+	createAnswers(t, c, writerRuling(), notes.NoteSpec{Title: "Which cache backend?", Body: "Redis", Tags: []string{"scope:durable"}})
+	long := "Writers and goroutines and a channel appear here among deploys rollbacks canaries migrations backfills tenants clusters nodes pods"
+	found, err := c.NearestAnswers(t.Context(), long, notes.SearchFilter{Labels: []string{"scope:durable"}, Limit: 5})
+	if err != nil {
+		t.Fatalf("NearestAnswers: %v", err)
+	}
+	if len(found) != 1 || found[0].Answer.Title != writerQuestion || !slices.Equal(found[0].Terms, []string{"channel", "goroutine", "writer"}) {
+		t.Fatalf("nearest = %+v, want the writer ruling alone on its three body words", found)
+	}
+}
+
 func TestMatchAnswersLeavesALineSharingACommonWordWithItsQuestion(t *testing.T) {
 	c, _ := newClient(t)
 	specs := make([]notes.NoteSpec, 0, 44)

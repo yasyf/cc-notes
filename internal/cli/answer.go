@@ -59,7 +59,7 @@ func newAnswerSearchCmd() *cobra.Command { return answerDocument.searchVerb() }
 func newAnswerMatchCmd() *cobra.Command {
 	var labels []string
 	var limit int
-	var jsonOut bool
+	var nearest, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "match TEXT",
 		Short: "Rank answers by the rare words they share with TEXT; - reads stdin",
@@ -77,7 +77,11 @@ func newAnswerMatchCmd() *cobra.Command {
 				}
 				text = string(read)
 			}
-			found, err := c.MatchAnswers(cmd.Context(), text, notes.SearchFilter{Labels: labels, Limit: limit})
+			rank := c.MatchAnswers
+			if nearest {
+				rank = c.NearestAnswers
+			}
+			found, err := rank(cmd.Context(), text, notes.SearchFilter{Labels: labels, Limit: limit})
 			if err != nil {
 				return err
 			}
@@ -99,6 +103,7 @@ func newAnswerMatchCmd() *cobra.Command {
 	flags := cmd.Flags()
 	bindLabels(flags, &labels, "require label (repeatable, ANDed)")
 	flags.IntVar(&limit, "limit", answerMatchLimit, "maximum results")
+	flags.BoolVar(&nearest, "nearest", false, "rank every answer sharing a rare word of TEXT, without the floors, for a reader who checks each one")
 	bindJSON(flags, &jsonOut)
 	return cmd
 }
