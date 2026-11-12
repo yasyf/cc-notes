@@ -92,9 +92,12 @@ func TestIndexedAnswersWarmReadsAvoidUnrelatedCorpus(t *testing.T) {
 			if err := db.Close(); err != nil {
 				t.Fatal(err)
 			}
-			for _, tip := range q.tips {
+			for id, tip := range q.tips {
 				if err := os.Remove(filepath.Join(s.recordsCommonDir, "objects", string(tip)[:2], string(tip)[2:])); err != nil {
 					t.Fatal(err)
+				}
+				if id != selected {
+					s.cache.delete(tip)
 				}
 			}
 			fresh, err := Open(s.Git.Dir)
