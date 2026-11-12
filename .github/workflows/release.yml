@@ -154,7 +154,7 @@ jobs:
         with:
           name: cc-notes_darwin_${{ matrix.goarch }}
           path: dist
-      - uses: yasyf/homebrew-tap/.github/actions/import-developer-id@19c3d5013032ad9c88f9a8f1170d1f366c19b8d9
+      - uses: yasyf/homebrew-tap/.github/actions/import-developer-id@8fdd402b468794945d0205918810c34a80e583b0
         with:
           p12: ${{ secrets.MACOS_SIGN_P12 }}
           p12-password: ${{ secrets.MACOS_SIGN_PASSWORD }}
@@ -163,7 +163,7 @@ jobs:
           notary-issuer-id: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
       # A dotted identifier keys tccd on the signature rather than the Cellar
       # path, so a brew upgrade does not re-prompt for granted permissions.
-      - name: Sign and notarize the darwin CLI
+      - name: Sign the darwin CLI
         env:
           MACOS_CODESIGN_IDENTIFIER: com.yasyf.cc-notes.cli
         run: |
@@ -256,6 +256,11 @@ jobs:
           manifest: ${{ runner.temp }}/cc-notes-release-assets.txt
           prerelease: ${{ contains(github.ref_name, '-') }}
           make-latest: false
+
+  notarize:
+    needs: release
+    uses: yasyf/homebrew-tap/.github/workflows/notarize-release.yml@48bd52dbd3669f32199fd54ec0fc7e519da67154
+    secrets: inherit
 
   helper-app:
     name: fixed signed helper app
