@@ -16,7 +16,7 @@ import (
 )
 
 func TestLabeledListsReadOnlySelectedBodies(t *testing.T) {
-	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger, model.KindDoc} {
+	for _, kind := range []model.Kind{model.KindTask, model.KindLog, model.KindInvestigation, model.KindLedger, model.KindDoc, model.KindAnswer} {
 		t.Run(string(kind), func(t *testing.T) {
 			c, dir := newWBClient(t)
 			ctx := t.Context()
@@ -88,6 +88,8 @@ func createLabeledListEntity(t *testing.T, c *Client, kind model.Kind, title str
 		ops = []model.Op{model.CreateLedger{Nonce: model.NewNonce(), Title: title, Labels: labels}, model.UpsertRow{Key: "row", Fields: map[string]string{"state": body}, Position: model.PositionBetween("", "")}}
 	case model.KindDoc:
 		ops = []model.Op{model.CreateDoc{Nonce: model.NewNonce(), Title: title, Body: body, When: "private trigger", Tags: labels}}
+	case model.KindAnswer:
+		ops = []model.Op{model.CreateAnswer{Nonce: model.NewNonce(), Title: title, Body: body, Tags: append(slices.Clone(labels), "match:selected")}}
 	default:
 		t.Fatalf("unsupported fixture kind %s", kind)
 	}
@@ -144,6 +146,22 @@ func labeledListIDs(ctx context.Context, c *Client, kind model.Kind, labels []st
 		}
 		for _, value := range values {
 			ids = append(ids, value.ID)
+		}
+	case model.KindAnswer:
+		filter := SearchFilter{Labels: labels, Limit: -1}
+		values, err := c.MatchAnswers(ctx, "selected", filter)
+		if err != nil {
+			return nil, err
+		}
+		nearest, err := c.NearestAnswers(ctx, "selected", filter)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.EqualFunc(values, nearest, func(a, b AnswerMatch) bool { return a.Answer.ID == b.Answer.ID }) {
+			return nil, fmt.Errorf("match and nearest selected different answers")
+		}
+		for _, value := range values {
+			ids = append(ids, value.Answer.ID)
 		}
 	}
 	return ids, nil
