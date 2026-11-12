@@ -81,14 +81,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the other moved on its next write to that ref or on `cc-notes sync`. Git refs
   stay the source of truth, so a damaged `authority-v3.db` can be deleted and
   rebuilt with `cc-notes reindex`.
-- **A reindex no longer blocks writers while it builds.** `cc-notes reindex`
-  builds the replacement authority from one snapshot of the refs without the
-  authority lock, then takes it only to adopt what writers published meanwhile
-  and swap the replacement in. A writer or reader that still times out names the
-  holder: `held for 30s by pid 4242 (cc-notes reindex) since <time>`, or
-  `by readers`. Two reindexes serialize on their own `rebuild.lock`. A rebuild
-  that mints a new source revision (drifted refs, a legacy import) and finds the
-  head moved discards its build and builds once more under the lock.
+- **A reindex no longer blocks reads or writers while it builds.**
+  `cc-notes reindex` builds the replacement authority from one snapshot of the
+  refs without the authority lock, then takes it only to fold in what writers
+  published meanwhile and swap the replacement in. A rebuild that mints a new
+  source revision (drifted refs, a legacy import) and finds the head moved
+  writes its projection, with the writers' changes applied, as the successor of
+  their head, instead of building again under the lock, which on a repository
+  of 120,000 source revisions locked reads out for about 38 minutes. A writer
+  or reader that still times out names the holder: `held for 30s by pid 4242
+  (cc-notes reindex) since <time>`, or `by readers`. Two reindexes serialize on
+  their own `rebuild.lock`.
+- **A reindex builds about 10 times faster.** The build no longer flushes its
+  file to disk after each of its commits, one per imported source revision, and
+  flushes it once before the swap: a repository of 120,000 source revisions
+  reindexed in 202 seconds instead of 2,370.
 - **A full listing no longer re-folds what it just cached.** The fold cache held
   16,384 entries, and a repository with about 14,000 live records filled its
   hint index so far that listing them evicted entries the same listing had

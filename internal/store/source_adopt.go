@@ -17,6 +17,15 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
+type sourceAdoption struct {
+	base       sourceindex.Revision
+	chain      []sourceindex.Revision
+	updates    []gitcmd.RefUpdate
+	entities   map[string]sourceview.Entity
+	rows       []queryMetadata
+	operations map[string]sourceindex.Operation
+}
+
 func (s *Store) adoptSourceHead(ctx context.Context, db *bolt.DB) error {
 	head, err := s.sourceRefTip(ctx, sourceindex.Ref)
 	if err != nil || head == "" {
@@ -33,11 +42,21 @@ func (s *Store) adoptSourceHead(ctx context.Context, db *bolt.DB) error {
 	}); err != nil || stored.Token == "" {
 		return err
 	}
-	unrelated := fmt.Errorf("source head %s does not descend from managed head %s: %w", head, stored.Token, managed.ErrReindex)
-	var chain []sourceindex.Revision
-	var updates []gitcmd.RefUpdate
+	adoption, err := s.prepareSourceAdoption(ctx, db, head, stored)
+	if err != nil {
+		return err
+	}
+	return db.Update(func(tx *bolt.Tx) error {
+		_, err := s.applySourceAdoption(ctx, tx, adoption, stored)
+		return err
+	})
+}
+
+func (s *Store) prepareSourceAdoption(ctx context.Context, db *bolt.DB, head model.SHA, base sourceindex.Revision) (*sourceAdoption, error) {
+	adoption := &sourceAdoption{base: base, entities: make(map[string]sourceview.Entity)}
+	unrelated := fmt.Errorf("source head %s does not descend from managed head %s: %w", head, base.Token, managed.ErrReindex)
 	if err := s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
-		for token := head; token != stored.Token; {
+		for token := head; token != base.Token; {
 			commit, err := objects.ReadCommit(token)
 			if err != nil {
 				return err
@@ -46,13 +65,13 @@ func (s *Store) adoptSourceHead(ctx context.Context, db *bolt.DB) error {
 			if err != nil {
 				return err
 			}
-			if revision.Height <= stored.Height || len(commit.Parents) != 1 || commit.Parents[0] != revision.Predecessor {
+			if revision.Height <= base.Height || len(commit.Parents) > 1 || len(commit.Parents) == 0 && revision.Predecessor != "" || len(commit.Parents) == 1 && commit.Parents[0] != revision.Predecessor {
 				return unrelated
 			}
-			chain = append(chain, revision)
+			adoption.chain = append(adoption.chain, revision)
 			token = revision.Predecessor
 		}
-		return sourcegraph.New(objects).Diff(stored.EntityRoot, chain[0].EntityRoot, func(change sourcegraph.Change) error {
+		return sourcegraph.New(objects).Diff(base.EntityRoot, adoption.chain[0].EntityRoot, func(change sourcegraph.Change) error {
 			var before, after sourceview.Entity
 			if change.BeforeExists {
 				if err := json.Unmarshal(change.Before, &before); err != nil {
@@ -64,44 +83,63 @@ func (s *Store) adoptSourceHead(ctx context.Context, db *bolt.DB) error {
 					return err
 				}
 			}
-			if before.Tip != after.Tip {
-				updates = append(updates, gitcmd.RefUpdate{Ref: change.Key, Old: before.Tip, New: after.Tip})
+			if before.Tip == after.Tip {
+				return nil
+			}
+			adoption.updates = append(adoption.updates, gitcmd.RefUpdate{Ref: change.Key, Old: before.Tip, New: after.Tip})
+			if change.AfterExists {
+				adoption.entities[change.Key] = after
 			}
 			return nil
 		})
 	}); err != nil {
-		return err
+		return nil, err
 	}
-	rows, err := s.managedRows(ctx, updates, nil, nil)
-	if err != nil {
-		return err
+	var err error
+	if adoption.rows, err = s.managedRows(ctx, adoption.updates, nil, nil); err != nil {
+		return nil, err
 	}
-	operations, err := s.adoptedSourceOperations(ctx, db)
-	if err != nil {
-		return err
+	if adoption.operations, err = s.adoptedSourceOperations(ctx, db); err != nil {
+		return nil, err
 	}
-	return db.Update(func(tx *bolt.Tx) error {
-		if err := s.validateManagedQueryGenerations(tx, updates); err != nil {
-			return err
+	return adoption, nil
+}
+
+func (s *Store) applySourceAdoption(ctx context.Context, tx *bolt.Tx, adoption *sourceAdoption, built sourceindex.Revision) ([]gitcmd.RefUpdate, error) {
+	if err := s.validateManagedQueryGenerations(tx, adoption.updates); err != nil {
+		return nil, err
+	}
+	head := adoption.chain[0]
+	publication := &sourcePublication{Revision: &head, Revisions: adoption.chain[1:]}
+	var derived []gitcmd.RefUpdate
+	if built.Token != adoption.base.Token {
+		if err := applySource(tx, &sourcePublication{Revisions: adoption.chain}); err != nil {
+			return nil, err
 		}
-		if err := s.applyManaged(ctx, tx, managedIntent{Updates: updates, Rows: rows, Source: &sourcePublication{Revision: &chain[0], Revisions: chain[1:]}}); err != nil {
-			return err
+		content := built
+		content.EntityGeneration = head.EntityGeneration + built.EntityGeneration - adoption.base.EntityGeneration
+		var err error
+		if publication, derived, err = s.extendSource(ctx, tx, head, content, changedSourceRefs(tx, adoption.updates), adoption.entities); err != nil {
+			return nil, err
 		}
-		root, err := managedRoot(tx)
+	}
+	if err := s.applyManaged(ctx, tx, managedIntent{Updates: adoption.updates, Rows: adoption.rows, Source: publication}); err != nil {
+		return nil, err
+	}
+	root, err := managedRoot(tx)
+	if err != nil {
+		return nil, err
+	}
+	for id, operation := range adoption.operations {
+		data, err := json.Marshal(operation)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		for id, operation := range operations {
-			data, err := json.Marshal(operation)
-			if err != nil {
-				return err
-			}
-			if err := root.Bucket(sourceOperationsBucket).Put([]byte(id), data); err != nil {
-				return err
-			}
+		if err := root.Bucket(sourceOperationsBucket).Put([]byte(id), data); err != nil {
+			return nil, err
 		}
-		return nil
-	})
+	}
+	return derived, nil
 }
 
 func (s *Store) adoptedSourceOperations(ctx context.Context, db *bolt.DB) (map[string]sourceindex.Operation, error) {

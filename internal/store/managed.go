@@ -141,7 +141,7 @@ func (s *Store) managedView(ctx context.Context, read func(*bolt.Tx) error) (err
 		if ready, err := s.reindexReady(); err != nil {
 			return errors.Join(err, lock.Close())
 		} else if ready {
-			if _, err := s.finishReindex(ctx, lock); err != nil {
+			if err := s.finishReindex(ctx, lock); err != nil {
 				return errors.Join(err, lock.Close())
 			}
 		}
@@ -500,7 +500,7 @@ func (s *Store) underAuthority(ctx context.Context, do func(*os.File, *bolt.DB) 
 	if ready, err := s.reindexReady(); err != nil {
 		return err
 	} else if ready {
-		if _, err := s.finishReindex(ctx, lock); err != nil {
+		if err := s.finishReindex(ctx, lock); err != nil {
 			return err
 		}
 	}
