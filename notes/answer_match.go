@@ -76,12 +76,12 @@ func (c *Client) NearestAnswers(ctx context.Context, text string, f SearchFilter
 }
 
 func (c *Client) rankAnswers(ctx context.Context, text string, f SearchFilter, floored bool) ([]AnswerMatch, error) {
-	answers, err := c.s.ListAnswers(ctx, false, false)
+	answers, err := c.Answers(ctx, DocumentFilter{Labels: f.Labels})
 	if err != nil {
 		return nil, err
 	}
 	return matchAnswers(slices.DeleteFunc(answers, func(a model.Answer) bool {
-		return a.StaleAt != 0 || !hasAll(a.Tags, f.Labels)
+		return a.StaleAt != 0
 	}), text, f.Limit, floored), nil
 }
 
