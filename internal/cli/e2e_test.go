@@ -838,12 +838,16 @@ func TestReadsWithoutAnAuthorityAnswerFromTheRefsAndAWriteImportsIt(t *testing.T
 }
 
 // TestReadDuringARunningImportAnswersAtOnceAndAWriteWaits pins that while an
-// import holds the rebuild, a read answers from the refs, including a ref the
-// stale authority lacks, and a write waits for the authority, importing it
-// itself when that import left none.
+// import holds the rebuild, a read answers at once: from the authority it will
+// replace while one exists, so a list and a show agree on a ref git deleted
+// outside cc-notes, and from the refs, including a ref no authority held, once
+// none exists; and a write waits for the authority, importing it itself when
+// that import left none.
 func TestReadDuringARunningImportAnswersAtOnceAndAWriteWaits(t *testing.T) {
 	dir := initRepo(t)
 	mustBin(t, dir, actorA, "note", "add", "Kept across the import")
+	pruned := jsonID(t, mustBin(t, dir, actorA, "note", "add", "Deleted by a pruning fetch", "--json"))
+	gittest.Git(t, dir, "update-ref", "-d", "refs/cc-notes/notes/"+pruned)
 	other := gittest.InitRepo(t)
 	mustBin(t, other, actorA, "note", "add", "Fetched outside cc-notes")
 	gittest.Git(t, dir, "fetch", "-q", other, "+refs/cc-notes/notes/*:refs/cc-notes/notes/*")
@@ -854,11 +858,18 @@ func TestReadDuringARunningImportAnswersAtOnceAndAWriteWaits(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = running.Close() })
 	listed := mustBin(t, dir, actorA, "note", "list")
-	if !strings.Contains(listed, "Kept across the import") || !strings.Contains(listed, "Fetched outside cc-notes") {
-		t.Fatalf("note list during a rebuild = %q, want both notes from the refs", listed)
+	if !strings.Contains(listed, "Kept across the import") || !strings.Contains(listed, "Deleted by a pruning fetch") || strings.Contains(listed, "Fetched outside cc-notes") {
+		t.Fatalf("note list during a rebuild = %q, want the authority's two notes", listed)
+	}
+	if shown := mustBin(t, dir, actorA, "note", "show", pruned); !strings.Contains(shown, "Deleted by a pruning fetch") {
+		t.Fatalf("note show of a listed note during a rebuild = %q", shown)
 	}
 	if err := os.Remove(managed.Path(common)); err != nil {
 		t.Fatal(err)
+	}
+	listed = mustBin(t, dir, actorA, "note", "list")
+	if !strings.Contains(listed, "Kept across the import") || !strings.Contains(listed, "Fetched outside cc-notes") {
+		t.Fatalf("note list during an import = %q, want both notes from the refs", listed)
 	}
 	type outcome struct {
 		res binResult

@@ -31,7 +31,6 @@ import (
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/lfs"
-	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
 	"github.com/yasyf/cc-notes/internal/store"
 	"github.com/yasyf/cc-notes/model"
@@ -828,17 +827,8 @@ func advance(ctx context.Context, s *store.Store, authority *stdsync.Mutex, ref 
 		if err != nil {
 			return refKept, err
 		}
-		if authoritative, found := managedTips[ref]; found {
-			if authoritative == tip {
-				return refKept, nil
-			}
-			extended, err := s.Repo.IsAncestor(ctx, authoritative, tip)
-			if err != nil {
-				return refKept, err
-			}
-			if !extended {
-				return refKept, fmt.Errorf("canonical ref differs from managed authority: %s: %w", ref, managed.ErrReindex)
-			}
+		if managedTips[ref] == tip {
+			return refKept, nil
 		}
 		return refKept, s.ImportFetchedRef(ctx, ref, tip)
 	}

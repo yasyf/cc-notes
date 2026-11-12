@@ -205,7 +205,7 @@ func TestManagedAuthorityBootstrapPreservesEveryKind(t *testing.T) {
 	}
 }
 
-func TestAdoptExtendedRefsImportsExtensionsAndKeepsRewinds(t *testing.T) {
+func TestAlignRefsImportsExtensionsAndRestoresRewindsAndDeletions(t *testing.T) {
 	s := initStore(t)
 	extended := create(t, s, noteOps("extended outside managed publication"))
 	extendedRef := refs.For(model.KindNote, extended.EntityID())
@@ -232,24 +232,29 @@ func TestAdoptExtendedRefsImportsExtensionsAndKeepsRewinds(t *testing.T) {
 	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: rewoundRef, Old: kept.Meta().Head, New: rewound.Meta().Head}}); err != nil {
 		t.Fatal(err)
 	}
+	deleted := create(t, s, noteOps("deleted by a pruning fetch"))
+	deletedRef := refs.For(model.KindNote, deleted.EntityID())
+	if err := s.RecordsGit.DeleteRef(t.Context(), deletedRef, deleted.Meta().Head); err != nil {
+		t.Fatal(err)
+	}
 
-	if adopted, err := s.AdoptExtendedRefs(t.Context()); err != nil || adopted != 2 {
-		t.Fatalf("AdoptExtendedRefs=%d, %v; want the extension and the create", adopted, err)
+	adopted, restored, err := s.AlignRefs(t.Context())
+	if err != nil || adopted != 2 || restored != 2 {
+		t.Fatalf("AlignRefs=%d adopted, %d restored, %v; want the extension and the create adopted, the rewind and the deletion restored", adopted, restored, err)
 	}
 	requireManagedProjection(t, s, extendedRef, raw.Snapshot)
 	requireManagedProjection(t, s, created.Ref, created.Snapshot)
-	if loaded, err := s.Load(t.Context(), rewoundRef); err != nil || !reflect.DeepEqual(loaded, kept) {
-		t.Fatalf("rewound ref changed authority=%#v, %v; want %#v", loaded, err, kept)
+	requireManagedProjection(t, s, rewoundRef, kept)
+	requireManagedProjection(t, s, deletedRef, deleted)
+	if _, err := s.Append(t.Context(), rewoundRef, []model.Op{model.SetBody{Body: "after the restore"}}); err != nil {
+		t.Fatalf("append after a restore: %v", err)
 	}
-	if _, err := s.Append(t.Context(), rewoundRef, []model.Op{model.SetBody{Body: "over a rewind"}}); !errors.Is(err, managed.ErrReindex) {
-		t.Fatalf("append over a rewind=%v; want ErrReindex", err)
-	}
-	if adopted, err := s.AdoptExtendedRefs(t.Context()); err != nil || adopted != 0 {
-		t.Fatalf("second AdoptExtendedRefs=%d, %v; want none", adopted, err)
+	if adopted, restored, err := s.AlignRefs(t.Context()); err != nil || adopted != 0 || restored != 0 {
+		t.Fatalf("second AlignRefs=%d adopted, %d restored, %v; want none", adopted, restored, err)
 	}
 }
 
-func TestImportFetchedRefRefusesARewindUnderTheLock(t *testing.T) {
+func TestAWriteRestoresARefGitDeletedOrRewoundAndRefusesADivergence(t *testing.T) {
 	s := initStore(t)
 	note := create(t, s, noteOps("managed tip stays"))
 	ref := refs.For(model.KindNote, note.EntityID())
@@ -260,11 +265,35 @@ func TestImportFetchedRefRefusesARewindUnderTheLock(t *testing.T) {
 	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: kept.Meta().Head, New: note.Meta().Head}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ImportFetchedRef(t.Context(), ref, note.Meta().Head); !errors.Is(err, managed.ErrReindex) {
-		t.Fatalf("import of a rewound tip=%v; want ErrReindex", err)
+	if err := s.ImportFetchedRef(t.Context(), ref, note.Meta().Head); !errors.Is(err, gitcmd.ErrCASMismatch) {
+		t.Fatalf("import of a rewound tip=%v; want ErrCASMismatch once the ref is restored", err)
 	}
-	if loaded, err := s.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(loaded, kept) {
-		t.Fatalf("refused import changed authority=%#v, %v; want %#v", loaded, err, kept)
+	requireManagedProjection(t, s, ref, kept)
+
+	if err := s.RecordsGit.DeleteRef(t.Context(), ref, kept.Meta().Head); err != nil {
+		t.Fatal(err)
+	}
+	appended, err := s.Append(t.Context(), ref, []model.Op{model.SetBody{Body: "after a pruning fetch"}})
+	if err != nil {
+		t.Fatalf("append over a deleted ref: %v", err)
+	}
+	if parent, err := s.Repo.IsAncestor(t.Context(), kept.Meta().Head, appended.Meta().Head); err != nil || !parent {
+		t.Fatalf("append over a deleted ref built on %v, %v; want the managed tip %s", appended.Meta().Head, err, kept.Meta().Head)
+	}
+	requireManagedProjection(t, s, ref, appended)
+
+	sibling, err := s.PrepareAppendAt(t.Context(), ref, kept.Meta().Head, []model.Op{model.SetBody{Body: "raw sibling"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: appended.Meta().Head, New: sibling.New}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(t.Context(), ref, []model.Op{model.SetBody{Body: "over a divergence"}}); !errors.Is(err, ErrDiverged) || errors.Is(err, managed.ErrReindex) {
+		t.Fatalf("append over a diverged ref=%v; want ErrDiverged, never ErrReindex", err)
+	}
+	if loaded, err := s.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(loaded, appended) {
+		t.Fatalf("refused append changed authority=%#v, %v; want %#v", loaded, err, appended)
 	}
 }
 
