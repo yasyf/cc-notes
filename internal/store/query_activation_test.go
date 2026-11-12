@@ -11,7 +11,7 @@ import (
 
 func TestDuplicateCheckActivatesThroughThePublicationThatFollows(t *testing.T) {
 	s := initStore(t)
-	create(t, s, docOps("first"))
+	first := create(t, s, docOps("first"))
 	source, err := queryMetadataIdentity(t.Context(), s, model.KindDoc)
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestDuplicateCheckActivatesThroughThePublicationThatFollows(t *testing.T) {
 	if pending := len(s.activations.bindings); pending != 0 {
 		t.Fatalf("%d activations still pending after the publication", pending)
 	}
-	if _, err := s.ListDocs(t.Context(), false, false); err != nil {
+	if _, _, err := s.IndexedSuperseders(t.Context(), model.KindDoc, first.EntityID()); err != nil {
 		t.Fatal(err)
 	}
 	if _, active := generations(); active.Number != afterSecond.Number {

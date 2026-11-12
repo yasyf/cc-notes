@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -17,7 +18,7 @@ import (
 // config never sets core.bare. It declines anything else, which leaves bare
 // repositories, routing variables, safe.directory, and unusual layouts to git.
 func (g Git) discoverDirs() (gitDir, commonDir string, found bool) {
-	if g.backend || g.held != nil || g.scratch != "" || g.refStore != "" || slices.ContainsFunc(os.Environ(), routesDiscovery) {
+	if g.backend || g.held != nil || g.scratch != "" || g.refStore != "" || environmentDeclines() {
 		return "", "", false
 	}
 	start, err := filepath.Abs(g.Dir)
@@ -158,11 +159,34 @@ func validHead(head string) bool {
 	return err == nil
 }
 
-// routesDiscovery reports an environment variable that changes which
-// repository git finds or how it reads its configuration.
-func routesDiscovery(kv string) bool {
-	name, _, _ := strings.Cut(kv, "=")
-	return routesRepository(kv) || name == "GIT_CONFIG_PARAMETERS" || name == "GIT_CONFIG_COUNT"
+// environmentDeclines reports an environment that changes which repository git
+// finds or how it reads its configuration: a routing variable, git -c
+// parameters, or a GIT_CONFIG_COUNT entry that is malformed or sets a core,
+// safe, extensions, or include key.
+func environmentDeclines() bool {
+	if slices.ContainsFunc(os.Environ(), routesRepository) {
+		return true
+	}
+	if _, set := os.LookupEnv("GIT_CONFIG_PARAMETERS"); set {
+		return true
+	}
+	count, set := os.LookupEnv("GIT_CONFIG_COUNT")
+	if !set {
+		return false
+	}
+	n, err := strconv.Atoi(count)
+	if err != nil || n < 0 {
+		return true
+	}
+	for i := range n {
+		key, keyed := os.LookupEnv("GIT_CONFIG_KEY_" + strconv.Itoa(i))
+		_, valued := os.LookupEnv("GIT_CONFIG_VALUE_" + strconv.Itoa(i))
+		section, _, _ := strings.Cut(strings.ToLower(key), ".")
+		if !keyed || !valued || slices.Contains([]string{"core", "safe", "extensions", "include", "includeif"}, section) {
+			return true
+		}
+	}
+	return false
 }
 
 func ownedDevice(dir string) (uint64, bool) {

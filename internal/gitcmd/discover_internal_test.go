@@ -115,10 +115,19 @@ func TestDiscoverDirsMatchesGitOrDeclines(t *testing.T) {
 			t.Fatal("ignored GIT_DIR")
 		}
 	})
-	t.Run("declines config from the environment", func(t *testing.T) {
-		t.Setenv("GIT_CONFIG_COUNT", "1")
-		if _, _, found := (Git{Dir: sub}).discoverDirs(); found {
-			t.Fatal("ignored GIT_CONFIG_COUNT")
-		}
-	})
+	for name, env := range map[string][]string{
+		"a core key":        {"GIT_CONFIG_COUNT", "1", "GIT_CONFIG_KEY_0", "core.bare", "GIT_CONFIG_VALUE_0", "true"},
+		"a missing value":   {"GIT_CONFIG_COUNT", "2"},
+		"a malformed count": {"GIT_CONFIG_COUNT", "one"},
+		"git -c parameters": {"GIT_CONFIG_PARAMETERS", "'core.bare'='true'"},
+	} {
+		t.Run("declines environment config with "+name, func(t *testing.T) {
+			for i := 0; i < len(env); i += 2 {
+				t.Setenv(env[i], env[i+1])
+			}
+			if _, _, found := (Git{Dir: sub}).discoverDirs(); found {
+				t.Fatalf("ignored %q", env)
+			}
+		})
+	}
 }
