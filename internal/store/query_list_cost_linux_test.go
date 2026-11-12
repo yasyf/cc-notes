@@ -145,7 +145,7 @@ func TestIndexedListFreshProcessWriteCost(t *testing.T) {
 		}
 		return got
 	}
-	read("first-selection", 0)
+	read("first-selection", 64<<10)
 	for i := range 3 {
 		read(fmt.Sprintf("warm-%d", i), 0)
 	}

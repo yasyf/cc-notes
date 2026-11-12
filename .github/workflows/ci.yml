@@ -279,9 +279,11 @@ jobs:
           grep -q 'read 25 authoritative entity bodies for one selected answer' "$RUNNER_TEMP/ccn-answer-match-negative.log"
 
       - name: Indexed listings reuse per-tip bodies without full-list writes
+        if: runner.os == 'Linux'
         run: ./scripts/test.sh -count=1 -v -run '^TestIndexedListFreshProcessWriteCost$' ./internal/store
 
       - name: Reject full-list write amplification on the public 0.76.10 baseline
+        if: runner.os == 'Linux'
         run: |
           set -euo pipefail
           baseline="$RUNNER_TEMP/ccn-indexed-list-write-negative"
