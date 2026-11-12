@@ -17,10 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so a `cc-notes sync` that holds the lock for over 30 seconds no longer fails
   the reads queued behind it with `managed authority busy`. `CCN_LOCK_WAIT`
   still shortens either wait.
-- **A read in a fresh clone answers at once.** With no managed authority, or
-  while an import or `cc-notes reindex` runs, a read takes entity tips from the
-  Git refs and folds only what it reads, instead of waiting for the import of
-  every record. On a Sprite holding the monorepo's 18,782 refs, the first
+- **A read in a fresh clone answers at once.** With no managed authority, a
+  read takes entity tips from the Git refs and folds only what it reads,
+  instead of waiting for the import of every record. On a Sprite holding the monorepo's 18,782 refs, the first
   `answer search` took 4.6 s instead of 158 s, and `plan show` 2.3 s, both
   byte-identical to the output after the import. Writes still wait for the
   import, which now folds its records on eight readers: 49.5 s instead of 158 s.
@@ -54,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt names its topic.
 
 ### Fixed
+- **A ref a Git command deleted or rewound comes back on the next write or
+  sync.** A `git fetch` with `fetch.prune` and a forced
+  `+refs/cc-notes/*:refs/cc-notes/*` refspec deletes every record the remote
+  lacks and rewinds every unpushed append. Each write to such a record then
+  refused with `managed authority unavailable; run cc-notes reindex`, and that
+  reindex ran for minutes and made the loss final. A write or `cc-notes sync`
+  now re-points the ref at the managed authority's tip first, and `cc-notes
+  sync` prints `restored (deleted or rewound outside cc-notes): N`. A ref moved
+  onto a commit unrelated to its managed tip still refuses, naming both tips
+  and the `git update-ref` that restores cc-notes' copy. While `cc-notes
+  reindex` rebuilds an existing authority, reads answer from that authority, so
+  `list` never names a record `show` cannot load.
 - **`--commit` anchors a full sha this clone has not fetched.** A shallow clone,
   such as a Sprite's, lacks a PR head it never fetched, so `note add --commit
   <sha>` refused with "no commit". A full sha the clone lacks is now fetched

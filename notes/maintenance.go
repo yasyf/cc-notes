@@ -47,6 +47,7 @@ type SyncReport struct {
 	Defaulted     []WithheldEntity
 	Held          int
 	Deferred      int
+	Restored      int
 }
 
 // Sync converges the repository's refs/cc-notes/* namespace with one or more
@@ -58,7 +59,8 @@ type SyncReport struct {
 // report, which still carries everything the run pushed. A clean run that moved
 // a ref in either direction ends with GC's local tidy, the one point that sees
 // refs moved by a fetch or by a writer that could not supersede its own cache
-// entry. An unscoped run first adopts refs an older binary or raw Git extended.
+// entry. An unscoped run first adopts refs an older binary or raw Git extended
+// and restores refs raw Git deleted or rewound.
 func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error) {
 	remotes := []string{opts.Remote}
 	if opts.Remote == "" {
@@ -68,13 +70,13 @@ func (c *Client) Sync(ctx context.Context, opts SyncOptions) (SyncReport, error)
 		}
 		remotes = targets
 	}
+	var report SyncReport
 	var adoptErr error
 	if opts.Prefix == "" {
-		end := ccsync.Phase(ctx, "adopting refs written outside cc-notes")
-		_, adoptErr = c.s.AdoptExtendedRefs(ctx)
+		end := ccsync.Phase(ctx, "aligning refs written outside cc-notes")
+		_, report.Restored, adoptErr = c.s.AlignRefs(ctx)
 		end()
 	}
-	var report SyncReport
 	var syncErr error
 	for _, r := range remotes {
 		rep, err := ccsync.Prefixed(ctx, c.s, r, opts.Full, cmp.Or(opts.Prefix, ccsync.Namespace))

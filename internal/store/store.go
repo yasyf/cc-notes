@@ -68,6 +68,10 @@ var (
 	// ErrDuplicate reports a Create whose content exactly duplicates a live
 	// entity; the concrete error is a *DuplicateError carrying the survivor.
 	ErrDuplicate = errors.New("duplicate entity")
+	// ErrDiverged reports an entity ref a git command moved outside cc-notes
+	// to a commit that neither extends nor precedes its managed tip, so
+	// cc-notes can neither adopt it nor restore its own copy over it.
+	ErrDiverged = errors.New("git ref diverged from its managed tip")
 )
 
 // Candidate is one entity matched by an ambiguous Resolve prefix.

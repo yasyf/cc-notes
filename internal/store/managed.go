@@ -48,18 +48,17 @@ func (s *Store) openManaged(readOnly bool) (*bolt.DB, error) {
 	return db, nil
 }
 
-// ReadWhileImporting lets s read while its managed authority is missing or
-// being rebuilt from the records refs: entity tips then come from those refs,
-// which the import copies unchanged, and anything that needs a missing
-// authority itself first calls await, which returns once the import finishes.
+// ReadWhileImporting lets s read while its managed authority is missing and
+// being imported from the records refs: entity tips then come from those refs,
+// which the import copies unchanged, and anything that needs the authority
+// itself first calls await, which returns once the import finishes. A rebuild
+// of an existing authority serves every read from that authority until it
+// swaps in, so a list and a show of one entity always agree.
 func (s *Store) ReadWhileImporting(await func(context.Context) error) { s.awaitImport = await }
 
 func (s *Store) tipsFromRefs() (bool, error) {
-	if s.awaitImport == nil {
+	if s.awaitImport == nil || s.AuthorityExists() {
 		return false, nil
-	}
-	if s.AuthorityExists() {
-		return managed.Rebuilding(s.recordsCommonDir)
 	}
 	_, err := os.Stat(managed.LegacyPath(s.recordsCommonDir))
 	if errors.Is(err, os.ErrNotExist) {
@@ -369,20 +368,20 @@ func (s *Store) managedWrite(ctx context.Context, build func(*bolt.DB) (*managed
 	return err
 }
 
-// AdoptExtendedRefs imports every entity ref the authority lacks or trails,
-// returning how many it adopted and joining the failures of those it could not.
-// A ref that does not descend from its authority tip stays out: only an explicit
-// reindex may discard managed history.
-func (s *Store) AdoptExtendedRefs(ctx context.Context) (int, error) {
+// AlignRefs brings every entity ref back in line with its managed authority
+// tip: it imports each ref a git command or an older binary extended outside
+// cc-notes, and re-points each ref one deleted or rewound at its authority tip,
+// returning how many it adopted and restored and joining the failures of those
+// it could not. A ref that diverged from its authority tip stays as it is.
+func (s *Store) AlignRefs(ctx context.Context) (adopted, restored int, err error) {
 	tips, err := s.Repo.ListPrefix(ctx, refs.Namespace)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	authoritative, err := s.ManagedTips(ctx, refs.Namespace)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	adopted := 0
 	var failures []error
 	for ref, tip := range tips {
 		if _, err := refs.Parse(ref); err != nil || authoritative[ref] == tip {
@@ -399,11 +398,25 @@ func (s *Store) AdoptExtendedRefs(ctx context.Context) (int, error) {
 		switch err := s.ImportFetchedRef(ctx, ref, tip); {
 		case err == nil:
 			adopted++
-		case !errors.Is(err, gitcmd.ErrCASMismatch) && !errors.Is(err, managed.ErrReindex):
+		case !errors.Is(err, gitcmd.ErrCASMismatch) && !errors.Is(err, ErrDiverged):
 			failures = append(failures, fmt.Errorf("adopt %s: %w", ref, err))
 		}
 	}
-	return adopted, errors.Join(failures...)
+	var moved []string
+	for ref, tip := range authoritative {
+		if tips[ref] != tip {
+			moved = append(moved, ref)
+		}
+	}
+	if len(moved) == 0 {
+		return adopted, 0, errors.Join(failures...)
+	}
+	err = s.underAuthority(ctx, func(lock *os.File, db *bolt.DB) error {
+		var err error
+		restored, err = s.restoreTrailing(ctx, lock, db, moved)
+		return err
+	})
+	return adopted, restored, errors.Join(append(failures, err)...)
 }
 
 func (s *Store) extendsAuthority(ctx context.Context, authoritative, tip model.SHA) (bool, error) {
@@ -413,15 +426,65 @@ func (s *Store) extendsAuthority(ctx context.Context, authoritative, tip model.S
 	return s.Repo.IsAncestor(ctx, authoritative, tip)
 }
 
-func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (*managedIntent, error)) (err error) {
-	var published bool
-	var publishedUpdates []gitcmd.RefUpdate
-	defer func() {
-		if published && err != nil {
-			err = publicationFailure(publishedUpdates, err)
-		}
-	}()
+func (s *Store) trailsAuthority(ctx context.Context, authoritative, tip model.SHA) (bool, error) {
+	if authoritative == "" || authoritative == tip {
+		return false, nil
+	}
+	if tip == "" {
+		return true, nil
+	}
+	return s.Repo.IsAncestor(ctx, tip, authoritative)
+}
 
+// restoreTrailing re-points each of names a git command deleted, or rewound to
+// an ancestor of its authority tip, back at that tip under lock, so the
+// records refs again hold every entry the authority published; it returns how
+// many it restored.
+func (s *Store) restoreTrailing(ctx context.Context, lock *os.File, db *bolt.DB, names []string) (int, error) {
+	authoritative := make(map[string]model.SHA, len(names))
+	if err := db.View(func(tx *bolt.Tx) error {
+		root, err := managedRoot(tx)
+		if err != nil {
+			return err
+		}
+		tips := root.Bucket([]byte("refs"))
+		for _, name := range names {
+			authoritative[name] = model.SHA(tips.Get([]byte(name)))
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	var restores []gitcmd.RefUpdate
+	for _, name := range names {
+		if _, err := refs.Parse(name); err != nil {
+			continue
+		}
+		tip, err := s.Repo.Tip(ctx, name)
+		if err != nil && !errors.Is(err, gitobj.ErrRefNotFound) {
+			return 0, err
+		}
+		trailing, err := s.trailsAuthority(ctx, authoritative[name], tip)
+		if err != nil {
+			return 0, err
+		}
+		if trailing {
+			restores = append(restores, gitcmd.RefUpdate{Ref: name, New: authoritative[name], Old: tip})
+		}
+	}
+	if len(restores) == 0 {
+		return 0, nil
+	}
+	if err := s.RecordsGit.Holding(lock).UpdateRefs(ctx, restores); err != nil {
+		return 0, fmt.Errorf("restore refs moved outside cc-notes: %w", err)
+	}
+	return len(restores), nil
+}
+
+// underAuthority runs do holding the exclusive authority lock over the open
+// authority, once any finished reindex is swapped in and any pending
+// publication is settled.
+func (s *Store) underAuthority(ctx context.Context, do func(*os.File, *bolt.DB) error) (err error) {
 	if err := s.CheckRecords(); err != nil {
 		return err
 	}
@@ -455,79 +518,99 @@ func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (
 	if err := s.CheckRecords(); err != nil {
 		return err
 	}
-	intent, err := build(db)
-	if err != nil || intent == nil {
-		return err
-	}
-	if len(intent.Updates) == 0 {
-		return errors.New("managed publication has no exact ref updates")
-	}
-	intent.Before = make([]model.SHA, len(intent.Updates))
-	seen := make(map[string]struct{}, len(intent.Updates))
-	for i, update := range intent.Updates {
-		if _, found := seen[update.Ref]; found {
-			return fmt.Errorf("duplicate managed ref %s", update.Ref)
+	return do(lock, db)
+}
+
+func (s *Store) publishManagedIntent(ctx context.Context, build func(*bolt.DB) (*managedIntent, error)) (err error) {
+	var published bool
+	var publishedUpdates []gitcmd.RefUpdate
+	defer func() {
+		if published && err != nil {
+			err = publicationFailure(publishedUpdates, err)
 		}
-		seen[update.Ref] = struct{}{}
-		tip, err := s.Repo.Tip(ctx, update.Ref)
-		if err != nil && !errors.Is(err, gitobj.ErrRefNotFound) {
+	}()
+	return s.underAuthority(ctx, func(lock *os.File, db *bolt.DB) error {
+		intent, err := build(db)
+		if err != nil || intent == nil {
 			return err
 		}
-		if _, parseErr := refs.Parse(update.Ref); parseErr == nil {
-			if intent.Imported == update.Ref {
-				if update.Old != update.New || update.New != tip {
-					return fmt.Errorf("import fetched ref %s: %w", update.Ref, gitcmd.ErrCASMismatch)
-				}
+		if len(intent.Updates) == 0 {
+			return errors.New("managed publication has no exact ref updates")
+		}
+		names := make([]string, len(intent.Updates))
+		for i, update := range intent.Updates {
+			names[i] = update.Ref
+		}
+		if _, err := s.restoreTrailing(ctx, lock, db, names); err != nil {
+			return err
+		}
+		intent.Before = make([]model.SHA, len(intent.Updates))
+		seen := make(map[string]struct{}, len(intent.Updates))
+		for i, update := range intent.Updates {
+			if _, found := seen[update.Ref]; found {
+				return fmt.Errorf("duplicate managed ref %s", update.Ref)
 			}
-			var authoritative model.SHA
-			if err := db.View(func(tx *bolt.Tx) error {
-				root, err := managedRoot(tx)
-				if err != nil {
-					return err
-				}
-				authoritative = model.SHA(root.Bucket([]byte("refs")).Get([]byte(update.Ref)))
-				return nil
-			}); err != nil {
+			seen[update.Ref] = struct{}{}
+			tip, err := s.Repo.Tip(ctx, update.Ref)
+			if err != nil && !errors.Is(err, gitobj.ErrRefNotFound) {
 				return err
 			}
-			if authoritative != tip {
-				extended := false
-				if tip != "" {
-					if extended, err = s.extendsAuthority(ctx, authoritative, tip); err != nil {
-						return err
+			if _, parseErr := refs.Parse(update.Ref); parseErr == nil {
+				if intent.Imported == update.Ref {
+					if update.Old != update.New || update.New != tip {
+						return fmt.Errorf("import fetched ref %s: %w", update.Ref, gitcmd.ErrCASMismatch)
 					}
 				}
-				if !extended {
-					return fmt.Errorf("git ref changed outside managed publication: %s: %w", update.Ref, managed.ErrReindex)
+				var authoritative model.SHA
+				if err := db.View(func(tx *bolt.Tx) error {
+					root, err := managedRoot(tx)
+					if err != nil {
+						return err
+					}
+					authoritative = model.SHA(root.Bucket([]byte("refs")).Get([]byte(update.Ref)))
+					return nil
+				}); err != nil {
+					return err
 				}
-				if intent.Imported != update.Ref {
-					return &managedDrift{ref: update.Ref, tip: tip}
+				if authoritative != tip {
+					extended := false
+					if tip != "" {
+						if extended, err = s.extendsAuthority(ctx, authoritative, tip); err != nil {
+							return err
+						}
+					}
+					if !extended {
+						return fmt.Errorf("%s moved outside cc-notes to %s, off its managed tip %s; `git update-ref %s %s` restores cc-notes' copy, `cc-notes reindex` keeps git's: %w", update.Ref, tip, authoritative, update.Ref, authoritative, ErrDiverged)
+					}
+					if intent.Imported != update.Ref {
+						return &managedDrift{ref: update.Ref, tip: tip}
+					}
 				}
 			}
+			intent.Before[i] = tip
 		}
-		intent.Before[i] = tip
-	}
-	data, err := json.Marshal(intent)
-	if err != nil {
-		return err
-	}
-	if err := db.Update(func(tx *bolt.Tx) error {
-		root, err := managedRoot(tx)
+		data, err := json.Marshal(intent)
 		if err != nil {
 			return err
 		}
-		return root.Put(managedPendingKey, data)
-	}); err != nil {
-		return err
-	}
-	publishedUpdates = intent.Updates
-	publishErr := s.RecordsGit.Holding(lock).UpdateRefs(ctx, intent.Updates)
-	published = publishErr == nil
-	recoverErr := s.recoverManaged(context.WithoutCancel(ctx), db)
-	if published {
-		return errors.Join(recoverErr, s.CheckRecords())
-	}
-	return errors.Join(publishErr, recoverErr)
+		if err := db.Update(func(tx *bolt.Tx) error {
+			root, err := managedRoot(tx)
+			if err != nil {
+				return err
+			}
+			return root.Put(managedPendingKey, data)
+		}); err != nil {
+			return err
+		}
+		publishedUpdates = intent.Updates
+		publishErr := s.RecordsGit.Holding(lock).UpdateRefs(ctx, intent.Updates)
+		published = publishErr == nil
+		recoverErr := s.recoverManaged(context.WithoutCancel(ctx), db)
+		if published {
+			return errors.Join(recoverErr, s.CheckRecords())
+		}
+		return errors.Join(publishErr, recoverErr)
+	})
 }
 
 func (s *Store) recoverManaged(ctx context.Context, db *bolt.DB) error {

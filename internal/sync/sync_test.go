@@ -1321,8 +1321,8 @@ func TestScopedSyncPreservesExternalDriftRejection(t *testing.T) {
 	if err := b.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: before.Meta().Head, New: alternate.New}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ccsync.Sync(t.Context(), b, "origin", false); !errors.Is(err, managed.ErrReindex) {
-		t.Fatalf("scoped sync over external divergence=%v; want ErrReindex", err)
+	if _, err := ccsync.Sync(t.Context(), b, "origin", false); !errors.Is(err, store.ErrDiverged) {
+		t.Fatalf("scoped sync over external divergence=%v; want ErrDiverged", err)
 	}
 	if got, err := b.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(got, before) {
 		t.Fatalf("rejected scoped sync changed authority=%#v, %v; want %#v", got, err, before)
@@ -1332,7 +1332,7 @@ func TestScopedSyncPreservesExternalDriftRejection(t *testing.T) {
 	}
 }
 
-func TestScopedSyncPreservesManagedAppendAfterRawRefReset(t *testing.T) {
+func TestScopedSyncRestoresAndPushesAManagedAppendAfterRawRefReset(t *testing.T) {
 	bare := gittest.InitBare(t)
 	a := clone(t, bare, "Alice", "alice@example.com")
 	b := clone(t, bare, "Bob", "bob@example.com")
@@ -1348,14 +1348,16 @@ func TestScopedSyncPreservesManagedAppendAfterRawRefReset(t *testing.T) {
 	if err := b.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{{Ref: ref, Old: before.Meta().Head, New: note.Head}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ccsync.Sync(t.Context(), b, "origin", false); !errors.Is(err, managed.ErrReindex) {
-		t.Fatalf("scoped sync over raw reset=%v; want ErrReindex", err)
+	if _, err := ccsync.Sync(t.Context(), b, "origin", false); err != nil {
+		t.Fatalf("scoped sync over raw reset: %v", err)
 	}
 	if got, err := b.Load(t.Context(), ref); err != nil || !reflect.DeepEqual(got, before) {
 		t.Fatalf("raw reset discarded managed append=%#v, %v; want %#v", got, err, before)
 	}
-	if got := gittest.Git(t, bare, "rev-parse", ref); got != string(note.Head) {
-		t.Fatalf("rejected scoped sync changed remote=%s; want %s", got, note.Head)
+	for _, dir := range []string{b.RecordsGit.Dir, bare} {
+		if got := gittest.Git(t, dir, "rev-parse", ref); got != string(before.Meta().Head) {
+			t.Fatalf("%s after scoped sync over a raw reset=%s; want the restored append %s", dir, got, before.Meta().Head)
+		}
 	}
 }
 

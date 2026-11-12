@@ -182,6 +182,7 @@ func newSyncCmd() *cobra.Command {
 					Defaulted:     defaultedDTOs(report.Defaulted),
 					Held:          report.Held,
 					Deferred:      report.Deferred,
+					Restored:      report.Restored,
 					Rounds:        report.Rounds,
 				}); perr != nil {
 					return perr
@@ -192,6 +193,7 @@ func newSyncCmd() *cobra.Command {
 				verb  string
 				count int
 			}{
+				{"restored (deleted or rewound outside cc-notes)", report.Restored},
 				{"created", report.Created},
 				{"fast-forwarded", report.FastForwarded},
 				{"merged", report.Merged},
@@ -250,6 +252,7 @@ type syncDTO struct {
 	Defaulted     []defaultedDTO `json:"defaulted,omitempty"`
 	Held          int            `json:"held"`
 	Deferred      int            `json:"deferred"`
+	Restored      int            `json:"restored"`
 	Rounds        int            `json:"rounds"`
 }
 

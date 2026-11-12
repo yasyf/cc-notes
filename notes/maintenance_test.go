@@ -105,6 +105,50 @@ func TestSyncNamesOnlyTheRefsADefaultKeptOffEveryRemote(t *testing.T) {
 	}
 }
 
+func TestSyncRestoresRefsAPruningForcedFetchDeletedOrRewound(t *testing.T) {
+	c, dir := newClient(t)
+	ctx := t.Context()
+	bare := gittest.InitBare(t)
+	gittest.Git(t, dir, "remote", "add", "origin", bare)
+	pushed := storeCreate(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "pushed"}).(model.Note)
+	pushedRef := refs.For(model.KindNote, pushed.ID)
+	if _, err := c.Sync(ctx, notes.SyncOptions{Remote: "origin"}); err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	storeAppend(t, dir, pushedRef, model.SetBody{Body: "appended after the push"})
+	local := storeCreate(t, dir, model.CreateNote{Nonce: model.NewNonce(), Title: "kept local", Tags: []string{store.LocalLabel}}).(model.Note)
+	localRef := refs.For(model.KindNote, local.ID)
+	want := map[string]string{
+		pushedRef: gittest.Git(t, dir, "rev-parse", pushedRef),
+		localRef:  gittest.Git(t, dir, "rev-parse", localRef),
+	}
+
+	gittest.Git(t, dir, "-c", "fetch.prune=true", "fetch", "-q", "--no-tags", "origin", "+refs/cc-notes/*:refs/cc-notes/*")
+	if got := gittest.Git(t, dir, "for-each-ref", "--format=%(refname)", localRef); got != "" {
+		t.Fatalf("the pruning fetch kept %s", got)
+	}
+	if got := gittest.Git(t, dir, "rev-parse", pushedRef); got == want[pushedRef] {
+		t.Fatalf("the forced fetch left %s at its unpushed tip", pushedRef)
+	}
+
+	report, err := c.Sync(ctx, notes.SyncOptions{Remote: "origin"})
+	if err != nil {
+		t.Fatalf("Sync after a pruning forced fetch: %v", err)
+	}
+	if report.Restored != 2 {
+		t.Errorf("Restored = %d, want the deleted and the rewound ref", report.Restored)
+	}
+	for ref, tip := range want {
+		if got := gittest.Git(t, dir, "rev-parse", ref); got != tip {
+			t.Errorf("%s after sync = %s, want its managed tip %s", ref, got, tip)
+		}
+	}
+	if got := gittest.Git(t, bare, "rev-parse", pushedRef); got != want[pushedRef] {
+		t.Errorf("remote %s after sync = %s, want the restored append %s", pushedRef, got, want[pushedRef])
+	}
+	storeAppend(t, dir, localRef, model.SetBody{Body: "written after the restore"})
+}
+
 func TestSyncDefaultFansOutOverWiredRemotes(t *testing.T) {
 	c, dir := newClient(t)
 	ctx := t.Context()

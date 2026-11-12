@@ -105,19 +105,6 @@ func tryLockAt(path string, exclusive bool) (*os.File, error) {
 	return file, recordHolder(file, exclusive)
 }
 
-// Rebuilding reports whether an import or rebuild of the authority holds the
-// rebuild lock now.
-func Rebuilding(commonDir string) (bool, error) {
-	file, err := tryLockAt(rebuildLockPath(commonDir), false)
-	if err != nil {
-		return false, err
-	}
-	if file == nil {
-		return true, nil
-	}
-	return false, file.Close()
-}
-
 // Wait returns the time to wait on the authority: within, or less when
 // LockWaitEnv asks for less.
 func Wait(within time.Duration) (time.Duration, error) {

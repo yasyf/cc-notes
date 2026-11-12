@@ -344,6 +344,11 @@ Converge `refs/cc-notes/*` with a remote and push. Fetches, union-merges diverge
 (never clobbers), and pushes, looping until stable. The lean report prints only nonzero verbs
 followed by the round count.
 
+Before it fetches, an unscoped sync re-points every record ref a plain Git command deleted or
+rewound, such as a `git fetch --prune` with a forced `+refs/cc-notes/*:refs/cc-notes/*`
+refspec, at cc-notes' own copy, and reports it as `restored (deleted or rewound outside
+cc-notes): N`. Every write does the same for the records it touches.
+
 Sync also carries each long ledger's checkpoint, `refs/cc-notes-checkpoints/ledgers/<id>`: the
 ledger's folded state at a recent commit, so a fold reads only the commits above it instead of
 the whole chain. A fold from the root writes one every 2,000 lamports, and sync pushes it. A
@@ -362,7 +367,7 @@ pushed: 2
 rounds: 1
 ```
 
-JSON shape: `{"created":int,"fast_forwarded":int,"merged":int,"pushed":int,"rounds":int}`.
+JSON shape: `{"created":int,"fast_forwarded":int,"merged":int,"pushed":int,"uploaded":int,"withheld":int,"held":int,"deferred":int,"restored":int,"rounds":int}`, plus `defaulted` when a local default kept a record off every remote.
 
 ### `cc-notes status` (alias `cc-notes board`)
 
