@@ -378,9 +378,8 @@ func TestWritersPublishWhileAReindexBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale, err := s.swapReindex(t.Context(), lock)
-	if err := errors.Join(err, lock.Close()); err != nil || stale {
-		t.Fatalf("swap=%t, %v", stale, err)
+	if err := errors.Join(s.swapReindex(t.Context(), lock), lock.Close()); err != nil {
+		t.Fatalf("swap: %v", err)
 	}
 	requireManagedProjection(t, s, ref, appended)
 	requireManagedProjection(t, s, refs.For(model.KindNote, created.EntityID()), created)
@@ -398,7 +397,7 @@ func TestWritersPublishWhileAReindexBuilds(t *testing.T) {
 	requireManagedProjection(t, s, ref, later)
 }
 
-func TestReindexDiscardsAMintedBuildWritersOvertook(t *testing.T) {
+func TestReindexSwapFoldsWritersIntoAMintedBuild(t *testing.T) {
 	s := initStore(t)
 	extended := create(t, s, noteOps("extended outside managed publication"))
 	extendedRef := refs.For(model.KindNote, extended.EntityID())
@@ -409,6 +408,7 @@ func TestReindexDiscardsAMintedBuildWritersOvertook(t *testing.T) {
 	if err := s.RecordsGit.UpdateRefs(t.Context(), []gitcmd.RefUpdate{raw.RefUpdate()}); err != nil {
 		t.Fatal(err)
 	}
+	durable := create(t, s, append(answerOps("settled before the rebuild"), model.AddTag{Tag: "scope:durable"}))
 	snapshot, finished, err := s.snapshotReindex(t.Context())
 	if err != nil || finished {
 		t.Fatalf("snapshot=%t, %v", finished, err)
@@ -416,30 +416,47 @@ func TestReindexDiscardsAMintedBuildWritersOvertook(t *testing.T) {
 	if err := s.buildReindex(t.Context(), snapshot, nil); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv(managed.LockWaitEnv, "1ms")
+	requireManagedAnswerLabel(t, s, "scope:durable", durable.EntityID())
 	created := create(t, s, noteOps("created during the minted rebuild"))
 	createdRef := refs.For(model.KindNote, created.EntityID())
+	answered := create(t, s, append(answerOps("settled during the rebuild"), model.AddTag{Tag: "scope:durable"}))
+	written, err := s.SourceHead(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	lock, err := managed.Lock(t.Context(), s.recordsCommonDir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale, err := s.swapReindex(t.Context(), lock)
-	if err := errors.Join(err, lock.Close()); err != nil || !stale {
-		t.Fatalf("swap of an overtaken minted build=%t, %v; want stale", stale, err)
+	if err := errors.Join(s.swapReindex(t.Context(), lock), lock.Close()); err != nil {
+		t.Fatalf("swap of a minted build writers overtook: %v", err)
 	}
 	if ready, err := s.reindexReady(); err != nil || ready {
-		t.Fatalf("discarded build still staged=%t, %v", ready, err)
-	}
-	requireManagedProjection(t, s, createdRef, created)
-	if err := s.Reindex(t.Context()); err != nil {
-		t.Fatal(err)
+		t.Fatalf("swapped build still staged=%t, %v", ready, err)
 	}
 	requireManagedProjection(t, s, extendedRef, raw.Snapshot)
 	requireManagedProjection(t, s, createdRef, created)
+	requireManagedAnswerLabel(t, s, "scope:durable", durable.EntityID(), answered.EntityID())
 	head, err := s.SourceHead(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	if head.Predecessor != written.Token || head.Height != written.Height+1 || head.EntityGeneration <= written.EntityGeneration {
+		t.Fatalf("swapped head=%+v; want the successor of the writers' head %+v", head, written)
+	}
 	if tip, err := s.Repo.Tip(t.Context(), sourceindex.Ref); err != nil || tip != head.Token {
 		t.Fatalf("source ref=%s, %v; managed head=%s", tip, err, head.Token)
 	}
+	for _, snapshot := range []model.Snapshot{extended, created} {
+		key := "entity:note:" + string(snapshot.EntityID())
+		if _, found, err := s.SourceObject(t.Context(), head.Token, key); err != nil || !found {
+			t.Fatalf("swapped projection %s found=%t, %v", key, found, err)
+		}
+	}
+	later, err := s.Append(t.Context(), createdRef, []model.Op{model.SetBody{Body: "written after the swap"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireManagedProjection(t, s, createdRef, later)
 }

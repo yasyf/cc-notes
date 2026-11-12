@@ -222,6 +222,14 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 		}
 		previous = sourceindex.Revision{ProjectionAvailable: true, RenderPolicy: sourceview.RenderPolicy}
 	}
+	changed := changedSourceRefs(tx, updates)
+	if len(changed) == 0 && previous.Token != "" {
+		return nil, nil, nil
+	}
+	return s.extendSource(ctx, tx, previous, previous, changed, values)
+}
+
+func changedSourceRefs(tx *bolt.Tx, updates []gitcmd.RefUpdate) []gitcmd.RefUpdate {
 	changed := make([]gitcmd.RefUpdate, 0, len(updates))
 	for _, update := range updates {
 		if _, err := refs.Parse(update.Ref); err == nil {
@@ -231,13 +239,14 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 			}
 		}
 	}
-	if len(changed) == 0 && previous.Token != "" {
-		return nil, nil, nil
-	}
-	if previous.EntityGeneration == math.MaxUint64 || previous.Height == math.MaxUint64 {
+	return changed
+}
+
+func (s *Store) extendSource(ctx context.Context, tx *bolt.Tx, previous, content sourceindex.Revision, changed []gitcmd.RefUpdate, values map[string]sourceview.Entity) (*sourcePublication, []gitcmd.RefUpdate, error) {
+	if content.EntityGeneration == math.MaxUint64 || previous.Height == math.MaxUint64 {
 		return nil, nil, errors.New("source generation overflow")
 	}
-	revision := previous
+	revision := content
 	if len(changed) != 0 {
 		revision.EntityGeneration++
 	}
@@ -245,14 +254,15 @@ func (s *Store) buildSource(ctx context.Context, tx *bolt.Tx, updates []gitcmd.R
 	revision.Token = ""
 	revision.ImportEvidence = ""
 	revision.ProjectionDigest = [32]byte{}
-	revision.Height++
+	revision.Height = previous.Height + 1
+	var err error
 	revision.AncestorJumps, err = sourceJumps(tx, previous)
 	if err != nil {
 		return nil, nil, err
 	}
 	err = s.Repo.SourceObjects(ctx, func(objects *gitobj.SourceObjects) error {
 		objects.HoldPacks()
-		if previous.EntityRoot == "" {
+		if content.EntityRoot == "" {
 			var err error
 			revision, err = s.buildSourceSnapshot(objects, revision, values)
 			if err != nil {
