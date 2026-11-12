@@ -161,6 +161,7 @@ func TestInstallIdempotent(t *testing.T) {
 		"remote.origin.push=HEAD",
 		"remote.origin.push=" + ccPushRefspec,
 		"core.logAllRefUpdates=always",
+		"remote.origin.negotiationInclude=refs/remotes/origin/*",
 	}
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
@@ -312,6 +313,7 @@ func TestInstallSweepsEveryRemoteOldFetchRefspec(t *testing.T) {
 				"remote.origin.push=HEAD",
 				"remote.origin.push=" + ccPushRefspec,
 				"core.logAllRefUpdates=always",
+				"remote.origin.negotiationInclude=refs/remotes/origin/*",
 				"remote.upstream.fetch=" + upstreamFetchRefspec,
 			}
 			if !slices.Equal(report.Added, wantAdded) || len(report.Removed) != 0 || !report.HeadPushAdded {

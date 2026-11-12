@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/gitobj"
+	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 )
 
@@ -72,5 +74,28 @@ func TestIsAncestorAcrossCommitGraphChanges(t *testing.T) {
 		if want := gitIsAncestor(t, dir, step.a, step.b); got != want {
 			t.Fatalf("%s: IsAncestor(%s, %s) = %v, want git's %v", step.name, step.a, step.b, got, want)
 		}
+	}
+}
+
+// TestAncestryAnswersGraphHeldCommitsWithoutReadingThem pins that a commit the
+// commit-graph holds is never read as an object: the graph here comes from
+// another repository, so an object read for either endpoint would miss.
+func TestAncestryAnswersGraphHeldCommitsWithoutReadingThem(t *testing.T) {
+	source := initRepo(t)
+	gittest.Git(t, source, "commit", "-q", "--allow-empty", "-m", "parent")
+	parent := model.SHA(gittest.Git(t, source, "rev-parse", "HEAD"))
+	gittest.Git(t, source, "commit", "-q", "--allow-empty", "-m", "child")
+	child := model.SHA(gittest.Git(t, source, "rev-parse", "HEAD"))
+	writeCommitGraph(t, source, child)
+	data, err := os.ReadFile(filepath.Join(source, ".git", "objects", "info", "commit-graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, ".git", "objects", "info", "commit-graph"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := open(t, dir).Ancestry(t.Context(), parent, child); err != nil || got != gitobj.Ancestor {
+		t.Fatalf("Ancestry(%s, %s) = %v, %v, want Ancestor from the graph alone", parent, child, got, err)
 	}
 }

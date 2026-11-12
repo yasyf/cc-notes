@@ -793,7 +793,8 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 		"remote.origin.fetch=+refs/cc-notes/*:refs/cc-notes-sync/origin/*; " +
 		"remote.origin.push=HEAD; " +
 		"remote.origin.push=refs/cc-notes/*:refs/cc-notes/*; " +
-		"core.logAllRefUpdates=always\n" +
+		"core.logAllRefUpdates=always; " +
+		"remote.origin.negotiationInclude=refs/remotes/origin/*\n" +
 		"cc-notes: note: \"git push\" now pushes the current branch to its same-named remote branch (remote.origin.push overrides push.default)\n"
 	if res.Stderr != want {
 		t.Fatalf("first mutating command stderr = %q, want %q", res.Stderr, want)

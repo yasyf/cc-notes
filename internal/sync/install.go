@@ -53,7 +53,10 @@ type InstallReport struct {
 // remote carrying it is rewritten to its own tracking-namespace form. It
 // preserves existing push behavior: a remote with no push refspec gets HEAD
 // before the cc-notes refspec, while a remote with its own push refspecs keeps
-// them untouched. An unconfigured remote fails wrapping ErrRemoteNotFound.
+// them untouched. It also names each remote-tracking ref the remote's fetch
+// refspecs write in remote.<r>.negotiationInclude, so every fetch offers the
+// remote a commit it holds. An unconfigured remote fails wrapping
+// ErrRemoteNotFound.
 func Install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, error) {
 	report, err := install(ctx, g, remote)
 	if err != nil {
@@ -97,6 +100,17 @@ func install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, e
 			return report, err
 		}
 		report.Added = append(report.Added, "core.logAllRefUpdates=always")
+	}
+	includeKey := "remote." + remote + ".negotiationInclude"
+	included := local.values("remote." + remote + ".negotiationinclude")
+	for _, tracking := range trackingRefs(local.values("remote." + remote + ".fetch")) {
+		if slices.Contains(included, tracking) {
+			continue
+		}
+		if err := g.ConfigAdd(ctx, includeKey, tracking); err != nil {
+			return report, err
+		}
+		report.Added = append(report.Added, includeKey+"="+tracking)
 	}
 	// Only a remote with local fetch lines can carry the pre-fix killer refspec.
 	for _, other := range local.fetchRemotes() {
@@ -181,4 +195,21 @@ func upgradeFetch(ctx context.Context, g gitcmd.Git, remote string, fetch []stri
 		report.Added = append(report.Added, fetchKey+"="+want)
 	}
 	return nil
+}
+
+// trackingRefs names the remote-tracking refs fetch's refspecs write, as git
+// negotiationInclude patterns. Git sends haves newest commit first, and the
+// source projection's live branch carries retention commits dated centuries
+// ahead that no remote holds, so without a tracking tip sent unconditionally a
+// fetch spends its whole have budget on them and the remote resends history the
+// repository already has.
+func trackingRefs(fetch []string) []string {
+	var tracking []string
+	for _, refspec := range fetch {
+		_, dst, ok := strings.Cut(strings.TrimPrefix(refspec, "+"), ":")
+		if ok && strings.HasPrefix(dst, "refs/remotes/") && !slices.Contains(tracking, dst) {
+			tracking = append(tracking, dst)
+		}
+	}
+	return tracking
 }

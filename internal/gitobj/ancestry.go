@@ -86,15 +86,15 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b model.SHA) (_ bool, resultEr
 	if err := r.refreshAncestry(); err != nil {
 		return false, err
 	}
-	ancestor, err := r.commit(a)
+	ancestor, err := r.commitHash(a)
 	if err != nil {
 		return false, err
 	}
-	descendant, err := r.commit(b)
+	descendant, err := r.commitHash(b)
 	if err != nil {
 		return false, err
 	}
-	verdict, err := r.reachable(ctx, ancestor.Hash, descendant.Hash)
+	verdict, err := r.reachable(ctx, ancestor, descendant)
 	if err != nil {
 		return false, fmt.Errorf("walk ancestry of %s: %w", b, err)
 	}
@@ -120,18 +120,18 @@ func (r *Repo) Ancestry(ctx context.Context, a, b model.SHA) (_ Ancestry, result
 	if err := r.refreshAncestry(); err != nil {
 		return NotAncestor, err
 	}
-	ancestor, err := r.commit(a)
+	ancestor, err := r.commitHash(a)
 	if errors.Is(err, ErrCommitNotFound) && len(r.shallow) > 0 {
 		return r.absentAncestry(ctx, b)
 	}
 	if err != nil {
 		return NotAncestor, err
 	}
-	descendant, err := r.commit(b)
+	descendant, err := r.commitHash(b)
 	if err != nil {
 		return NotAncestor, err
 	}
-	verdict, err := r.reachable(ctx, ancestor.Hash, descendant.Hash)
+	verdict, err := r.reachable(ctx, ancestor, descendant)
 	if err != nil {
 		return NotAncestor, fmt.Errorf("walk ancestry of %s: %w", b, err)
 	}
@@ -160,14 +160,14 @@ func (r *Repo) AbsentAncestry(ctx context.Context, b model.SHA) (_ Ancestry, res
 }
 
 func (r *Repo) absentAncestry(ctx context.Context, b model.SHA) (Ancestry, error) {
-	descendant, err := r.commit(b)
+	descendant, err := r.commitHash(b)
 	if err != nil {
 		return NotAncestor, err
 	}
 	if len(r.shallow) == 0 {
 		return NotAncestor, nil
 	}
-	w := r.reachOf(descendant.Hash)
+	w := r.reachOf(descendant)
 	for len(w.queue) > 0 {
 		if err := r.expand(ctx, w); err != nil {
 			return NotAncestor, fmt.Errorf("walk ancestry of %s: %w", b, err)
@@ -255,4 +255,22 @@ func (r *Repo) reachOf(descendant plumbing.Hash) *reach {
 		r.reachOrder = r.reachOrder[1:]
 	}
 	return w
+}
+
+// commitHash names the commit sha resolves to, from the commit-graph when it
+// holds the commit: git rescans every pack directory entry for each object a
+// lookup misses, so a graph hit spares the object read that costs a repository
+// with thousands of packs most. It wraps ErrCommitNotFound like commit.
+func (r *Repo) commitHash(sha model.SHA) (plumbing.Hash, error) {
+	if plumbing.IsHash(string(sha)) {
+		hash := plumbing.NewHash(string(sha))
+		if _, ok := r.graphCommit(hash); ok {
+			return hash, nil
+		}
+	}
+	commit, err := r.commit(sha)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return commit.Hash, nil
 }
