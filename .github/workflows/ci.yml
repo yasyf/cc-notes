@@ -278,6 +278,27 @@ jobs:
           test "$result" -ne 0
           grep -q 'read 25 authoritative entity bodies for one selected answer' "$RUNNER_TEMP/ccn-answer-match-negative.log"
 
+      - name: Indexed listings reuse per-tip bodies without full-list writes
+        if: runner.os == 'Linux'
+        run: ./scripts/test.sh -count=1 -v -run '^TestIndexedListFreshProcessWriteCost$' ./internal/store
+
+      - name: Reject full-list write amplification on the public 0.76.10 baseline
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/ccn-indexed-list-write-negative"
+          git fetch --no-tags --depth=1 origin 70250d352b76a9d2e24fb35beae9d24da7b88914
+          git worktree add --detach "$baseline" 70250d352b76a9d2e24fb35beae9d24da7b88914
+          cp internal/store/query_list_cost_linux_test.go "$baseline/internal/store/"
+          set +e
+          (cd "$baseline" && ./scripts/test.sh -count=1 -v -run '^TestIndexedListFreshProcessWriteCost$' ./internal/store) > "$RUNNER_TEMP/ccn-indexed-list-write-negative.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ccn-indexed-list-write-negative.log"
+          test "$result" -ne 0
+          test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-indexed-list-write-negative.log")" -eq 6
+          test "$(grep -c 'INDEXED_LIST_WRITE_AMPLIFICATION:' "$RUNNER_TEMP/ccn-indexed-list-write-negative.log")" -eq 2
+
       - name: Test (race, via the process-cap harness)
         run: ./scripts/test.sh -race -count=1 -timeout 30m -v -skip '^(TestAnswerCorpusWarmAndChangedPayloadWork|TestQueryDuplicateSelectedWork|TestTaskRelationsDoNotReadUnrelatedBodies|TestRelevantCachedWarmHitIsConstantWork|TestQueryMetadataExecutableIndependentReuse|TestLoadFallbackFreshProcessCost|TestAnswerShowFreshCLICost|TestTaskDedupeFreshCLICost|TestTaskDedupeFreshCLIMetadataCost|TestTaskBlockingFreshCLICost|TestPackedObjectIndexFreshCLICost)$' ./...
 

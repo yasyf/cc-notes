@@ -92,13 +92,13 @@ func TestIndexedAnswersWarmReadsAvoidUnrelatedCorpus(t *testing.T) {
 			if err := db.Close(); err != nil {
 				t.Fatal(err)
 			}
-			for _, tip := range q.tips {
+			for id, tip := range q.tips {
 				if err := os.Remove(filepath.Join(s.recordsCommonDir, "objects", string(tip)[:2], string(tip)[2:])); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if err := os.RemoveAll(s.cache.dir); err != nil {
-				t.Fatal(err)
+				if id != selected {
+					s.cache.delete(tip)
+				}
 			}
 			fresh, err := Open(s.Git.Dir)
 			if err != nil {
@@ -117,8 +117,8 @@ func TestIndexedAnswersWarmReadsAvoidUnrelatedCorpus(t *testing.T) {
 			if _, after := queryIndexGeneration(t, q); before != after {
 				t.Fatalf("warm query wrote transaction %d after %d", after, before)
 			}
-			if got, hit, err := fresh.IndexedAnswers(t.Context(), []string{"target", "target"}, ListOpts{}); got != nil || hit || err == nil {
-				t.Fatalf("uncached selected unreadable body = %v %v %v", got, hit, err)
+			if got, hit, err := fresh.IndexedAnswers(t.Context(), []string{"target", "target"}, ListOpts{}); err != nil || !hit || len(got) != 1 || got[0].ID != selected || got[0].Body != "Redis" {
+				t.Fatalf("equivalent selection with unreadable objects = %v %v %v", got, hit, err)
 			}
 			if _, err := fresh.ListAnswers(t.Context(), false, false); err == nil {
 				t.Fatal("authoritative corpus remained readable")

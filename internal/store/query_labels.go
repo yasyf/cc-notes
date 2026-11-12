@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 
 	bolt "go.etcd.io/bbolt"
@@ -108,21 +107,7 @@ func indexedFilteredList[T model.Snapshot](ctx context.Context, s *Store, kind m
 	if err != nil || !hit {
 		return nil, false, err
 	}
-	pins := make(map[string]model.SHA, len(entries))
-	for _, entry := range entries {
-		pins[entry.ref] = entry.tip
-	}
-	variant, err := json.Marshal(struct {
-		Labels  []string
-		Anchors []model.Anchor `json:",omitempty"`
-		Opts    ListOpts
-	}{Labels: labels, Anchors: anchors, Opts: opts})
-	if err != nil {
-		return nil, false, err
-	}
-	values, err = cachedPinnedList(ctx, s.Pinned(pins), kind, variant, func(pinned *Store) ([]T, error) {
-		return foldAll(ctx, pinned, entries, foldFn)
-	})
+	values, err = foldAll(ctx, s, entries, foldFn)
 	if err != nil {
 		return nil, false, err
 	}
