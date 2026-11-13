@@ -17,16 +17,19 @@ import (
 )
 
 var (
-	queryMetadataRootBucket        = []byte("query-metadata-v1")
-	queryMetadataRowsBucket        = []byte("rows")
-	queryMetadataTipsBucket        = []byte("tips")
-	queryMetadataLabelsBucket      = []byte("labels")
-	queryMetadataAnchorsBucket     = []byte("anchors")
-	queryMetadataSupersedersBucket = []byte("superseders")
-	queryMetadataBlockedByBucket   = []byte("blocked-by")
-	queryMetadataParentsBucket     = []byte("parents")
-	queryMetadataRunTasksBucket    = []byte("run-tasks")
-	queryMetadataDuplicatesBucket  = []byte("duplicate-content")
+	queryMetadataRootBucket          = []byte("query-metadata-v1")
+	queryMetadataRowsBucket          = []byte("rows")
+	queryMetadataTipsBucket          = []byte("tips")
+	queryMetadataLabelsBucket        = []byte("labels")
+	queryMetadataAnchorsBucket       = []byte("anchors")
+	queryMetadataSupersedersBucket   = []byte("superseders")
+	queryMetadataBlockedByBucket     = []byte("blocked-by")
+	queryMetadataParentsBucket       = []byte("parents")
+	queryMetadataRunTasksBucket      = []byte("run-tasks")
+	queryMetadataQuestionTermsBucket = []byte("answer-question-terms")
+	queryMetadataBodyTermsBucket     = []byte("answer-body-terms")
+	queryMetadataAnswerRankingBucket = []byte("answer-ranking")
+	queryMetadataDuplicatesBucket    = []byte("duplicate-content")
 )
 
 func queryMetadataBinding(tx *bolt.Tx, binding string) *bolt.Bucket {
@@ -46,7 +49,7 @@ func ensureQueryMetadataBinding(tx *bolt.Tx, name string) (*bolt.Bucket, error) 
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket} {
+	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataTipsBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket, queryMetadataQuestionTermsBucket, queryMetadataBodyTermsBucket, queryMetadataAnswerRankingBucket} {
 		if _, err := binding.CreateBucketIfNotExists(name); err != nil {
 			return nil, err
 		}
@@ -107,7 +110,7 @@ func applyQueryPostingChanges(binding *bolt.Bucket, changes []sourcegraph.Mutati
 			if err := bucket.Delete([]byte(key)); err != nil {
 				return err
 			}
-		} else if err := bucket.Put([]byte(key), nil); err != nil {
+		} else if err := bucket.Put([]byte(key), change.Value); err != nil {
 			return err
 		}
 	}

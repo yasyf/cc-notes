@@ -78,6 +78,10 @@ jobs:
           test "$result" -ne 0
           test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-fallback-head-negative.log")" -eq 4
           test "$(grep -c 'FALLBACK_HEAD_REREAD_REGRESSION:' "$RUNNER_TEMP/ccn-fallback-head-negative.log")" -eq 4
+      - name: Answer term projection, posting transactions and tokenizer equivalence
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(AnswerMatchTerms|MatchTermsScanner|IndexedAnswerMatchReference)' ./internal/store ./internal/answermatch ./notes
+      - name: Indexed answer ranking equivalence and allocation comparison
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestIndexedAnswerMatchReference$' ./notes
       - name: Exact duplicate contract with cold caches
         run: ./scripts/test.sh -race -count=1 -v -run '^TestCreateExactDuplicateAfterColdCache$' ./internal/store
       - name: Labeled ledger semantics and logical read cost
@@ -264,7 +268,7 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v -run '^TestLabeledListsReadOnlySelectedBodies/answer$' ./notes
 
       - name: Answer tokenizer equivalence and allocation cost
-        run: ./scripts/test.sh -count=1 -v -run '^TestMatchTermsScanner' -bench '^BenchmarkMatchTermsScanner$' -benchtime=100x ./notes
+        run: ./scripts/test.sh -count=1 -v -run '^TestMatchTermsScanner' -bench '^BenchmarkMatchTermsScanner$' -benchtime=100x ./internal/answermatch
 
       - name: Reject unfiltered answer matching on the public 0.76.9 baseline
         run: |

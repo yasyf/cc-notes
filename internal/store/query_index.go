@@ -66,7 +66,7 @@ func validateQueryMetadataBinding(tx *bolt.Tx, q queryMetadataSource) error {
 }
 
 func queryMetadataBucketsComplete(binding *bolt.Bucket) bool {
-	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataTipsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket} {
+	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataTipsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket, queryMetadataQuestionTermsBucket, queryMetadataBodyTermsBucket, queryMetadataAnswerRankingBucket} {
 		if binding.Bucket(name) == nil {
 			return false
 		}

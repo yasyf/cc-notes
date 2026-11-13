@@ -1,4 +1,4 @@
-package notes
+package answermatch
 
 import (
 	"maps"
@@ -40,7 +40,7 @@ func regexMatchTerms(text string) map[string]struct{} {
 func TestMatchTermsScannerMatchesRegex(t *testing.T) {
 	check := func(text string) {
 		t.Helper()
-		got, want := matchTerms(text), regexMatchTerms(text)
+		got, want := Terms(text), regexMatchTerms(text)
 		if !maps.Equal(got, want) {
 			t.Fatalf("text=%q got=%v want=%v", text, got, want)
 		}
@@ -69,7 +69,7 @@ func FuzzMatchTermsScanner(f *testing.F) {
 		f.Add(text)
 	}
 	f.Fuzz(func(t *testing.T, text string) {
-		got, want := matchTerms(text), regexMatchTerms(text)
+		got, want := Terms(text), regexMatchTerms(text)
 		if !maps.Equal(got, want) {
 			t.Fatalf("text=%q got=%v want=%v", text, got, want)
 		}
@@ -81,7 +81,7 @@ func TestMatchTermsScannerAllocationCost(t *testing.T) {
 	want := regexMatchTerms(text)
 	var found map[string]struct{}
 	oracle := testing.AllocsPerRun(5, func() { found = regexMatchTerms(text) })
-	scanner := testing.AllocsPerRun(5, func() { found = matchTerms(text) })
+	scanner := testing.AllocsPerRun(5, func() { found = Terms(text) })
 	if !maps.Equal(found, want) {
 		t.Fatal("cost fixture differs from regex output")
 	}
@@ -96,7 +96,7 @@ func BenchmarkMatchTermsScanner(b *testing.B) {
 	for _, candidate := range []struct {
 		name string
 		run  func(string) map[string]struct{}
-	}{{"regex", regexMatchTerms}, {"scanner", matchTerms}} {
+	}{{"regex", regexMatchTerms}, {"scanner", Terms}} {
 		b.Run(candidate.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
