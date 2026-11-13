@@ -1,10 +1,7 @@
 package cli
 
 import (
-	"cmp"
-	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,13 +26,6 @@ type searchDTO struct {
 	Answer        *answerSummaryDTO        `json:"answer,omitempty"`
 }
 
-// searchHit pairs one matched entity with its kind's own rank tier, so the
-// per-kind result lists merge into a single consistently ordered set.
-type searchHit struct {
-	snap model.Snapshot
-	tier int
-}
-
 // newSearchCmd builds the top-level "cc-notes search QUERY": one ranked search
 // fanned out across the record kinds, merged kind-tagged. Like show and history
 // it is global because a query needs no noun; the noun-scoped "<kind> search"
@@ -49,7 +39,7 @@ func newSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
 		Short: "Ranked search across every note, doc, log, task, runbook, investigation, plan, and answer",
-		Args:  exactArgs(1),
+		Args:  minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
 			if err != nil {
@@ -57,20 +47,17 @@ func newSearchCmd() *cobra.Command {
 			}
 			// SearchFilter's 0 means zero results; the CLI's "0 = all" maps to
 			// its negative no-cap form.
-			kindLimit := limit
+			limitAll := limit
 			if limit == 0 {
-				kindLimit = -1
+				limitAll = -1
 			}
-			hits, err := searchAllKinds(cmd.Context(), c, args[0], notes.SearchFilter{
+			hits, err := c.Search(cmd.Context(), strings.Join(args, " "), notes.SearchFilter{
 				Labels:  labels,
 				Anchors: anchorFiltersToNotes(filters),
-				Limit:   kindLimit,
+				Limit:   limitAll,
 			})
 			if err != nil {
 				return err
-			}
-			if limit > 0 && len(hits) > limit {
-				hits = hits[:limit]
 			}
 			return printSearchHits(cmd, c, hits, jsonOut)
 		},
@@ -83,107 +70,12 @@ func newSearchCmd() *cobra.Command {
 	return cmd
 }
 
-// searchAllKinds fans query out to each kind's ranked search and merges the
-// results under the per-kind comparator (tier descending, UpdatedAt descending,
-// id ascending), so the interleave preserves each kind's own order. The tier is
-// re-derived with textTier over the same fields each kind's ranker reads.
-func searchAllKinds(ctx context.Context, c *notes.Client, query string, f notes.SearchFilter) ([]searchHit, error) {
-	q := strings.ToLower(query)
-	var hits []searchHit
-
-	ns, err := c.SearchNotes(ctx, query, f)
-	if err != nil {
-		return nil, err
-	}
-	for _, n := range ns {
-		hits = append(hits, searchHit{snap: n, tier: textTier(n.Title, n.Tags, []string{n.Body}, q)})
-	}
-
-	docs, err := c.SearchDocs(ctx, query, f)
-	if err != nil {
-		return nil, err
-	}
-	for _, d := range docs {
-		hits = append(hits, searchHit{snap: d, tier: textTier(d.Title, d.Tags, []string{d.Body, d.When}, q)})
-	}
-
-	tasks, err := c.SearchTasks(ctx, query, f)
-	if err != nil {
-		return nil, err
-	}
-	for _, t := range tasks {
-		hits = append(hits, searchHit{snap: t, tier: textTier(t.Title, t.Labels, []string{t.Description}, q)})
-	}
-
-	logs, err := c.SearchLogs(ctx, query, f)
-	if err != nil {
-		return nil, err
-	}
-	for _, l := range logs {
-		entries := make([]string, len(l.Entries))
-		for i, e := range l.Entries {
-			entries[i] = e.Text
-		}
-		hits = append(hits, searchHit{snap: l, tier: textTier(l.Title, l.Tags, entries, q)})
-	}
-
-	runbooks, err := c.SearchRunbooks(ctx, query, f)
-	if err != nil {
-		return nil, err
-	}
-	for _, rb := range runbooks {
-		bodies := make([]string, 0, 1+len(rb.Steps))
-		bodies = append(bodies, rb.Description)
-		for _, st := range rb.Steps {
-			bodies = append(bodies, st.Text)
-		}
-		hits = append(hits, searchHit{snap: rb, tier: textTier(rb.Title, rb.Labels, bodies, q)})
-	}
-
-	invs, err := c.SearchInvestigations(ctx, query, f)
-	if err != nil {
-		return nil, err
-	}
-	for _, inv := range invs {
-		hits = append(hits, searchHit{snap: inv, tier: textTier(inv.Title, inv.Tags, investigationSearchBodies(inv), q)})
-	}
-
-	plans, err := c.SearchPlans(ctx, query, f)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range plans {
-		hits = append(hits, searchHit{snap: p, tier: textTier(p.Title, p.Labels, []string{p.Body, p.Outcome}, q)})
-	}
-
-	answers, err := c.SearchAnswers(ctx, query, f)
-	if err != nil {
-		return nil, err
-	}
-	for _, a := range answers {
-		hits = append(hits, searchHit{snap: a, tier: textTier(a.Title, a.Tags, []string{a.Body}, q)})
-	}
-
-	slices.SortFunc(hits, compareSearchHits)
-	return hits, nil
-}
-
-func compareSearchHits(a, b searchHit) int {
-	if c := cmp.Compare(b.tier, a.tier); c != 0 {
-		return c
-	}
-	if c := b.snap.Meta().UpdatedAt.Compare(a.snap.Meta().UpdatedAt); c != 0 {
-		return c
-	}
-	return cmp.Compare(a.snap.EntityID(), b.snap.EntityID())
-}
-
-func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, jsonOut bool) error {
+func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []model.Snapshot, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
 		var ids []model.EntityID
 		for _, hit := range hits {
-			if task, ok := hit.snap.(model.Task); ok {
+			if task, ok := hit.(model.Task); ok {
 				ids = append(ids, task.ID)
 			}
 		}
@@ -193,8 +85,8 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 		}
 		dtos := make([]searchDTO, len(hits))
 		for i, h := range hits {
-			dto := searchDTO{Kind: string(h.snap.Meta().Kind)}
-			switch v := h.snap.(type) {
+			dto := searchDTO{Kind: string(h.Meta().Kind)}
+			switch v := h.(type) {
 			case model.Note:
 				n := newNoteSummaryDTO(v, "")
 				dto.Note = &n
@@ -223,7 +115,7 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 				a := newAnswerSummaryDTO(v, "")
 				dto.Answer = &a
 			default:
-				panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))
+				panic(fmt.Sprintf("Search returned unknown snapshot %T", h))
 			}
 			dtos[i] = dto
 		}
@@ -231,7 +123,7 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 	}
 	for _, h := range hits {
 		var lean string
-		switch v := h.snap.(type) {
+		switch v := h.(type) {
 		case model.Note:
 			lean = leanNoteLine(v)
 		case model.Doc:
@@ -251,23 +143,11 @@ func printSearchHits(cmd *cobra.Command, c *notes.Client, hits []searchHit, json
 		case model.Answer:
 			lean = leanAnswerLine(v)
 		default:
-			panic(fmt.Sprintf("searchAllKinds returned unknown snapshot %T", h.snap))
+			panic(fmt.Sprintf("Search returned unknown snapshot %T", h))
 		}
-		if _, err := fmt.Fprintf(out, "%s\t%s\n", h.snap.Meta().Kind, lean); err != nil {
+		if _, err := fmt.Fprintf(out, "%s\t%s\n", h.Meta().Kind, lean); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func investigationSearchBodies(inv model.Investigation) []string {
-	bodies := make([]string, 0, 3+len(inv.Entries)+len(inv.Findings))
-	bodies = append(bodies, inv.Premise, inv.Body, inv.RootCause)
-	for _, entry := range inv.Entries {
-		bodies = append(bodies, entry.Text)
-	}
-	for _, finding := range inv.Findings {
-		bodies = append(bodies, finding.Text)
-	}
-	return bodies
 }

@@ -263,7 +263,7 @@ func newLedgerSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
 		Short: "Ranked search across ledger titles, labels, descriptions, and row content",
-		Args:  exactArgs(1),
+		Args:  minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
 			if err != nil {
@@ -273,7 +273,7 @@ func newLedgerSearchCmd() *cobra.Command {
 			if limitAll == 0 {
 				limitAll = -1
 			}
-			ledgers, err := c.SearchLedgers(cmd.Context(), args[0], notes.SearchFilter{
+			ledgers, err := c.SearchLedgers(cmd.Context(), strings.Join(args, " "), notes.SearchFilter{
 				Labels:  labels,
 				Author:  author,
 				Anchors: anchorFiltersToNotes(filters),

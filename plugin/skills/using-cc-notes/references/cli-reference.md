@@ -611,7 +611,9 @@ Each kind matches on its title, its labels, and its own body text. Notes, answer
 search their bodies; docs also search their `when` triggers. Tasks search their descriptions,
 logs their entries, and runbooks their descriptions and steps. Investigations search their
 premises, bodies, root causes, entries, and findings; plans search their recorded text and
-outcomes. A title match outranks a label match, which outranks a body match.
+outcomes. The query's words count apart: a record holding any of them is found, and one holding
+more of them ranks first; among those, a title match outranks a label match, which outranks a
+body match. Stop words and words under three letters count only when the query has no other.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -2476,8 +2478,8 @@ pointing at its replacement. `--clear` removes the edge.
 
 MCP: plan_search (query, labels, limit, author, path, commit, dir, branch)
 
-Ranked search across plan titles, recorded text, and outcomes. A title match outranks a label
-match, which outranks a body or outcome match; superseded and tombstoned plans never rank.
+Ranked search across plan titles, recorded text, and outcomes. A plan holding more of the query's
+words ranks first; then a title match outranks a label match, which outranks a body or outcome match; superseded and tombstoned plans never rank.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -2898,7 +2900,7 @@ List notes, most recently updated first. Default drops superseded and tombstoned
 
 MCP: note_search (query, labels, limit, author, path, dir, branch, commit)
 
-Ranked full-text search (title > labels > body, with a recency boost), bounded and scopable.
+Ranked full-text search (more of the query's words first, then title > labels > body, with a recency boost), bounded and scopable.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -3201,7 +3203,8 @@ in its body alone never comes back.
 
 MCP: answer_search (query, labels, limit, author, path, dir, branch, commit)
 
-Ranked search across answer titles, labels, and bodies (title > labels > body, ties broken by
+Ranked search across answer titles, labels, and bodies (more of the query's words first, then
+title > labels > body, ties broken by
 recency). The flags below set the scope and result limit.
 
 | Flag | Default | Meaning |
@@ -3500,7 +3503,8 @@ List docs, most recently updated first. Default drops superseded and tombstoned 
 
 MCP: doc_search (query, labels, limit, author, path, dir, branch, commit)
 
-Ranked search across doc titles, labels, and bodies (title > labels > body, ties broken by
+Ranked search across doc titles, labels, and bodies (more of the query's words first, then
+title > labels > body, ties broken by
 recency), bounded and scopable.
 
 | Flag | Default | Meaning |
@@ -3686,7 +3690,8 @@ List logs. Default drops tombstoned logs.
 
 MCP: log_search (query, labels, limit, author, path, dir, branch, commit)
 
-Ranked search across log titles, labels, and entry text (title > labels > entries, ties broken by
+Ranked search across log titles, labels, and entry text (more of the query's words first, then
+title > labels > entries, ties broken by
 recency), bounded and scopable.
 
 | Flag | Default | Meaning |

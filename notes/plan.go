@@ -163,9 +163,9 @@ func (c *Client) CommentPlan(ctx context.Context, id model.EntityID, body string
 }
 
 // SearchPlans ranks the live plan set against query, filtered by the
-// SearchFilter, and returns the top results by tier, then UpdatedAt descending,
-// then id ascending. A plan matches when its title, a label, its body, or its
-// outcome contains query.
+// SearchFilter, and returns the top results by words held, then tier, then
+// UpdatedAt descending, then id ascending. A plan matches when its title, a
+// label, its body, or its outcome holds one of query's words.
 func (c *Client) SearchPlans(ctx context.Context, query string, f SearchFilter) ([]model.Plan, error) {
 	plans, err := c.s.ListPlans(ctx)
 	if err != nil {

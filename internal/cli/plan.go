@@ -414,7 +414,7 @@ func newPlanSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
 		Short: "Ranked search across plan titles, recorded text, and outcomes",
-		Args:  exactArgs(1),
+		Args:  minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
 			if err != nil {
@@ -424,7 +424,7 @@ func newPlanSearchCmd() *cobra.Command {
 			if kindLimit == 0 {
 				kindLimit = -1
 			}
-			plans, err := c.SearchPlans(cmd.Context(), args[0], notes.SearchFilter{
+			plans, err := c.SearchPlans(cmd.Context(), strings.Join(args, " "), notes.SearchFilter{
 				Labels:  labels,
 				Author:  author,
 				Anchors: anchorFiltersToNotes(filters),

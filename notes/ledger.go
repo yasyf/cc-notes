@@ -318,7 +318,7 @@ func (c *Client) SyncRows(ctx context.Context, id model.EntityID, rows []RowSpec
 
 // SearchLedgers ranks the active ledger set against query, filtered by the
 // SearchFilter. A ledger matches when its title, a label, its description, or
-// any row key or field value contains query.
+// any row key or field value holds one of query's words.
 func (c *Client) SearchLedgers(ctx context.Context, query string, f SearchFilter) ([]model.Ledger, error) {
 	ledgers, err := c.Ledgers(ctx, LedgerFilter{})
 	if err != nil {

@@ -170,3 +170,20 @@ func TestDocumentListLimitKeepsMostRecent(t *testing.T) {
 		t.Fatalf("note list --limit 2 = %v, want the first two of %v", limited, full)
 	}
 }
+
+// TestAnswerSearchRanksByWords pins answer search on words, not one phrase: the
+// query's words come as several arguments, an answer holding them apart and
+// joined by a hyphen is found, and one holding more of them ranks first.
+func TestAnswerSearchRanksByWords(t *testing.T) {
+	dir := initRepo(t)
+	full := mustJSON[answerSummaryJSON](t, mustRun(t, dir, "answer", "add", "--json", "--body", "Yes",
+		"--", "Does a spend-cap pause stop the run?"))
+	partial := mustJSON[answerSummaryJSON](t, mustRun(t, dir, "answer", "add", "--json", "--body", "keep the spend cap",
+		"--", "Which limit applies?"))
+	mustRun(t, dir, "answer", "add", "--json", "--body", "No", "--", "Run the slow suite?")
+
+	got := answerSummaryIDs(mustJSON[[]answerSummaryJSON](t, mustRun(t, dir, "answer", "search", "spend", "cap", "pause", "--json")))
+	if want := []string{full.ID, partial.ID}; !slices.Equal(got, want) {
+		t.Fatalf("answer search spend cap pause = %v, want %v (all three words, then two)", got, want)
+	}
+}

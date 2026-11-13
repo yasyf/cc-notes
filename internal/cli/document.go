@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -479,7 +478,7 @@ func (spec documentSpec[T]) searchVerb() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
 		Short: spec.searchShort,
-		Args:  exactArgs(1),
+		Args:  minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
 			if err != nil {
@@ -490,7 +489,7 @@ func (spec documentSpec[T]) searchVerb() *cobra.Command {
 			if kindLimit == 0 {
 				kindLimit = -1
 			}
-			items, err := spec.search(cmd.Context(), c, args[0], notes.SearchFilter{
+			items, err := spec.search(cmd.Context(), c, strings.Join(args, " "), notes.SearchFilter{
 				Labels:  labels,
 				Author:  author,
 				Anchors: anchorFiltersToNotes(filters),
@@ -674,82 +673,6 @@ var docDocument = documentSpec[model.Doc]{
 	},
 }
 
-// rankAccessors projects the fields a ranked search reads out of an entity that
-// its Meta header does not carry: tags, author, anchors, and the kind's match
-// tier (title over tag over the kind's own body/entry text).
-type rankAccessors[T model.Snapshot] struct {
-	tags    func(T) []string
-	author  func(T) string
-	anchors func(T) []model.Anchor
-	tier    func(T, string) int
-}
-
-// rankEntities filters items by tag, author, and anchors, keeps those whose
-// tier is non-zero for query, then orders by tier, UpdatedAt descending, and id
-// ascending, truncated to limit. query is lowercased before the per-kind tier
-// compares against it.
-func rankEntities[T model.Snapshot](items []T, query string, tags []string, author, anchorPath, anchorDir, anchorBranch, anchorCommit string, limit int, acc rankAccessors[T]) []T {
-	q := strings.ToLower(query)
-	type scored struct {
-		item T
-		tier int
-	}
-	var ranked []scored
-	for _, it := range items {
-		if !hasAll(acc.tags(it), tags) ||
-			(author != "" && acc.author(it) != author) ||
-			(anchorPath != "" && !hasAnchorIn(acc.anchors(it), model.AnchorPath, anchorPath)) ||
-			(anchorDir != "" && !hasAnchorIn(acc.anchors(it), model.AnchorDir, anchorDir)) ||
-			(anchorBranch != "" && !hasAnchorIn(acc.anchors(it), model.AnchorBranch, anchorBranch)) ||
-			(anchorCommit != "" && !hasAnchorIn(acc.anchors(it), model.AnchorCommit, anchorCommit)) {
-			continue
-		}
-		tier := acc.tier(it, q)
-		if tier == 0 {
-			continue
-		}
-		ranked = append(ranked, scored{item: it, tier: tier})
-	}
-	slices.SortFunc(ranked, func(a, b scored) int {
-		if c := cmp.Compare(b.tier, a.tier); c != 0 {
-			return c
-		}
-		if c := b.item.Meta().UpdatedAt.Compare(a.item.Meta().UpdatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.item.EntityID(), b.item.EntityID())
-	})
-	if limit >= 0 && len(ranked) > limit {
-		ranked = ranked[:limit]
-	}
-	out := make([]T, len(ranked))
-	for i, r := range ranked {
-		out[i] = r.item
-	}
-	return out
-}
-
-// textTier ranks how an entity matches q: a title substring is tier 3, a tag
-// substring tier 2, a body/entry substring tier 1, no match tier 0. bodies
-// supplies the kind's searchable free text (a note or doc body, a log's entry
-// texts). The comparison is case-insensitive; q must already be lowercased.
-func textTier(title string, tags []string, bodies []string, q string) int {
-	if strings.Contains(strings.ToLower(title), q) {
-		return 3
-	}
-	for _, tag := range tags {
-		if strings.Contains(strings.ToLower(tag), q) {
-			return 2
-		}
-	}
-	for _, body := range bodies {
-		if strings.Contains(strings.ToLower(body), q) {
-			return 1
-		}
-	}
-	return 0
-}
-
 // printEntityList writes items as a JSON array of their list DTOs or one lean
 // line each.
 func printEntityList[T model.Snapshot](cmd *cobra.Command, items []T, jsonOut bool, newDTO func(T) any, lean func(T) string) error {
@@ -767,13 +690,6 @@ func printEntityList[T model.Snapshot](cmd *cobra.Command, items []T, jsonOut bo
 		}
 	}
 	return nil
-}
-
-var noteRank = rankAccessors[model.Note]{
-	tags:    func(n model.Note) []string { return n.Tags },
-	author:  func(n model.Note) string { return string(n.Author) },
-	anchors: func(n model.Note) []model.Anchor { return n.Anchors },
-	tier:    func(n model.Note, q string) int { return textTier(n.Title, n.Tags, []string{n.Body}, q) },
 }
 
 // reviewed pairs an entity with its computed review verdict.

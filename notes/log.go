@@ -196,9 +196,9 @@ func filteredLogs(logs []model.Log, f LogFilter) []model.Log {
 }
 
 // SearchLogs ranks the live log set against query, filtered by the SearchFilter,
-// and returns the top results by tier, then UpdatedAt descending, then id
-// ascending. A log matches when its title, a tag, or any entry text contains
-// query.
+// and returns the top results by words held, then tier, then UpdatedAt
+// descending, then id ascending. A log matches when its title, a tag, or any
+// entry text holds one of query's words.
 func (c *Client) SearchLogs(ctx context.Context, query string, f SearchFilter) ([]model.Log, error) {
 	logs, err := c.s.ListLogs(ctx, false)
 	if err != nil {

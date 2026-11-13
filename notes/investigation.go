@@ -179,10 +179,10 @@ func (c *Client) RemoveInvestigation(ctx context.Context, id model.EntityID) (mo
 }
 
 // SearchInvestigations ranks the live investigation set against query, filtered
-// by the SearchFilter, and returns the top results by tier, then UpdatedAt
-// descending, then id ascending. An investigation matches when its title, a tag,
-// its premise, resolution body, root cause, any timeline entry, or any finding
-// text contains query.
+// by the SearchFilter, and returns the top results by words held, then tier,
+// then UpdatedAt descending, then id ascending. An investigation matches when its
+// title, a tag, its premise, resolution body, root cause, any timeline entry, or
+// any finding text holds one of query's words.
 func (c *Client) SearchInvestigations(ctx context.Context, query string, f SearchFilter) ([]model.Investigation, error) {
 	invs, err := c.s.ListInvestigations(ctx)
 	if err != nil {
