@@ -19,6 +19,12 @@ var matchStopWords = func() map[string]struct{} {
 	return words
 }()
 
+// IsContentWord reports whether a normalized word passes the stop-word and minimum-length filters.
+func IsContentWord(word string) bool {
+	_, stop := matchStopWords[word]
+	return !stop && len(word) >= matchMinTerm
+}
+
 // QuestionTerms combines the title with plain labels, excluding labels containing a colon.
 func QuestionTerms(title string, tags []string) map[string]struct{} {
 	labels := slices.DeleteFunc(slices.Clone(tags), func(tag string) bool { return strings.Contains(tag, ":") })
@@ -30,8 +36,7 @@ func Terms(text string) map[string]struct{} {
 	text = strings.ToLower(text)
 	terms := map[string]struct{}{}
 	add := func(word string) {
-		_, stop := matchStopWords[word]
-		if stop || len(word) < matchMinTerm || (isDigits(word) && len(word) != matchStatusLen) {
+		if !IsContentWord(word) || (isDigits(word) && len(word) != matchStatusLen) {
 			return
 		}
 		if len(word) > matchMinTerm && strings.HasSuffix(word, "s") && !strings.HasSuffix(word, "ss") {
