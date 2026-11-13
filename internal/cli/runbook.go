@@ -241,7 +241,7 @@ func newRunbookSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
 		Short: "Ranked search across runbook titles, labels, descriptions, and step text",
-		Args:  exactArgs(1),
+		Args:  minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
 			if err != nil {
@@ -252,7 +252,7 @@ func newRunbookSearchCmd() *cobra.Command {
 			if limitAll == 0 {
 				limitAll = -1
 			}
-			runbooks, err := c.SearchRunbooks(cmd.Context(), args[0], notes.SearchFilter{
+			runbooks, err := c.SearchRunbooks(cmd.Context(), strings.Join(args, " "), notes.SearchFilter{
 				Labels:  labels,
 				Author:  author,
 				Anchors: anchorFiltersToNotes(filters),

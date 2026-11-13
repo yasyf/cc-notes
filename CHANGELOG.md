@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports against Go 1.26.10.
 
 ### Changed
+- **A search of several words finds records holding them apart.** Every
+  search (`search`, `answer search`, `note search` and each other kind's, and
+  their MCP tools) used to keep only records holding the whole query as one
+  phrase, so `answer search "spend cap pause"` missed the ruling titled
+  "spend-cap pause". Each word now counts: a record holding any of the query's
+  words is found, one holding more of them ranks first, and among those a
+  title match still outranks a label match, which outranks a body match. Stop
+  words and words under three letters count only when the query has no other.
+  The search verbs also take the words as several arguments, so
+  `ccn answer search spend cap pause` runs instead of refusing with
+  `accepts 1 arg(s)`.
 - **A read waits out a long sync instead of failing.** A read that finds the
   managed authority held now waits up to 60 seconds for it, twice a write's 30,
   so a `cc-notes sync` that holds the lock for over 30 seconds no longer fails

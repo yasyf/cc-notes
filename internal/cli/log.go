@@ -352,7 +352,7 @@ func newLogSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
 		Short: "Ranked search across log titles, labels, and entry text",
-		Args:  exactArgs(1),
+		Args:  minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
 			if err != nil {
@@ -363,7 +363,7 @@ func newLogSearchCmd() *cobra.Command {
 			if kindLimit == 0 {
 				kindLimit = -1
 			}
-			logs, err := c.SearchLogs(cmd.Context(), args[0], notes.SearchFilter{
+			logs, err := c.SearchLogs(cmd.Context(), strings.Join(args, " "), notes.SearchFilter{
 				Labels:  labels,
 				Author:  author,
 				Anchors: anchorFiltersToNotes(filters),

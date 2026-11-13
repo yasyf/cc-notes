@@ -219,9 +219,9 @@ func (c *Client) RemoveRunbook(ctx context.Context, id model.EntityID) (model.Ru
 }
 
 // SearchRunbooks ranks the active runbook set against query, filtered by the
-// SearchFilter, and returns the top results by tier, then UpdatedAt descending,
-// then id ascending. A runbook matches when its title, a label, its
-// description, or any step text contains query.
+// SearchFilter, and returns the top results by words held, then tier, then
+// UpdatedAt descending, then id ascending. A runbook matches when its title, a
+// label, its description, or any step text holds one of query's words.
 func (c *Client) SearchRunbooks(ctx context.Context, query string, f SearchFilter) ([]model.Runbook, error) {
 	runbooks, err := c.Runbooks(ctx, RunbookFilter{})
 	if err != nil {

@@ -5,9 +5,9 @@ import (
 )
 
 // TestSearchFindsTaskByDescription pins tasks as members of the top-level search
-// corpus. The query phrase lives only in the task's description — no title, no
-// label — so the hit proves the body reaches the ranker, and the kind tag proves
-// it merges alongside the other kinds rather than shadowing one.
+// corpus. The query's words live together only in the task's description — no
+// title, no label — so its top rank proves the body reaches the ranker, and the
+// kind tag proves it merges alongside the other kinds rather than shadowing one.
 func TestSearchFindsTaskByDescription(t *testing.T) {
 	dir := spInitRepo(t)
 	taskID := spID(t, spMust(t, dir, "task", "add", "Tighten the client",
@@ -16,8 +16,8 @@ func TestSearchFindsTaskByDescription(t *testing.T) {
 	noteID := spID(t, spMust(t, dir, "note", "add", "retry backoff rationale", "--body", "why 30s", "--json"))
 
 	hits := spJSON[[]searchDTO](t, spMust(t, dir, "search", "caps at 30s", "--json"))
-	if len(hits) != 1 {
-		t.Fatalf("search = %+v, want only the task whose description carries the phrase", hits)
+	if len(hits) != 2 || hits[1].Kind != "note" || hits[1].Note == nil || hits[1].Note.ID != noteID {
+		t.Fatalf("search = %+v, want the task holding both words, then the note holding 30s", hits)
 	}
 	hit := hits[0]
 	if hit.Kind != "task" || hit.Task == nil || hit.Task.ID != taskID {
@@ -26,7 +26,7 @@ func TestSearchFindsTaskByDescription(t *testing.T) {
 	if hit.Note != nil || hit.Doc != nil || hit.Log != nil || hit.Runbook != nil || hit.Investigation != nil || hit.Plan != nil {
 		t.Errorf("task hit populates a foreign entity field: %+v", hit)
 	}
-	if got, want := spMust(t, dir, "search", "caps at 30s"), "task\t"+taskID[:7]+"\topen\tP2\t-\tTighten the client\n"; got != want {
+	if got, want := spMust(t, dir, "search", "caps at 30s", "--limit", "1"), "task\t"+taskID[:7]+"\topen\tP2\t-\tTighten the client\n"; got != want {
 		t.Errorf("lean search = %q, want %q", got, want)
 	}
 

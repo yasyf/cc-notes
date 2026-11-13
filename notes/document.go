@@ -626,8 +626,9 @@ func sortDocuments[T model.Snapshot](items []T) {
 }
 
 // SearchNotes ranks the live note set against query, filtered by the SearchFilter,
-// and returns the top results by tier, then UpdatedAt descending, then id
-// ascending. A note matches when its title, a tag, or its body contains query.
+// and returns the top results by how many of query's words each holds, then
+// tier, then UpdatedAt descending, then id ascending. A note matches when its
+// title, a tag, or its body holds one of query's words.
 func (c *Client) SearchNotes(ctx context.Context, query string, f SearchFilter) ([]model.Note, error) {
 	notes, err := c.s.ListNotes(ctx, false, false)
 	if err != nil {
@@ -670,45 +671,139 @@ var docRanker = documentRanker[model.Doc]{
 	tier:    func(d model.Doc, q string) int { return textTier(d.Title, d.Tags, []string{d.Body, d.When}, q) },
 }
 
-// rankDocuments filters items by label, author, and anchor, keeps those whose
-// tier is non-zero for query, then orders by tier, UpdatedAt descending, and id
-// ascending, truncated to the filter's limit (a negative limit imposes no cap).
-func rankDocuments[T model.Snapshot](items []T, query string, f SearchFilter, r documentRanker[T]) []T {
-	q := strings.ToLower(query)
-	type scored struct {
-		item T
-		tier int
+// Search ranks the live notes, docs, tasks, logs, runbooks, investigations,
+// plans, and answers against query as one list, under the order each kind's own
+// search uses, truncated to the filter's limit.
+func (c *Client) Search(ctx context.Context, query string, f SearchFilter) ([]model.Snapshot, error) {
+	words := searchWords(query)
+	notes, err := c.s.ListNotes(ctx, false, false)
+	if err != nil {
+		return nil, err
 	}
-	var ranked []scored
+	hits := scoreDocuments(nil, notes, words, f, noteRanker)
+	docs, err := c.s.ListDocs(ctx, false, false)
+	if err != nil {
+		return nil, err
+	}
+	hits = scoreDocuments(hits, docs, words, f, docRanker)
+	tasks, err := c.s.ListTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hits = scoreDocuments(hits, tasks, words, f, taskRanker)
+	logs, err := c.s.ListLogs(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	hits = scoreDocuments(hits, logs, words, f, logRanker)
+	runbooks, err := c.Runbooks(ctx, RunbookFilter{})
+	if err != nil {
+		return nil, err
+	}
+	hits = scoreDocuments(hits, runbooks, words, f, runbookRanker)
+	invs, err := c.s.ListInvestigations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hits = scoreDocuments(hits, invs, words, f, investigationRanker)
+	plans, err := c.s.ListPlans(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hits = scoreDocuments(hits, plans, words, f, planRanker)
+	answers, err := c.s.ListAnswers(ctx, false, false)
+	if err != nil {
+		return nil, err
+	}
+	hits = scoreDocuments(hits, answers, words, f, answerRanker)
+	return orderHits(hits, f.Limit), nil
+}
+
+// searchHit is one record a search keeps: how many of the query's words it
+// holds, and the sum of each held word's best tier.
+type searchHit struct {
+	snap  model.Snapshot
+	words int
+	tier  int
+}
+
+// rankDocuments filters items by label, author, and anchor, keeps those holding
+// at least one of query's words, and orders them by orderHits.
+func rankDocuments[T model.Snapshot](items []T, query string, f SearchFilter, r documentRanker[T]) []T {
+	hits := orderHits(scoreDocuments(nil, items, searchWords(query), f, r), f.Limit)
+	out := make([]T, len(hits))
+	for i, h := range hits {
+		out[i] = h.(T)
+	}
+	return out
+}
+
+// scoreDocuments appends to hits each item that passes the filter's label,
+// author, and anchor checks and holds at least one of words.
+func scoreDocuments[T model.Snapshot](hits []searchHit, items []T, words []string, f SearchFilter, r documentRanker[T]) []searchHit {
 	for _, it := range items {
 		if !hasAll(r.tags(it), f.Labels) ||
 			(f.Author != "" && r.author(it) != f.Author) ||
 			!matchesAnchorFilter(r.anchors(it), f.Anchors) {
 			continue
 		}
-		tier := r.tier(it, q)
-		if tier == 0 {
-			continue
+		hit := searchHit{snap: it}
+		for _, w := range words {
+			if tier := r.tier(it, w); tier > 0 {
+				hit.words++
+				hit.tier += tier
+			}
 		}
-		ranked = append(ranked, scored{item: it, tier: tier})
+		if hit.words > 0 {
+			hits = append(hits, hit)
+		}
 	}
-	slices.SortFunc(ranked, func(a, b scored) int {
+	return hits
+}
+
+// orderHits orders hits by words held, then tier sum, then UpdatedAt
+// descending, then id ascending, truncated to limit (a negative limit imposes no
+// cap).
+func orderHits(hits []searchHit, limit int) []model.Snapshot {
+	slices.SortFunc(hits, func(a, b searchHit) int {
+		if c := cmp.Compare(b.words, a.words); c != 0 {
+			return c
+		}
 		if c := cmp.Compare(b.tier, a.tier); c != 0 {
 			return c
 		}
-		if c := b.item.Meta().UpdatedAt.Compare(a.item.Meta().UpdatedAt); c != 0 {
+		if c := b.snap.Meta().UpdatedAt.Compare(a.snap.Meta().UpdatedAt); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.item.EntityID(), b.item.EntityID())
+		return cmp.Compare(a.snap.EntityID(), b.snap.EntityID())
 	})
-	if f.Limit >= 0 && len(ranked) > f.Limit {
-		ranked = ranked[:f.Limit]
+	if limit >= 0 && len(hits) > limit {
+		hits = hits[:limit]
 	}
-	out := make([]T, len(ranked))
-	for i, r := range ranked {
-		out[i] = r.item
+	out := make([]model.Snapshot, len(hits))
+	for i, h := range hits {
+		out[i] = h.snap
 	}
 	return out
+}
+
+// searchWords splits query into the lowercased words a search scores records
+// by, dropping stop words and words under three letters unless that leaves
+// none. A query with no words is matched whole, so an empty one matches every
+// record.
+func searchWords(query string) []string {
+	words := strings.Fields(strings.ToLower(query))
+	if len(words) == 0 {
+		return []string{strings.ToLower(query)}
+	}
+	kept := slices.DeleteFunc(slices.Clone(words), func(w string) bool {
+		_, stop := matchStopWords[w]
+		return stop || len(w) < matchMinTerm
+	})
+	if len(kept) == 0 {
+		return words
+	}
+	return kept
 }
 
 // textTier ranks how an entity matches q: a title substring is tier 3, a tag

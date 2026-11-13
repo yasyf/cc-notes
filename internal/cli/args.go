@@ -151,6 +151,17 @@ func exactArgs(n int) cobra.PositionalArgs {
 	}
 }
 
+// minArgs is cobra.MinimumNArgs returning a UsageError, so arity mistakes
+// exit 2. The message shows the positional shape parsed from cmd.Use.
+func minArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) >= n {
+			return nil
+		}
+		return &UsageError{Err: fmt.Errorf("%s accepts at least %d arg(s)%s, received %d", cmd.CommandPath(), n, argShape(cmd, n), len(args))}
+	}
+}
+
 // maxArgs is cobra.MaximumNArgs returning a UsageError, so arity mistakes
 // exit 2 (cobra.MaximumNArgs would regress them to exit 1). The message shows
 // the positional shape parsed from cmd.Use.

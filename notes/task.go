@@ -232,7 +232,8 @@ func (c *Client) filteredTasks(ctx context.Context, tasks []model.Task, f TaskFi
 }
 
 // SearchTasks ranks the live task set against query, mirroring SearchNotes: a
-// task matches when its title, a label, or its description contains query.
+// task matches when its title, a label, or its description holds one of
+// query's words.
 func (c *Client) SearchTasks(ctx context.Context, query string, f SearchFilter) ([]model.Task, error) {
 	tasks, err := c.s.ListTasks(ctx)
 	if err != nil {
