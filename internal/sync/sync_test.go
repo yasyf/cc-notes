@@ -161,7 +161,7 @@ func TestInstallIdempotent(t *testing.T) {
 		"remote.origin.push=HEAD",
 		"remote.origin.push=" + ccPushRefspec,
 		"core.logAllRefUpdates=always",
-		"remote.origin.negotiationInclude=refs/remotes/origin/*",
+		"remote.origin.negotiationRestrict=refs/remotes/origin/*",
 	}
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
@@ -182,6 +182,47 @@ func TestInstallIdempotent(t *testing.T) {
 		}
 		if got, want := configAll(t, s, "core.logAllRefUpdates"), []string{"always"}; !slices.Equal(got, want) {
 			t.Errorf("run %d: core.logAllRefUpdates = %q, want %q", run, got, want)
+		}
+	}
+}
+
+func TestInstallReplacesNegotiationIncludeSoABloblessCheckoutOffersNoHaveAndGetsItsFile(t *testing.T) {
+	origin := gittest.InitRepo(t)
+	gittest.Git(t, origin, "config", "uploadpack.allowFilter", "true")
+	gittest.Git(t, origin, "commit", "-q", "--allow-empty", "-m", "root")
+	dir := t.TempDir()
+	gittest.Git(t, dir, "clone", "-q", "--filter=blob:none", "file://"+origin, ".")
+	gittest.Git(t, dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
+	g := gitcmd.Git{Dir: dir}
+	if _, err := ccsync.Install(t.Context(), g, "origin"); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	for key, want := range map[string][]string{"remote.origin.negotiationInclude": nil, "remote.origin.negotiationRestrict": {"refs/remotes/origin/*"}} {
+		if got, err := g.ConfigGetAll(t.Context(), key); err != nil || !slices.Equal(got, want) {
+			t.Errorf("%s = %q, %v; want %q", key, got, err, want)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(origin, "admin.rs"), []byte("fn admin() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, origin, "add", "admin.rs")
+	gittest.Git(t, origin, "commit", "-q", "-m", "admin")
+	blob := gittest.Git(t, origin, "rev-parse", "HEAD:admin.rs")
+	gittest.Git(t, dir, "fetch", "-q", "origin")
+	trace := filepath.Join(t.TempDir(), "trace")
+	t.Setenv("GIT_TRACE_PACKET", trace)
+	gittest.Git(t, dir, "checkout", "-q", "--detach", "origin/main")
+	if got, err := os.ReadFile(filepath.Join(dir, "admin.rs")); err != nil || string(got) != "fn admin() {}\n" {
+		t.Fatalf("admin.rs = %q, %v; want the file new on origin checked out", got, err)
+	}
+	packets, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for request := range strings.SplitSeq(string(packets), "command=fetch") {
+		if strings.Contains(request, "want "+blob) && strings.Contains(request, "fetch> have") {
+			t.Errorf("the download of admin.rs's blob offered a have, so the remote may leave the blob out:\n%s", request)
 		}
 	}
 }
@@ -258,7 +299,7 @@ func TestInstallUpgradesOldFetchRefspec(t *testing.T) {
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
 	gittest.Git(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
-	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationRestrict", "refs/remotes/origin/*")
 
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
@@ -314,7 +355,7 @@ func TestInstallSweepsEveryRemoteOldFetchRefspec(t *testing.T) {
 				"remote.origin.push=HEAD",
 				"remote.origin.push=" + ccPushRefspec,
 				"core.logAllRefUpdates=always",
-				"remote.origin.negotiationInclude=refs/remotes/origin/*",
+				"remote.origin.negotiationRestrict=refs/remotes/origin/*",
 				"remote.upstream.fetch=" + upstreamFetchRefspec,
 			}
 			if !slices.Equal(report.Added, wantAdded) || len(report.Removed) != 0 || !report.HeadPushAdded {
@@ -383,7 +424,7 @@ func TestInstallDropsRedundantOldFetchRefspec(t *testing.T) {
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
 	gittest.Git(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
-	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationRestrict", "refs/remotes/origin/*")
 
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
