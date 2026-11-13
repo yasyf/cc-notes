@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -63,13 +64,13 @@ func newAnswerMatchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "match TEXT",
 		Short: "Rank answers by the rare words they share with TEXT; - reads stdin",
-		Args:  exactArgs(1),
+		Args:  minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := openClient(cmd)
 			if err != nil {
 				return err
 			}
-			text := args[0]
+			text := strings.Join(args, " ")
 			if text == "-" {
 				read, err := io.ReadAll(cmd.InOrStdin())
 				if err != nil {
