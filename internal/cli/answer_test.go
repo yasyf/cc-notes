@@ -187,3 +187,16 @@ func TestAnswerSearchRanksByWords(t *testing.T) {
 		t.Fatalf("answer search spend cap pause = %v, want %v (all three words, then two)", got, want)
 	}
 }
+
+// TestAnswerMatchJoinsItsWords pins answer match on a text given as several
+// arguments: they rank as the one text their words make, joined by spaces.
+func TestAnswerMatchJoinsItsWords(t *testing.T) {
+	dir := initRepo(t)
+	mustRun(t, dir, "answer", "add", "--json", "--body", "Yes", "--", "Does a spend-cap pause stop the run?")
+	mustRun(t, dir, "answer", "add", "--json", "--body", "keep the spend cap", "--", "Which limit applies?")
+
+	words := mustRun(t, dir, "answer", "match", "spend", "cap", "pause", "--json")
+	if joined := mustRun(t, dir, "answer", "match", "spend cap pause", "--json"); words != joined {
+		t.Fatalf("answer match spend cap pause = %s, want what answer match \"spend cap pause\" printed: %s", words, joined)
+	}
+}

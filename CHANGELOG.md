@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports against Go 1.26.10.
 
 ### Changed
+- **`answer match` takes its text as several words.** Like the search verbs,
+  `ccn answer match spend cap pause` now ranks answers against the text
+  `spend cap pause` instead of refusing with `accepts 1 arg(s)`; a quoted
+  text and `-` for stdin run as before.
 - **A search of several words finds records holding them apart.** Every
   search (`search`, `answer search`, `note search` and each other kind's, and
   their MCP tools) used to keep only records holding the whole query as one
