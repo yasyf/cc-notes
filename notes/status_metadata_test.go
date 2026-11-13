@@ -2,6 +2,7 @@ package notes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -52,6 +53,14 @@ func statusParity(t *testing.T, c *Client) StatusReport {
 	public, err := c.Status(ctx)
 	if err != nil || !reflect.DeepEqual(public, want) {
 		t.Fatalf("public status = %#v, %v; want %#v", public, err, want)
+	}
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicJSON, err := json.Marshal(public)
+	if err != nil || string(publicJSON) != string(wantJSON) {
+		t.Fatalf("public JSON = %s, %v; want %s", publicJSON, err, wantJSON)
 	}
 	return public
 }
@@ -104,6 +113,21 @@ func TestStatusMetadataMatchesAuthoritativeReport(t *testing.T) {
 	report := statusParity(t, c)
 	if report.Notes != (SummaryCount{Total: 1, NeedsReview: 2}) || report.Papercuts != 1 || len(report.Runs) != 1 {
 		t.Fatalf("report = %#v", report)
+	}
+}
+
+func TestStatusMetadataAnswerLexicalPayloadParity(t *testing.T) {
+	c, dir := newWBClient(t)
+	gittest.Git(t, dir, "commit", "--allow-empty", "-q", "-m", "root")
+	terms := make([]string, 4096)
+	for i := range terms {
+		terms[i] = fmt.Sprintf("lexical%04d", i)
+	}
+	statusCreate(t, c, model.CreateAnswer{
+		Nonce: model.NewNonce(), Title: strings.Join(terms[:128], " "), Body: strings.Join(terms, " "),
+	})
+	if report := statusParity(t, c); report.Answers.Total != 1 {
+		t.Fatalf("answer report = %#v", report.Answers)
 	}
 }
 

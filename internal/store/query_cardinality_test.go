@@ -50,7 +50,7 @@ func TestQueryMetadataCardinalityLifecycle(t *testing.T) {
 			if err := replaceQueryMetadata(t.Context(), tx, row); err != nil {
 				return err
 			}
-			return deleteQueryMetadataTip(queryMetadataBinding(tx, "binding"), queryMetadata{ID: "absent", Kind: model.KindDoc})
+			return deleteQueryMetadataTip(queryMetadataBinding(tx, "binding"), queryMetadata{StatusRecord: StatusRecord{ID: "absent", Kind: model.KindDoc}})
 		}); err != nil {
 			t.Fatal(err)
 		}

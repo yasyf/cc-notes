@@ -182,9 +182,9 @@ func TestAnswerCorpusMetadataTimeCodecAndUnionOrder(t *testing.T) {
 	c := model.EntityID(strings.Repeat("0", 40))
 	timestamp := time.Date(9999, 12, 31, 23, 59, 58, 100, time.UTC)
 	rows := []queryMetadata{
-		{ID: a, Tip: "a", UpdatedTime: timestamp, Labels: []string{"program:test"}, Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}}},
-		{ID: b, Tip: "b", UpdatedTime: timestamp.Add(800 * time.Nanosecond), Labels: []string{"program:test"}},
-		{ID: c, Tip: "c", UpdatedTime: timestamp.Add(900 * time.Nanosecond), Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}}},
+		{StatusRecord: StatusRecord{ID: a, Tip: "a", Labels: []string{"program:test"}, Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}}}, UpdatedTime: timestamp},
+		{StatusRecord: StatusRecord{ID: b, Tip: "b", Labels: []string{"program:test"}}, UpdatedTime: timestamp.Add(800 * time.Nanosecond)},
+		{StatusRecord: StatusRecord{ID: c, Tip: "c", Anchors: []model.Anchor{{Kind: model.AnchorBranch, Value: "main"}}}, UpdatedTime: timestamp.Add(900 * time.Nanosecond)},
 	}
 	data, err := json.Marshal(rows)
 	if err != nil {
