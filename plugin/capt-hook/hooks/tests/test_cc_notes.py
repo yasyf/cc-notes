@@ -5527,18 +5527,33 @@ def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
 
 
 class MonkeyPatch:
-    """Minimal monkeypatch supporting setattr with automatic teardown."""
+    """Minimal monkeypatch supporting setattr, setenv and delenv with automatic teardown."""
 
     def __init__(self) -> None:
         self._undo: list = []
 
     def setattr(self, target, name, value) -> None:
-        self._undo.append((target, name, getattr(target, name)))
+        old = getattr(target, name)
+        self._undo.append(lambda: setattr(target, name, old))
         setattr(target, name, value)
 
+    def setenv(self, name: str, value: str) -> None:
+        self._save_env(name)
+        os.environ[name] = value
+
+    def delenv(self, name: str, raising: bool = True) -> None:
+        if raising and name not in os.environ:
+            raise KeyError(name)
+        self._save_env(name)
+        os.environ.pop(name, None)
+
+    def _save_env(self, name: str) -> None:
+        old = os.environ.get(name)
+        self._undo.append(lambda: os.environ.pop(name, None) if old is None else os.environ.__setitem__(name, old))
+
     def teardown(self) -> None:
-        for target, name, old in reversed(self._undo):
-            setattr(target, name, old)
+        for undo in reversed(self._undo):
+            undo()
 
 
 def test_answer_reads_spawn_once_until_the_authority_changes(monkeypatch, tmp_path) -> None:
