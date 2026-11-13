@@ -126,7 +126,6 @@ func successor(self, arg0 string) (func() string, error) {
 		if err != nil {
 			return ""
 		}
-		//nolint:gosec // G703: installed is this server's own argv[0] resolved on PATH, only compared with the running binary.
 		now, err := os.Stat(installed)
 		if err != nil || os.SameFile(started, now) {
 			return ""

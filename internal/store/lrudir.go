@@ -202,10 +202,10 @@ func (l *lruDir) ensure() bool {
 }
 
 func (l *lruDir) writerFile() (*os.File, error) {
-	if err := os.MkdirAll(l.dir, 0o750); err != nil { //nolint:gosec // G703: The directory belongs to this store's derived cache, never a cache key.
+	if err := os.MkdirAll(l.dir, 0o750); err != nil {
 		return nil, err
 	}
-	return os.OpenFile(l.dir+".lock", os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G703: The sibling lock derives only from the store's cache directory.
+	return os.OpenFile(l.dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 }
 
 func (l *lruDir) lockWriter() (*os.File, bool) {
@@ -238,7 +238,7 @@ func (l *lruDir) hintFile(access cacheAccess) (*os.File, error) {
 		if access == cacheLookup {
 			return l.index, nil
 		}
-		info, err := os.Stat(path) //nolint:gosec // G703: path is the fixed routing file inside the store's cache directory.
+		info, err := os.Stat(path)
 		same := err == nil && os.SameFile(info, l.indexInfo)
 		if same && (access != cacheWrite || l.indexWritable) {
 			return l.index, nil
@@ -257,7 +257,7 @@ func (l *lruDir) hintFile(access cacheAccess) (*os.File, error) {
 		}
 	}
 	if access == cacheLookup {
-		if _, err := os.Stat(path); err != nil { //nolint:gosec // G703: path is the fixed routing file inside the store's cache directory.
+		if _, err := os.Stat(path); err != nil {
 			l.lookupMissing = errors.Is(err, os.ErrNotExist)
 			return nil, err
 		}
@@ -266,7 +266,7 @@ func (l *lruDir) hintFile(access cacheAccess) (*os.File, error) {
 	if access == cacheWrite {
 		flags = os.O_RDWR | os.O_CREATE
 	}
-	file, err := os.OpenFile(path, flags, 0o600) //nolint:gosec // G703: path is the fixed routing file inside the store's cache directory.
+	file, err := os.OpenFile(path, flags, 0o600) //nolint:gosec // G304: path is the fixed routing file inside the store's cache directory.
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +423,7 @@ func (l *lruDir) slotPath(slot int) string {
 
 func (l *lruDir) publish(slot int, name string, token, data []byte) bool {
 	pending := filepath.Join(l.dir, ".pending")
-	file, err := os.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // G703: pending is the fixed staging file in the store's cache directory.
+	file, err := os.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // G304: pending is the fixed staging file in the store's cache directory.
 	if err != nil {
 		return false
 	}
@@ -434,7 +434,7 @@ func (l *lruDir) publish(slot int, name string, token, data []byte) bool {
 	if file.Close() != nil {
 		return false
 	}
-	return os.Rename(pending, l.slotPath(slot)) == nil //nolint:gosec // G703: Fixed staging and integer slot paths derive only from the store's cache directory.
+	return os.Rename(pending, l.slotPath(slot)) == nil
 }
 
 func (l *lruDir) touch(name string) {
@@ -479,7 +479,7 @@ func (l *lruDir) hintName(slot cacheHintSlot) (string, bool) {
 		}
 		return cachePayloadName(io.NewSectionReader(file, int64(slot.slot)*cacheInlineStride, cacheInlineStride), slot)
 	}
-	file, err := os.Open(l.slotPath(slot.slot)) //nolint:gosec // G703: Integer slot paths derive only from the store's cache directory.
+	file, err := os.Open(l.slotPath(slot.slot))
 	if err != nil {
 		return "", false
 	}
@@ -555,7 +555,7 @@ func (l *lruDir) clear(file *os.File, slot int) {
 	if payload, err := l.payloadFile(cacheErase); err == nil {
 		_ = eraseInlineCachePayload(payload, slot)
 	}
-	_ = os.Remove(l.slotPath(slot)) //nolint:gosec // G703: Integer slot paths derive only from the store's cache directory.
+	_ = os.Remove(l.slotPath(slot))
 	_ = writeCacheHint(file, slot, cacheHint{empty: true})
 }
 
@@ -575,7 +575,7 @@ func (l *lruDir) sweep(stale func(cacheHint) bool, budget int64) int {
 	if l.capacity <= 0 {
 		return 0
 	}
-	if _, err := os.Stat(filepath.Join(l.dir, cacheHintFile)); err != nil { //nolint:gosec // G703: path is the fixed routing file inside the store's cache directory.
+	if _, err := os.Stat(filepath.Join(l.dir, cacheHintFile)); err != nil {
 		return 0
 	}
 	l.writer.Lock()

@@ -629,7 +629,7 @@ func restamp(s fileStamp) fileStamp {
 // config write there, none of which changes a bound context's relevance, and
 // its device number moves when macOS renumbers volumes across a reboot.
 func identStampOf(path string) fileStamp {
-	info, err := os.Stat(path) //nolint:gosec // G703: stats only the backend directory this process recorded in its own cache entry.
+	info, err := os.Stat(path)
 	if err != nil {
 		return fileStamp{Path: path, Ident: true, Missing: true}
 	}
@@ -638,12 +638,12 @@ func identStampOf(path string) fileStamp {
 }
 
 func stampOf(path string) fileStamp {
-	info, err := os.Stat(path) //nolint:gosec // G703: stats only paths this process recorded in its own cache entry.
+	info, err := os.Stat(path)
 	return stampFrom(path, info, err, false)
 }
 
 func lstampOf(path string) fileStamp {
-	info, err := os.Lstat(path) //nolint:gosec // G703: stats only paths this process recorded in its own cache entry.
+	info, err := os.Lstat(path)
 	return stampFrom(path, info, err, true)
 }
 
