@@ -20,6 +20,13 @@ linters:
     - revive
     - staticcheck
     - unused
+  settings:
+    gosec:
+      # G703's taint analysis flags paths cc-notes derives from its own
+      # checkout and cache, and flags them in one run but not the next on
+      # unchanged code, so it cannot gate CI.
+      excludes:
+        - G703
   exclusions:
     rules:
       # gosec's filesystem checks (G301/G304/G306) over t.TempDir/os.MkdirTemp

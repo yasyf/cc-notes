@@ -195,7 +195,7 @@ func supersededGeneration(name string, current []string) bool {
 }
 
 func retireGeneration(cutoff time.Time, dir string) (bool, error) {
-	if lock, err := os.OpenFile(dir+".lock", os.O_RDWR, 0); err == nil { //nolint:gosec // G304,G703: The lock is the sibling of a cache generation under the store's git common dir.
+	if lock, err := os.OpenFile(dir+".lock", os.O_RDWR, 0); err == nil { //nolint:gosec // G304: The lock is the sibling of a cache generation under the store's git common dir.
 		defer func() { _ = lock.Close() }()
 		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			return false, nil
