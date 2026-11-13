@@ -920,6 +920,7 @@ func TestAutoInstallAnnouncesDroppedRefspec(t *testing.T) {
 	gittest.Git(t, dir, "config", "--add", "remote.origin.push", "HEAD")
 	gittest.Git(t, dir, "config", "--add", "remote.origin.push", "refs/cc-notes/*:refs/cc-notes/*")
 	gittest.Git(t, dir, "config", "core.logAllRefUpdates", "always")
+	gittest.Git(t, dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
 
 	res, err := execBin(dir, actorA, "task", "add", "First write", "--no-validation-criteria")
 	if err != nil {
