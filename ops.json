@@ -1,1 +1,1 @@
-{"v":1,"lamport":5,"ops":[{"kind":"set_status","status":"done"},{"kind":"add_comment","body":"Delivered official0.76.21 CLI and signed helper build1122, checksum/signature/quarantine and readiness verified. Real mutation143ms/read30ms successful. All scoped race/correctness tests and unchanged 10000-ref IO gate passed. Other held criteria/tasks remain open."},{"kind":"link_commit","sha":"113e62c0fa9bd83f5bf065e5e3aa5d595d9ca17e"}]}
+{"v":1,"lamport":6,"ops":[{"kind":"set_status","status":"in_progress"},{"kind":"set_assignee","assignee":"root"}]}
