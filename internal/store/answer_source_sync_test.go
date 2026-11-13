@@ -22,7 +22,7 @@ func TestIndexedAnswerMatchesPriorV8Writer(t *testing.T) {
 		t.Skip("requires the actual v8 writer executable from f7965dac1e02bbec6b5f33d71c437220b67e9c3a")
 	}
 	s := initStore(t)
-	var ids []model.EntityID
+	ids := make([]model.EntityID, 0, 24)
 	for i := range 24 {
 		snapshot, err := s.Create(t.Context(), []model.Op{model.CreateAnswer{
 			Nonce: model.NewNonce(), Title: fmt.Sprintf("original %d", i), Body: "original body",

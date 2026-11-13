@@ -22,7 +22,7 @@ func answerMatchCohort(t *testing.T) (*Client, string, []model.Answer) {
 		fmt.Fprintf(&vocabulary, "lexeme%03d ", i)
 	}
 	body := strings.Repeat(vocabulary.String(), 16)
-	var answers []model.Answer
+	answers := make([]model.Answer, 0, 24)
 	for i := range 24 {
 		snapshot, err := c.s.Create(t.Context(), []model.Op{model.CreateAnswer{
 			Nonce: model.NewNonce(), Title: fmt.Sprintf("Nebula answer %02d", i),
@@ -128,7 +128,7 @@ func TestIndexedAnswerMatchSelectedBodies(t *testing.T) {
 
 func TestIndexedAnswerMatchTransitions(t *testing.T) {
 	c, _ := newWBClient(t)
-	var answers []model.Answer
+	answers := make([]model.Answer, 0, 3)
 	for _, spec := range []NoteSpec{
 		{Title: "quasar quasar orbit", Body: "quasar quasar comet", Tags: []string{"science"}},
 		{Title: "pulsar galaxy", Body: "pulsar galaxy", Tags: []string{"science", "match:phrase only"}},
