@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"perf-dashboard-text-nov13"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"set_criterion_status","id":"485ec46bd4bd3c643658c80f726e1a93","status":"met","note":"PR4923 regression proves identical complete board output, zero new formatting misses on unchanged rebuild, and exact invalidation for changed strings. Independent review clear. Main CI43423104704 success."}]}
