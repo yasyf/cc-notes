@@ -5527,18 +5527,67 @@ def test_answer_file_surfacing_bookkeeping(monkeypatch, tmp_path) -> None:
 
 
 class MonkeyPatch:
-    """Minimal monkeypatch supporting setattr with automatic teardown."""
+    """Minimal monkeypatch supporting setattr, setenv and delenv with automatic teardown."""
 
     def __init__(self) -> None:
         self._undo: list = []
 
     def setattr(self, target, name, value) -> None:
-        self._undo.append((target, name, getattr(target, name)))
+        old = getattr(target, name)
+        self._undo.append(lambda: setattr(target, name, old))
         setattr(target, name, value)
 
+    def setenv(self, name: str, value: str) -> None:
+        self._save_env(name)
+        os.environ[name] = value
+
+    def delenv(self, name: str, raising: bool = True) -> None:
+        if raising and name not in os.environ:
+            raise KeyError(name)
+        self._save_env(name)
+        os.environ.pop(name, None)
+
+    def _save_env(self, name: str) -> None:
+        old = os.environ.get(name)
+        self._undo.append(lambda: os.environ.pop(name, None) if old is None else os.environ.__setitem__(name, old))
+
     def teardown(self) -> None:
-        for target, name, old in reversed(self._undo):
-            setattr(target, name, old)
+        for undo in reversed(self._undo):
+            undo()
+
+
+def test_answer_reads_spawn_once_until_the_authority_changes(monkeypatch, tmp_path) -> None:
+    """Two hooks reading the same durable answers share one cc-notes run until a write moves the authority's WAL."""
+    authority = tmp_path / "repo" / ".git" / "cc-notes-managed"
+    authority.mkdir(parents=True)
+    (authority / "authority-v3.db").write_bytes(b"db")
+    rows = [durable_answer("auth001aaaa", title="Session store?", body="Redis")]
+    evt = prompt_event(monkeypatch, tmp_path, rows)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "repo"))
+    monkeypatch.delenv("CCN_REPO", raising=False)
+    calls: list[tuple[str, ...]] = []
+    listed = evt.ctx.call_cli
+    monkeypatch.setattr(evt.ctx, "call_cli", lambda args, **kw: (calls.append(tuple(args[1:])), listed(args, **kw))[1])
+    monkeypatch.setattr(common, "ANSWER_READS", common.OrderedDict())
+    first, second = common.branch_answers(evt), common.branch_answers(evt)
+    check("cache: one spawn serves both reads", calls == [BRANCH_ANSWER_LIST] and first == second == rows, repr(calls))
+    (authority / "authority-v3.db-wal").write_bytes(b"write")
+    common.branch_answers(evt)
+    check("cache: a WAL write reruns the read", calls == [BRANCH_ANSWER_LIST] * 2, repr(calls))
+    other = tmp_path / "other" / ".git" / "cc-notes-managed"
+    other.mkdir(parents=True)
+    (other / "authority-v3.db").write_bytes(b"db")
+    monkeypatch.setenv("CCN_REPO", str(tmp_path / "other"))
+    common.branch_answers(evt)
+    check("cache: $CCN_REPO stamps the repository the CLI reads", calls == [BRANCH_ANSWER_LIST] * 3, repr(calls))
+    (other / "authority-v3.db-wal").write_bytes(b"write")
+    common.branch_answers(evt)
+    check("cache: a write to the $CCN_REPO authority reruns the read", calls == [BRANCH_ANSWER_LIST] * 4, repr(calls))
+    monkeypatch.delenv("CCN_REPO")
+    (tmp_path / "repo" / ".git" / "config").write_text('[CC-NOTES]\n\tStorage = {"CommonDir":"/elsewhere"}\n')
+    common.branch_answers(evt)
+    common.branch_answers(evt)
+    check("cache: a storage binding in any spelling always runs", calls == [BRANCH_ANSWER_LIST] * 6, repr(calls))
 
 
 def main() -> int:
