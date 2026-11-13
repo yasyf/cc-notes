@@ -43,7 +43,7 @@ func TestQueryMetadataProjection(t *testing.T) {
 			meta := tc.snapshot.Meta()
 			got := projectQueryMetadata("records-binding", "captured-tip", tc.snapshot)
 			want := queryMetadata{
-				Version: queryMetadataVersion, Binding: "records-binding", Tip: "captured-tip",
+				Version: queryMetadataVersion(meta.Kind), Binding: "records-binding", Tip: "captured-tip",
 				ID: tc.snapshot.EntityID(), Kind: meta.Kind,
 				CreatedAt: meta.CreatedAt.Unix(), UpdatedAt: meta.UpdatedAt.Unix(),
 				UpdatedTime: meta.UpdatedAt,

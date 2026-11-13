@@ -252,13 +252,13 @@ func TestQueryMetadataTaskRelationBucketsAreRequired(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if !queryMetadataBucketsComplete(binding) {
+			if !queryMetadataBucketsComplete(binding, model.KindTask) {
 				t.Fatal("new binding is incomplete")
 			}
 			if err := binding.DeleteBucket(name); err != nil {
 				return err
 			}
-			if queryMetadataBucketsComplete(binding) {
+			if queryMetadataBucketsComplete(binding, model.KindTask) {
 				t.Fatalf("missing %s bucket considered complete", name)
 			}
 			return nil

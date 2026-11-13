@@ -88,7 +88,7 @@ func (s *Store) IndexedAnswerMatches(ctx context.Context, labels, asked []string
 			if err != nil {
 				return err
 			}
-			if row.Version != queryMetadataVersion || row.Binding != source.binding || row.Tip == "" || row.Tip != tip {
+			if row.Version != queryMetadataVersion(source.kind) || row.Binding != source.binding || row.Tip == "" || row.Tip != tip {
 				return fmt.Errorf("answer ranking metadata differs from captured %s", row.ID)
 			}
 			if row.Deleted || row.Superseded || row.StaleAt != 0 {

@@ -152,7 +152,7 @@ func validateQueryMetadata(tx *bolt.Tx, source queryMetadataSource, row queryMet
 	if err != nil {
 		return err
 	}
-	if row.Version != queryMetadataVersion || row.Binding != source.binding || row.Kind != source.kind || row.Tip == "" || tip != row.Tip {
+	if row.Version != queryMetadataVersion(source.kind) || row.Binding != source.binding || row.Kind != source.kind || row.Tip == "" || tip != row.Tip {
 		return fmt.Errorf("query metadata differs from captured %s %s", source.kind, row.ID)
 	}
 	return nil

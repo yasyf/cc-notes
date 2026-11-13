@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 
@@ -258,6 +257,14 @@ func readIndexedQuery[T any](ctx context.Context, q queryMetadataSource, read fu
 		if err := validateQueryMetadataBinding(tx, q); err != nil {
 			return err
 		}
+		synchronized, err := q.synchronizeSource(ctx, tx, writable)
+		if err != nil {
+			return err
+		}
+		if !synchronized {
+			activate = true
+			return nil
+		}
 		bucket := queryGenerationBinding(tx, q.binding)
 		if bucket == nil {
 			if queryMetadataBinding(tx, q.binding) != nil {
@@ -351,7 +358,7 @@ func (s *Store) validateManagedQueryGenerations(tx *bolt.Tx, updates []gitcmd.Re
 			continue
 		}
 		seen[parsed.Kind] = true
-		binding := s.listCacheName(parsed.Kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, "")
+		binding := s.queryMetadataBindingName(parsed.Kind)
 		if queryMetadataBinding(tx, binding) == nil {
 			continue
 		}

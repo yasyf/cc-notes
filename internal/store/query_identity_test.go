@@ -201,7 +201,7 @@ func TestQueryMetadataSemanticGenerationIsolation(t *testing.T) {
 		generation string
 	}{
 		{name: "prior semantic generation", version: 4, generation: foldCacheGeneration},
-		{name: "other operation vocabulary", version: queryMetadataVersion, generation: foldGeneration([]string{"older_op"})},
+		{name: "other operation vocabulary", version: queryMetadataVersion(model.KindDoc), generation: foldGeneration([]string{"older_op"})},
 	} {
 		t.Run(foreign.name, func(t *testing.T) {
 			other := q

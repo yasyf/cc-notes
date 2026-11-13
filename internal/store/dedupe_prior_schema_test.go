@@ -102,7 +102,7 @@ func TestIndexedDuplicatePriorSchemaAndWriter(t *testing.T) {
 		if entries, err := s.children(t.Context(), refs.Root(model.KindDoc)); err != nil || len(entries) != i+1 {
 			t.Fatalf("prior32 duplicate created a new root: %d, %v", len(entries), err)
 		}
-		t.Logf("PRIOR32_DUPLICATE_AUTHORITY: stage=%d old_schema=5 new_schema=%d survivor=%s roots=%d old_cache_unchanged=true", i, queryMetadataVersion, old.ID, i+1)
+		t.Logf("PRIOR32_DUPLICATE_AUTHORITY: stage=%d old_schema=5 new_schema=%d survivor=%s roots=%d old_cache_unchanged=true", i, queryMetadataVersion(model.KindAnswer), old.ID, i+1)
 	}
 	func() {
 		db, err := bolt.Open(q.indexPath(), 0o600, nil)

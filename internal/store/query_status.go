@@ -29,7 +29,7 @@ type StatusMetadata struct {
 func (s *Store) StatusMetadata(ctx context.Context, kinds ...model.Kind) (StatusMetadata, bool, error) {
 	var result StatusMetadata
 	var hit bool
-	err := s.managedView(ctx, func(tx *bolt.Tx) error {
+	read := func(tx *bolt.Tx) error {
 		pinned, sources, err := captureStatusMetadataSourcesAt(ctx, s, tx, kinds...)
 		if err != nil {
 			return err
@@ -70,7 +70,15 @@ func (s *Store) StatusMetadata(ctx context.Context, kinds ...model.Kind) (Status
 		}
 		hit = true
 		return nil
-	})
+	}
+	var err error
+	if slices.Contains(kinds, model.KindAnswer) {
+		_, _, err = indexedMetadataQuery(ctx, s, model.KindAnswer, func(tx *bolt.Tx, _ queryMetadataSource) (struct{}, error) {
+			return struct{}{}, read(tx)
+		})
+	} else {
+		err = s.managedView(ctx, read)
+	}
 	if err != nil {
 		return StatusMetadata{}, false, err
 	}

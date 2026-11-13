@@ -680,7 +680,7 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 			if err := tips.Delete([]byte(update.Ref)); err != nil {
 				return err
 			}
-			binding := s.listCacheName(parsed.Kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, "")
+			binding := s.queryMetadataBindingName(parsed.Kind)
 			if err := batch.deleteMetadata(tx, binding, parsed.ID); err != nil {
 				return err
 			}
@@ -699,8 +699,16 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 	if err := batch.flush(ctx, tx); err != nil {
 		return err
 	}
+	key := querySourceKey(s.queryMetadataBindingName(model.KindAnswer))
+	cursor := model.SHA(root.Get(key))
+	current := model.SHA(root.Get(sourceHeadKey))
 	if err := applySource(tx, intent.Source); err != nil {
 		return err
+	}
+	if cursor != "" && cursor == current {
+		if err := root.Put(key, root.Get(sourceHeadKey)); err != nil {
+			return err
+		}
 	}
 	return root.SetSequence(root.Sequence() + 1)
 }

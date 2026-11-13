@@ -9,6 +9,7 @@ import (
 
 	"github.com/yasyf/cc-notes/internal/managed"
 	"github.com/yasyf/cc-notes/internal/refs"
+	"github.com/yasyf/cc-notes/model"
 )
 
 const queryIndexSubdir = "cc-notes-query"
@@ -48,7 +49,7 @@ func readQueryMetadataIndex[T any](ctx context.Context, q queryMetadataSource, r
 
 func validateQueryMetadataBinding(tx *bolt.Tx, q queryMetadataSource) error {
 	binding := queryMetadataBinding(tx, q.binding)
-	if binding != nil && queryMetadataBucketsComplete(binding) {
+	if binding != nil && queryMetadataBucketsComplete(binding, q.kind) {
 		return nil
 	}
 	if binding == nil {
@@ -65,8 +66,12 @@ func validateQueryMetadataBinding(tx *bolt.Tx, q queryMetadataSource) error {
 	return fmt.Errorf("%w: incomplete query metadata for %s", managed.ErrReindex, q.kind)
 }
 
-func queryMetadataBucketsComplete(binding *bolt.Bucket) bool {
-	for _, name := range [][]byte{queryMetadataRowsBucket, queryMetadataTipsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket, queryMetadataQuestionTermsBucket, queryMetadataBodyTermsBucket, queryMetadataAnswerRankingBucket} {
+func queryMetadataBucketsComplete(binding *bolt.Bucket, kind model.Kind) bool {
+	names := [][]byte{queryMetadataRowsBucket, queryMetadataTipsBucket, queryMetadataLabelsBucket, queryMetadataAnchorsBucket, queryMetadataSupersedersBucket, queryMetadataBlockedByBucket, queryMetadataParentsBucket, queryMetadataRunTasksBucket, queryMetadataDuplicatesBucket}
+	if kind == model.KindAnswer {
+		names = append(names, queryMetadataQuestionTermsBucket, queryMetadataBodyTermsBucket, queryMetadataAnswerRankingBucket)
+	}
+	for _, name := range names {
 		if binding.Bucket(name) == nil {
 			return false
 		}

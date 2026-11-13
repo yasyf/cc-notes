@@ -1,3 +1,4 @@
+// Package answermatch defines lexical terms shared by answer ranking and its persistent index.
 package answermatch
 
 import (
@@ -18,11 +19,13 @@ var matchStopWords = func() map[string]struct{} {
 	return words
 }()
 
+// QuestionTerms combines the title with plain labels, excluding labels containing a colon.
 func QuestionTerms(title string, tags []string) map[string]struct{} {
 	labels := slices.DeleteFunc(slices.Clone(tags), func(tag string) bool { return strings.Contains(tag, ":") })
 	return Terms(title + " " + strings.Join(labels, " "))
 }
 
+// Terms extracts normalized ASCII words and three-digit status codes, including joined word parts.
 func Terms(text string) map[string]struct{} {
 	text = strings.ToLower(text)
 	terms := map[string]struct{}{}

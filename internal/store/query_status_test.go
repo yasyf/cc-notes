@@ -52,7 +52,7 @@ func TestStatusMetadataReturnsExactTipsAndBodySource(t *testing.T) {
 	}
 	for i, id := range []model.EntityID{n.ID, a.ID} {
 		row := view.Records[i]
-		if row.ID != id || row.Tip == "" || row.Version != queryMetadataVersion {
+		if row.ID != id || row.Tip == "" || row.Version != queryMetadataVersion(row.Kind) {
 			t.Fatalf("row %d = %#v", i, row)
 		}
 		snapshot, err := view.Captured.LoadAt(t.Context(), row.Tip)

@@ -10,7 +10,12 @@ import (
 	"github.com/yasyf/cc-notes/model"
 )
 
-const queryMetadataVersion = 9
+func queryMetadataVersion(kind model.Kind) int {
+	if kind == model.KindAnswer {
+		return 9
+	}
+	return 8
+}
 
 type queryMetadata struct {
 	Version             int                       `json:"version"`
@@ -52,7 +57,7 @@ type queryMetadata struct {
 func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot) queryMetadata {
 	meta := snapshot.Meta()
 	row := queryMetadata{
-		Version:          queryMetadataVersion,
+		Version:          queryMetadataVersion(meta.Kind),
 		Binding:          binding,
 		Tip:              tip,
 		ID:               snapshot.EntityID(),
