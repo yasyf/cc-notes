@@ -794,7 +794,7 @@ func TestAutoInstallAnnouncesRefspecs(t *testing.T) {
 		"remote.origin.push=HEAD; " +
 		"remote.origin.push=refs/cc-notes/*:refs/cc-notes/*; " +
 		"core.logAllRefUpdates=always; " +
-		"remote.origin.negotiationInclude=refs/remotes/origin/*\n" +
+		"remote.origin.negotiationRestrict=refs/remotes/origin/*\n" +
 		"cc-notes: note: \"git push\" now pushes the current branch to its same-named remote branch (remote.origin.push overrides push.default)\n"
 	if res.Stderr != want {
 		t.Fatalf("first mutating command stderr = %q, want %q", res.Stderr, want)
@@ -920,7 +920,7 @@ func TestAutoInstallAnnouncesDroppedRefspec(t *testing.T) {
 	gittest.Git(t, dir, "config", "--add", "remote.origin.push", "HEAD")
 	gittest.Git(t, dir, "config", "--add", "remote.origin.push", "refs/cc-notes/*:refs/cc-notes/*")
 	gittest.Git(t, dir, "config", "core.logAllRefUpdates", "always")
-	gittest.Git(t, dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
+	gittest.Git(t, dir, "config", "--add", "remote.origin.negotiationRestrict", "refs/remotes/origin/*")
 
 	res, err := execBin(dir, actorA, "task", "add", "First write", "--no-validation-criteria")
 	if err != nil {
