@@ -1,0 +1,43 @@
+name: Pack retirement readers
+
+on:
+  pull_request:
+    paths:
+      - internal/gitobj/pack_retirement_test.go
+      - .github/workflows/pack-retirement-readers.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  persistent-reader:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - reader: old-0.73.2
+            revision: 60150d67ae174a12e7656ad2b3f2aa9fe28a6775
+          - reader: current-reviewed
+            revision: a2b4c7c414b07c5917a351c09cec11998b5ea961
+    name: Persistent reader (${{ matrix.reader }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.revision }}
+          path: compat
+      - uses: ./.github/actions/setup
+        with:
+          go-version-file: compat/go.mod
+      - name: Record reader and Git identity
+        run: |
+          git -C compat rev-parse HEAD
+          git --version
+          shasum -a 256 internal/gitobj/pack_retirement_test.go
+      - name: Install regression fixture
+        run: cp internal/gitobj/pack_retirement_test.go compat/internal/gitobj/pack_retirement_test.go
+      - name: Read through native pack retirement
+        working-directory: compat
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestPersistentReaderAfterNativePromisorPackRetirement$' ./internal/gitobj
