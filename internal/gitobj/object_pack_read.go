@@ -11,12 +11,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	gitsync "github.com/go-git/go-git/v5/utils/sync"
 )
+
+// managedPackListFile, under the common directory, holds managedPackNames' listing.
+const managedPackListFile = "cc-notes/managed-packs"
+
+// racyPackListing is how long after the pack directory last changed a listing
+// must start before managedPackNames keeps it.
+const racyPackListing = time.Second
 
 // managedPacks serves objects from the packs source scopes wrote, in process.
 // These packs hold no deltas, so one mapped lookup replaces a round trip to a
@@ -81,7 +90,7 @@ func (s *objectStorage) refreshManagedPacks() error {
 	if info.ModTime().Equal(s.managed.modTime) {
 		return nil
 	}
-	listing, err := os.ReadDir(dir)
+	names, err := s.managedPackNames(dir, info.ModTime())
 	if err != nil {
 		return err
 	}
@@ -90,8 +99,8 @@ func (s *objectStorage) refreshManagedPacks() error {
 		current[pack.path] = pack
 	}
 	packs := make([]*managedPack, 0, len(s.managed.packs))
-	for _, entry := range listing {
-		tier, stem, ok := managedPackStem(entry.Name(), packIndexExt)
+	for _, name := range names {
+		tier, stem, ok := managedPackStem(name, packIndexExt)
 		if !ok {
 			continue
 		}
@@ -110,6 +119,55 @@ func (s *objectStorage) refreshManagedPacks() error {
 	}
 	s.managed.modTime, s.managed.packs = info.ModTime(), packs
 	return result
+}
+
+// managedPackNames lists the managed pack indexes in dir. A pack directory that
+// fetches have filled with thousands of other packs costs a long read, so the
+// names are kept beside the authority, keyed by the directory's modification
+// time, which any pack written or removed there changes.
+func (s *objectStorage) managedPackNames(dir string, modified time.Time) ([]string, error) {
+	cache := filepath.Join(s.root, managedPackListFile)
+	key := strconv.FormatInt(modified.UnixNano(), 10)
+	//nolint:gosec // G304: cache is a fixed path inside the repository's git directory.
+	if data, err := os.ReadFile(cache); err == nil {
+		if header, names, found := strings.Cut(string(data), "\n"); found && header == key {
+			return strings.Fields(names), nil
+		}
+	}
+	listed := time.Now()
+	listing, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, entry := range listing {
+		if _, _, ok := managedPackStem(entry.Name(), packIndexExt); ok {
+			names = append(names, entry.Name())
+		}
+	}
+	// A pack added within the filesystem's timestamp granularity of the
+	// listing can leave the modification time unchanged, so a listing that
+	// close to it is not kept. The list only saves the next process a
+	// directory read, so failing to store it costs nothing but that.
+	if listed.Sub(modified) > racyPackListing {
+		_ = writeManagedPackNames(cache, key, names)
+	}
+	return names, nil
+}
+
+func writeManagedPackNames(cache, key string, names []string) error {
+	if err := os.MkdirAll(filepath.Dir(cache), 0o750); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(cache), ".managed-packs-*")
+	if err != nil {
+		return err
+	}
+	_, err = tmp.WriteString(key + "\n" + strings.Join(names, "\n") + "\n")
+	if err = errors.Join(err, tmp.Close()); err != nil {
+		return errors.Join(err, os.Remove(tmp.Name()))
+	}
+	return os.Rename(tmp.Name(), cache)
 }
 
 // mapFiles maps a pack on its first lookup. A pack another writer merged away

@@ -34,6 +34,7 @@ func indexedDuplicateList[S model.Snapshot](ctx context.Context, s *Store, kind 
 	if err == nil && source.pinned {
 		source, err = source.capture(ctx)
 	}
+	source.deferActivation = true
 	if err != nil {
 		return nil, false, err
 	}

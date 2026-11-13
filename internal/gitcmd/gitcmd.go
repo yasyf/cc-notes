@@ -1340,6 +1340,11 @@ func (g Git) Dirs(ctx context.Context) (gitDir, commonDir string, bare bool, err
 }
 
 func (g Git) dirs(ctx context.Context, env []string) (gitDir, commonDir string, bare bool, err error) {
+	if env == nil {
+		if gitDir, commonDir, found := g.discoverDirs(); found {
+			return gitDir, commonDir, false, nil
+		}
+	}
 	out, err := g.runEnv(ctx, env, "", "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--is-bare-repository")
 	if err != nil {
 		return "", "", false, fmt.Errorf("git dirs: %w", err)
