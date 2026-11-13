@@ -161,7 +161,7 @@ func TestInstallIdempotent(t *testing.T) {
 		"remote.origin.push=HEAD",
 		"remote.origin.push=" + ccPushRefspec,
 		"core.logAllRefUpdates=always",
-		"remote.origin.negotiationInclude=refs/remotes/origin/*",
+		"remote.origin.negotiationRestrict=refs/remotes/origin/*",
 	}
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
@@ -183,6 +183,29 @@ func TestInstallIdempotent(t *testing.T) {
 		if got, want := configAll(t, s, "core.logAllRefUpdates"), []string{"always"}; !slices.Equal(got, want) {
 			t.Errorf("run %d: core.logAllRefUpdates = %q, want %q", run, got, want)
 		}
+	}
+}
+
+func TestInstallReplacesNegotiationIncludeWithRestrict(t *testing.T) {
+	bare := gittest.InitBare(t)
+	s := clone(t, bare, "Alice", "alice@example.com")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationInclude", "refs/heads/keep")
+	report, err := ccsync.Install(t.Context(), s.Git, "origin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"remote.origin.negotiationInclude=refs/remotes/origin/*"}; !slices.Equal(report.IncludeRemoved, want) {
+		t.Errorf("IncludeRemoved = %q, want %q", report.IncludeRemoved, want)
+	}
+	if !slices.Contains(report.Added, "remote.origin.negotiationRestrict=refs/remotes/origin/*") {
+		t.Errorf("Added = %q, want the restrict line", report.Added)
+	}
+	if got, want := configAll(t, s, "remote.origin.negotiationInclude"), []string{"refs/heads/keep"}; !slices.Equal(got, want) {
+		t.Errorf("negotiationInclude = %q, want only the line Install never wrote, %q", got, want)
+	}
+	if got, want := configAll(t, s, "remote.origin.negotiationRestrict"), []string{"refs/remotes/origin/*"}; !slices.Equal(got, want) {
+		t.Errorf("negotiationRestrict = %q, want %q", got, want)
 	}
 }
 
@@ -258,7 +281,7 @@ func TestInstallUpgradesOldFetchRefspec(t *testing.T) {
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
 	gittest.Git(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
-	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationRestrict", "refs/remotes/origin/*")
 
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
@@ -314,7 +337,7 @@ func TestInstallSweepsEveryRemoteOldFetchRefspec(t *testing.T) {
 				"remote.origin.push=HEAD",
 				"remote.origin.push=" + ccPushRefspec,
 				"core.logAllRefUpdates=always",
-				"remote.origin.negotiationInclude=refs/remotes/origin/*",
+				"remote.origin.negotiationRestrict=refs/remotes/origin/*",
 				"remote.upstream.fetch=" + upstreamFetchRefspec,
 			}
 			if !slices.Equal(report.Added, wantAdded) || len(report.Removed) != 0 || !report.HeadPushAdded {
@@ -383,7 +406,7 @@ func TestInstallDropsRedundantOldFetchRefspec(t *testing.T) {
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
 	gittest.Git(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
-	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationRestrict", "refs/remotes/origin/*")
 
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")

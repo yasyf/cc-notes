@@ -35,6 +35,12 @@ type InstallReport struct {
 	// announces it. An old binary re-adding the killer refspec after a new one
 	// leaves this state.
 	Removed []string
+	// IncludeRemoved names each remote.<r>.negotiationInclude line an earlier
+	// install wrote, as "key=value". Git sends included tips even on the lazy
+	// fetch that fills a partial clone's missing blob, and a remote that holds
+	// the blob under such a tip leaves it out of the pack, so the fetch fails;
+	// negotiationRestrict replaces it.
+	IncludeRemoved []string
 	// HeadPushAdded reports that the HEAD push refspec was among the added
 	// lines: the remote had no push refspec before, so plain git push now
 	// takes its behavior from remote.<r>.push instead of push.default.
@@ -53,9 +59,9 @@ type InstallReport struct {
 // remote carrying it is rewritten to its own tracking-namespace form. It
 // preserves existing push behavior: a remote with no push refspec gets HEAD
 // before the cc-notes refspec, while a remote with its own push refspecs keeps
-// them untouched. It also names each remote-tracking ref the remote's fetch
-// refspecs write in remote.<r>.negotiationInclude, so every fetch offers the
-// remote a commit it holds. An unconfigured remote fails wrapping
+// them untouched. It also limits remote.<r>.negotiationRestrict to the
+// remote-tracking refs the remote's fetch refspecs write, so a fetch offers the
+// remote commits it holds. An unconfigured remote fails wrapping
 // ErrRemoteNotFound.
 func Install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, error) {
 	report, err := install(ctx, g, remote)
@@ -101,16 +107,8 @@ func install(ctx context.Context, g gitcmd.Git, remote string) (InstallReport, e
 		}
 		report.Added = append(report.Added, "core.logAllRefUpdates=always")
 	}
-	includeKey := "remote." + remote + ".negotiationInclude"
-	included := local.values("remote." + remote + ".negotiationinclude")
-	for _, tracking := range trackingRefs(local.values("remote." + remote + ".fetch")) {
-		if slices.Contains(included, tracking) {
-			continue
-		}
-		if err := g.ConfigAdd(ctx, includeKey, tracking); err != nil {
-			return report, err
-		}
-		report.Added = append(report.Added, includeKey+"="+tracking)
+	if err := restrictNegotiation(ctx, g, remote, local, &report); err != nil {
+		return report, err
 	}
 	// Only a remote with local fetch lines can carry the pre-fix killer refspec.
 	for _, other := range local.fetchRemotes() {
@@ -197,12 +195,40 @@ func upgradeFetch(ctx context.Context, g gitcmd.Git, remote string, fetch []stri
 	return nil
 }
 
+// restrictNegotiation limits remote's fetch negotiation to its remote-tracking
+// refs and drops the negotiationInclude lines an earlier install wrote. Git
+// sends haves newest commit first, and the source projection's live branch
+// carries retention commits dated centuries ahead that no remote holds, so an
+// unrestricted fetch spends its whole have budget on them and the remote
+// resends history the repository already has.
+func restrictNegotiation(ctx context.Context, g gitcmd.Git, remote string, local localConfig, report *InstallReport) error {
+	includeKey := "remote." + remote + ".negotiationInclude"
+	restrictKey := "remote." + remote + ".negotiationRestrict"
+	included := local.values("remote." + remote + ".negotiationinclude")
+	restricted := local.values("remote." + remote + ".negotiationrestrict")
+	for _, tracking := range trackingRefs(local.values("remote." + remote + ".fetch")) {
+		if slices.Contains(included, tracking) {
+			switch err := g.ConfigUnsetValue(ctx, includeKey, tracking); {
+			case errors.Is(err, gitcmd.ErrConfigNoMatch):
+			case err != nil:
+				return err
+			default:
+				report.IncludeRemoved = append(report.IncludeRemoved, includeKey+"="+tracking)
+			}
+		}
+		if slices.Contains(restricted, tracking) {
+			continue
+		}
+		if err := g.ConfigAdd(ctx, restrictKey, tracking); err != nil {
+			return err
+		}
+		report.Added = append(report.Added, restrictKey+"="+tracking)
+	}
+	return nil
+}
+
 // trackingRefs names the remote-tracking refs fetch's refspecs write, as git
-// negotiationInclude patterns. Git sends haves newest commit first, and the
-// source projection's live branch carries retention commits dated centuries
-// ahead that no remote holds, so without a tracking tip sent unconditionally a
-// fetch spends its whole have budget on them and the remote resends history the
-// repository already has.
+// negotiation ref patterns.
 func trackingRefs(fetch []string) []string {
 	var tracking []string
 	for _, refspec := range fetch {

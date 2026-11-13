@@ -210,7 +210,7 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, s *store.Store) error 
 		return nil
 	case err != nil:
 		return err
-	case len(report.Added) == 0 && len(report.Removed) == 0:
+	case len(report.Added) == 0 && len(report.Removed) == 0 && len(report.IncludeRemoved) == 0:
 		return nil
 	}
 	stderr := cmd.ErrOrStderr()
@@ -223,6 +223,12 @@ func autoInstall(ctx context.Context, cmd *cobra.Command, s *store.Store) error 
 	if len(report.Removed) > 0 {
 		if _, err := fmt.Fprintf(stderr, "cc-notes: removed pre-fix fetch refspecs a plain \"git fetch --prune\" would use to delete unsynced refs: %s\n",
 			strings.Join(report.Removed, "; ")); err != nil {
+			return err
+		}
+	}
+	if len(report.IncludeRemoved) > 0 {
+		if _, err := fmt.Fprintf(stderr, "cc-notes: removed negotiation includes that made partial-clone lazy fetches fail, now negotiationRestrict: %s\n",
+			strings.Join(report.IncludeRemoved, "; ")); err != nil {
 			return err
 		}
 	}
