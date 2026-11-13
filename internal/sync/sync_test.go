@@ -258,6 +258,7 @@ func TestInstallUpgradesOldFetchRefspec(t *testing.T) {
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
 	gittest.Git(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
 
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
@@ -382,6 +383,7 @@ func TestInstallDropsRedundantOldFetchRefspec(t *testing.T) {
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", "HEAD")
 	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.push", ccPushRefspec)
 	gittest.Git(t, s.Git.Dir, "config", "core.logAllRefUpdates", "always")
+	gittest.Git(t, s.Git.Dir, "config", "--add", "remote.origin.negotiationInclude", "refs/remotes/origin/*")
 
 	for run := range 2 {
 		report, err := ccsync.Install(t.Context(), s.Git, "origin")
