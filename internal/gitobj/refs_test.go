@@ -144,6 +144,49 @@ func TestPackedReferenceProbeLongLineAndEOF(t *testing.T) {
 	}
 }
 
+func TestSortedPackedReferenceProbeReadCounts(t *testing.T) {
+	for _, count := range []int{32, 10000} {
+		t.Run(fmt.Sprintf("refs=%d", count), func(t *testing.T) {
+			var data strings.Builder
+			data.WriteString("# pack-refs with: peeled fully-peeled sorted\n")
+			for i := range count {
+				fmt.Fprintf(&data, "%s refs/cc-notes/tasks/%040x\n", testRefHash, i)
+			}
+			for _, query := range []struct {
+				name  string
+				found bool
+			}{
+				{fmt.Sprintf("refs/cc-notes/tasks/%040x", count*19/20), true},
+				{"refs/cc-notes-source-v1/operations/" + strings.Repeat("3", 64), false},
+				{"refs/heads/cc-notes-receipt-pins/" + strings.Repeat("3", 64), false},
+			} {
+				t.Run(query.name, func(t *testing.T) {
+					r := &countedReferenceReader{Reader: bytes.NewReader([]byte(data.String()))}
+					p, err := openPackedReferences(r, int64(data.Len()))
+					if err != nil {
+						t.Fatal(err)
+					}
+					ref, err := p.find(t.Context(), query.name)
+					if query.found {
+						if err != nil || ref.Name().String() != query.name || ref.Hash().String() != testRefHash {
+							t.Fatalf("lookup = %v, %v", ref, err)
+						}
+					} else if !errors.Is(err, plumbing.ErrReferenceNotFound) {
+						t.Fatalf("missing lookup = %v, %v", ref, err)
+					}
+					t.Logf("underlying_reads=%d read_bytes=%d", r.calls, r.read)
+					if r.calls > 16 {
+						t.Fatalf("lookup used %d reads, want at most 16", r.calls)
+					}
+					if r.read > 1<<16 {
+						t.Fatalf("lookup read %d bytes, want at most 65536", r.read)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestSortedPackedReferenceReadsAreBounded(t *testing.T) {
 	var data strings.Builder
 	data.WriteString("# pack-refs with: peeled fully-peeled sorted\n")

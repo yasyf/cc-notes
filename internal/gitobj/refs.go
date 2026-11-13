@@ -279,7 +279,12 @@ func (p *packedReferences) lowerBound(ctx context.Context, name string) (int64, 
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		entry, err := p.entryAt(low + (high-low)/2)
+		middle := low + (high-low)/2
+		pageMiddle := middle - middle%packedRefPageSize + packedRefPageSize/2
+		if pageMiddle >= low && pageMiddle < high {
+			middle = pageMiddle
+		}
+		entry, err := p.entryAt(middle)
 		if err != nil {
 			return 0, err
 		}
