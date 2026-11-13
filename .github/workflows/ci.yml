@@ -263,6 +263,9 @@ jobs:
       - name: Answer matching reads only selected bodies
         run: ./scripts/test.sh -race -count=1 -v -run '^TestLabeledListsReadOnlySelectedBodies/answer$' ./notes
 
+      - name: Answer tokenizer equivalence and allocation cost
+        run: ./scripts/test.sh -count=1 -v -run '^TestMatchTermsScanner' -bench '^BenchmarkMatchTermsScanner$' -benchtime=100x ./notes
+
       - name: Reject unfiltered answer matching on the public 0.76.9 baseline
         run: |
           set -euo pipefail
@@ -297,7 +300,8 @@ jobs:
           cat "$RUNNER_TEMP/ccn-indexed-list-write-negative.log"
           test "$result" -ne 0
           test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-indexed-list-write-negative.log")" -eq 6
-          test "$(grep -c 'INDEXED_LIST_WRITE_AMPLIFICATION:' "$RUNNER_TEMP/ccn-indexed-list-write-negative.log")" -eq 2
+          grep -q 'INDEXED_LIST_WRITE_AMPLIFICATION: first-selection wrote' "$RUNNER_TEMP/ccn-indexed-list-write-negative.log"
+          grep -q 'INDEXED_LIST_WRITE_AMPLIFICATION: changed-tip wrote' "$RUNNER_TEMP/ccn-indexed-list-write-negative.log"
 
       - name: Test (race, via the process-cap harness)
         run: ./scripts/test.sh -race -count=1 -timeout 30m -v -skip '^(TestAnswerCorpusWarmAndChangedPayloadWork|TestQueryDuplicateSelectedWork|TestTaskRelationsDoNotReadUnrelatedBodies|TestRelevantCachedWarmHitIsConstantWork|TestQueryMetadataExecutableIndependentReuse|TestLoadFallbackFreshProcessCost|TestAnswerShowFreshCLICost|TestTaskDedupeFreshCLICost|TestTaskDedupeFreshCLIMetadataCost|TestTaskBlockingFreshCLICost|TestPackedObjectIndexFreshCLICost)$' ./...
