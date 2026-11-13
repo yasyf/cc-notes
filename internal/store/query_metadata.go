@@ -1,14 +1,21 @@
 package store
 
 import (
+	"maps"
 	"slices"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/answermatch"
 	"github.com/yasyf/cc-notes/internal/render"
 	"github.com/yasyf/cc-notes/model"
 )
 
-const queryMetadataVersion = 8
+func queryMetadataVersion(kind model.Kind) int {
+	if kind == model.KindAnswer {
+		return 9
+	}
+	return 8
+}
 
 type queryMetadata struct {
 	Version             int                       `json:"version"`
@@ -19,6 +26,8 @@ type queryMetadata struct {
 	CreatedAt           int64                     `json:"created_at"`
 	UpdatedAt           int64                     `json:"updated_at"`
 	UpdatedTime         time.Time                 `json:"updated_time"`
+	AnswerQuestionTerms []string                  `json:"answer_question_terms,omitempty"`
+	AnswerBodyTerms     []string                  `json:"answer_body_terms,omitempty"`
 	TextDigest          string                    `json:"text_digest,omitempty"`
 	Deleted             bool                      `json:"deleted"`
 	Labels              []string                  `json:"labels"`
@@ -48,7 +57,7 @@ type queryMetadata struct {
 func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot) queryMetadata {
 	meta := snapshot.Meta()
 	row := queryMetadata{
-		Version:          queryMetadataVersion,
+		Version:          queryMetadataVersion(meta.Kind),
 		Binding:          binding,
 		Tip:              tip,
 		ID:               snapshot.EntityID(),
@@ -74,6 +83,8 @@ func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot
 	case model.Answer:
 		anchors, supersededBy = value.Anchors, value.SupersededBy
 		witness, row.VerifiedAt, row.StaleAt = value.Witness, value.VerifiedAt, value.StaleAt
+		row.AnswerQuestionTerms = slices.Sorted(maps.Keys(answermatch.QuestionTerms(value.Title, value.Tags)))
+		row.AnswerBodyTerms = slices.Sorted(maps.Keys(answermatch.Terms(value.Body)))
 		row.TextDigest = answerCorpusDigest([]byte(render.AnswerMarkdown(value.Title, value.Body)))
 	case model.Log:
 		anchors = value.Anchors

@@ -78,6 +78,10 @@ jobs:
           test "$result" -ne 0
           test "$(grep -c 'full_snapshot=PASS' "$RUNNER_TEMP/ccn-fallback-head-negative.log")" -eq 4
           test "$(grep -c 'FALLBACK_HEAD_REREAD_REGRESSION:' "$RUNNER_TEMP/ccn-fallback-head-negative.log")" -eq 4
+      - name: Answer term projection, posting transactions and tokenizer equivalence
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(AnswerMatchTerms|MatchTermsScanner|IndexedAnswerMatch(Reference|SelectedBodies|Transitions|CapturedGeneration))' ./internal/store ./internal/answermatch ./notes
+      - name: Indexed answer ranking equivalence and allocation comparison
+        run: ./scripts/test.sh -race -count=1 -v -run '^TestIndexedAnswerMatchReference$' ./notes
       - name: Exact duplicate contract with cold caches
         run: ./scripts/test.sh -race -count=1 -v -run '^TestCreateExactDuplicateAfterColdCache$' ./internal/store
       - name: Labeled ledger semantics and logical read cost
@@ -246,6 +250,31 @@ jobs:
       - name: Attachment reference enumeration cost
         run: ./scripts/test.sh -race -count=1 -v -run '^TestReferencedAttachmentsPackedRefPasses$' ./internal/store
 
+  answer-match-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      - name: Mixed-version answer edits and deletion preserve indexed matching
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          prior="$RUNNER_TEMP/ccn-answer-v8"
+          git fetch --no-tags --depth=1 origin f7965dac1e02bbec6b5f33d71c437220b67e9c3a
+          git worktree add --detach "$prior" f7965dac1e02bbec6b5f33d71c437220b67e9c3a
+          cp internal/store/answer_prior_writer_process_test.go "$prior/internal/store/"
+          (cd "$prior" && go test -c -o "$RUNNER_TEMP/ccn-answer-v8-writer.test" ./internal/store)
+          CCN_ANSWER_V8_WRITER="$RUNNER_TEMP/ccn-answer-v8-writer.test" ./scripts/test.sh -race -count=1 -v -run '^TestIndexedAnswerMatchesPriorV8Writer$' ./internal/store
+
+      - name: Indexed answer matching regressions and selected-body reads
+        run: ./scripts/test.sh -race -count=1 -v -run '^Test(AnswerMatchTerms|MatchTermsScanner|IndexedAnswerMatch(Reference|SelectedBodies|Transitions|CapturedGeneration))' ./internal/store ./internal/answermatch ./notes
+
+      - name: Full indexed answer query CPU, IO and allocation comparison
+        if: runner.os == 'Linux'
+        run: ./scripts/test.sh -count=1 -v -run '^TestIndexedAnswerMatchQueryCost$' ./notes
+
   test:
     runs-on: ${{ github.event_name == 'schedule' && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 45
@@ -264,7 +293,7 @@ jobs:
         run: ./scripts/test.sh -race -count=1 -v -run '^TestLabeledListsReadOnlySelectedBodies/answer$' ./notes
 
       - name: Answer tokenizer equivalence and allocation cost
-        run: ./scripts/test.sh -count=1 -v -run '^TestMatchTermsScanner' -bench '^BenchmarkMatchTermsScanner$' -benchtime=100x ./notes
+        run: ./scripts/test.sh -count=1 -v -run '^TestMatchTermsScanner' -bench '^BenchmarkMatchTermsScanner$' -benchtime=100x ./internal/answermatch
 
       - name: Reject unfiltered answer matching on the public 0.76.9 baseline
         run: |

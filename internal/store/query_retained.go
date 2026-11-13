@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 
@@ -61,8 +60,21 @@ func queryRowKey(id model.EntityID) string     { return "rows/" + string(id) }
 func queryPostingKey(index, key []byte) string { return string(index) + "/" + string(key) }
 func queryRowPostings(row queryMetadata) []sourcegraph.Mutation {
 	var entries []sourcegraph.Mutation
+	if row.Kind == model.KindAnswer {
+		data, err := json.Marshal(answerMatchRow(row))
+		if err != nil {
+			panic(err)
+		}
+		entries = append(entries, sourcegraph.Mutation{Key: queryPostingKey(queryMetadataAnswerRankingBucket, []byte(row.ID)), Value: data})
+	}
 	add := func(index, prefix []byte) {
 		entries = append(entries, sourcegraph.Mutation{Key: queryPostingKey(index, queryMetadataPostingKey(prefix, row)), Value: []byte(row.ID)})
+	}
+	for _, term := range row.AnswerQuestionTerms {
+		add(queryMetadataQuestionTermsBucket, queryMetadataLabelPrefix(row.Kind, term))
+	}
+	for _, term := range row.AnswerBodyTerms {
+		add(queryMetadataBodyTermsBucket, queryMetadataLabelPrefix(row.Kind, term))
 	}
 	for _, label := range row.Labels {
 		add(queryMetadataLabelsBucket, queryMetadataLabelPrefix(row.Kind, label))
@@ -184,14 +196,21 @@ func (q queryMetadataSource) retainedAt(ctx context.Context, tx *bolt.Tx, genera
 		if err := ctx.Err(); err != nil {
 			return q, false, err
 		}
-		data, err := q.retained.get(queryRowKey(id))
+		key := queryRowKey(id)
+		if q.kind == model.KindAnswer {
+			key = queryPostingKey(queryMetadataAnswerRankingBucket, []byte(id))
+		}
+		data, err := q.retained.get(key)
 		if err != nil {
 			return q, false, err
 		}
 		if data == nil {
 			return q, false, nil
 		}
-		var row queryMetadata
+		var row struct {
+			Tip        model.SHA
+			SkippedOps int `json:"skipped_ops"`
+		}
 		if err := json.Unmarshal(data, &row); err != nil {
 			return q, false, err
 		}
@@ -237,6 +256,14 @@ func readIndexedQuery[T any](ctx context.Context, q queryMetadataSource, read fu
 	run := func(tx *bolt.Tx, writable bool) error {
 		if err := validateQueryMetadataBinding(tx, q); err != nil {
 			return err
+		}
+		synchronized, err := q.synchronizeSource(ctx, tx, writable)
+		if err != nil {
+			return err
+		}
+		if !synchronized {
+			activate = true
+			return nil
 		}
 		bucket := queryGenerationBinding(tx, q.binding)
 		if bucket == nil {
@@ -331,7 +358,7 @@ func (s *Store) validateManagedQueryGenerations(tx *bolt.Tx, updates []gitcmd.Re
 			continue
 		}
 		seen[parsed.Kind] = true
-		binding := s.listCacheName(parsed.Kind, fmt.Appendf(nil, "metadata %d", queryMetadataVersion), foldCacheGeneration, "")
+		binding := s.queryMetadataBindingName(parsed.Kind)
 		if queryMetadataBinding(tx, binding) == nil {
 			continue
 		}

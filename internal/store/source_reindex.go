@@ -278,6 +278,9 @@ func (s *Store) buildReindex(ctx context.Context, snapshot reindexSnapshot, poli
 		if err != nil {
 			return err
 		}
+		if err := root.Put(querySourceKey(s.queryMetadataBindingName(model.KindAnswer)), []byte(current.Token)); err != nil {
+			return err
+		}
 		if err := root.Put(managedReindexBase, base); err != nil {
 			return err
 		}

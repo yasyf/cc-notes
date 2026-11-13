@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yasyf/cc-notes/internal/answermatch"
 	"github.com/yasyf/cc-notes/internal/gitcmd"
 	"github.com/yasyf/cc-notes/internal/gitobj"
 	"github.com/yasyf/cc-notes/internal/refs"
@@ -797,8 +798,7 @@ func searchWords(query string) []string {
 		return []string{strings.ToLower(query)}
 	}
 	kept := slices.DeleteFunc(slices.Clone(words), func(w string) bool {
-		_, stop := matchStopWords[w]
-		return stop || len(w) < matchMinTerm
+		return !answermatch.IsContentWord(w)
 	})
 	if len(kept) == 0 {
 		return words
