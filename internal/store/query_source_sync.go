@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 
@@ -30,6 +31,11 @@ func (q queryMetadataSource) synchronizeSource(ctx context.Context, tx *bolt.Tx,
 	key := querySourceKey(q.binding)
 	token := model.SHA(root.Get(key))
 	if token == "" {
+		prefix := []byte(refs.Root(model.KindAnswer))
+		first, _ := root.Bucket([]byte("refs")).Cursor().Seek(prefix)
+		if !bytes.HasPrefix(first, prefix) {
+			return true, nil
+		}
 		return false, managed.ErrReindex
 	}
 	after, err := sourceRevision(tx, "")

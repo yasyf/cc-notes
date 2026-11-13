@@ -667,6 +667,12 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 		return err
 	}
 	tips := root.Bucket([]byte("refs"))
+	key := querySourceKey(s.queryMetadataBindingName(model.KindAnswer))
+	cursor := model.SHA(root.Get(key))
+	current := model.SHA(root.Get(sourceHeadKey))
+	prefix := []byte(refs.Root(model.KindAnswer))
+	first, _ := tips.Cursor().Seek(prefix)
+	initialize := cursor == "" && !bytes.HasPrefix(first, prefix)
 	batch := make(queryGenerationBatch)
 	for _, update := range intent.Updates {
 		parsed, err := refs.Parse(update.Ref)
@@ -699,13 +705,10 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 	if err := batch.flush(ctx, tx); err != nil {
 		return err
 	}
-	key := querySourceKey(s.queryMetadataBindingName(model.KindAnswer))
-	cursor := model.SHA(root.Get(key))
-	current := model.SHA(root.Get(sourceHeadKey))
 	if err := applySource(tx, intent.Source); err != nil {
 		return err
 	}
-	if cursor != "" && cursor == current {
+	if initialize || cursor != "" && cursor == current {
 		if err := root.Put(key, root.Get(sourceHeadKey)); err != nil {
 			return err
 		}
