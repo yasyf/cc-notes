@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -171,10 +170,4 @@ func printRelevant(out io.Writer, entries []notes.RelevantEntry, jsonOut bool) e
 // STALE -> "[stale]", so an out-of-date doc surfaces flagged when floated.
 func verdictFlag(verdict string) string {
 	return "[" + strings.ToLower(verdict) + "]"
-}
-
-// hasAnchorIn reports whether anchors contains an anchor of the given kind and
-// value.
-func hasAnchorIn(anchors []model.Anchor, kind model.AnchorKind, value string) bool {
-	return slices.Contains(anchors, model.Anchor{Kind: kind, Value: value})
 }

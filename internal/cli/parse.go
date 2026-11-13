@@ -90,13 +90,3 @@ func sortByUpdated[T model.Snapshot](items []T) {
 		return cmp.Compare(a.EntityID(), b.EntityID())
 	})
 }
-
-// hasAll reports whether have contains every element of want.
-func hasAll(have, want []string) bool {
-	for _, w := range want {
-		if !slices.Contains(have, w) {
-			return false
-		}
-	}
-	return true
-}
