@@ -136,7 +136,7 @@ func (r *Repo) referenceCounter(name string) (uint32, bool, error) {
 }
 
 func openPackedReferences(reader io.ReaderAt, size int64) (*packedReferences, error) {
-	p := &packedReferences{reader: reader, size: size}
+	p := &packedReferences{reader: &packedRefReadWindow{reader: reader}, size: size}
 	for p.start < p.size {
 		line, end, err := p.line(p.start)
 		if err != nil {
