@@ -1,1 +1,1 @@
-{"v":1,"lamport":4,"ops":[{"kind":"set_status","status":"in_progress"},{"kind":"set_assignee","assignee":"root"}]}
+{"v":1,"lamport":5,"ops":[{"kind":"add_comment","body":"Active bounded subfix: no-op undoWhere, release of absent answer, and answerDrawn already true currently save whole state. One budgeted implementer in fresh live-card-noop-nov12 lane; independent root review then hosted checks, merge/release/install/verification. Actual-changing-update whole-state persistence remains an explicit follow-up; no blanket task closure after this subfix."}]}
