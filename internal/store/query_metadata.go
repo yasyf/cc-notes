@@ -18,56 +18,27 @@ func queryMetadataVersion(kind model.Kind) int {
 }
 
 type queryMetadata struct {
-	Version             int                       `json:"version"`
-	Binding             string                    `json:"binding"`
-	Tip                 model.SHA                 `json:"tip"`
-	ID                  model.EntityID            `json:"id"`
-	Kind                model.Kind                `json:"kind"`
-	CreatedAt           int64                     `json:"created_at"`
-	UpdatedAt           int64                     `json:"updated_at"`
-	UpdatedTime         time.Time                 `json:"updated_time"`
-	AnswerQuestionTerms []string                  `json:"answer_question_terms,omitempty"`
-	AnswerBodyTerms     []string                  `json:"answer_body_terms,omitempty"`
-	TextDigest          string                    `json:"text_digest,omitempty"`
-	Deleted             bool                      `json:"deleted"`
-	Labels              []string                  `json:"labels"`
-	Anchors             []model.Anchor            `json:"anchors"`
-	SupersededBy        []model.EntityID          `json:"superseded_by"`
-	Branch              model.Branch              `json:"branch"`
-	SkippedOps          int                       `json:"skipped_ops"`
-	DuplicateContent    string                    `json:"duplicate_content"`
-	Witness             []model.AnchorWitness     `json:"witness,omitempty"`
-	VerifiedAt          int64                     `json:"verified_at,omitempty"`
-	StaleAt             int64                     `json:"stale_at,omitempty"`
-	TaskStatus          model.Status              `json:"task_status,omitempty"`
-	Priority            model.Priority            `json:"priority,omitempty"`
-	Assignee            model.Actor               `json:"assignee,omitempty"`
-	BlockedBy           []model.EntityID          `json:"blocked_by,omitempty"`
-	Parent              model.EntityID            `json:"parent,omitempty"`
-	RunTasks            []model.EntityID          `json:"run_tasks,omitempty"`
-	HasRunningRun       bool                      `json:"has_running_run,omitempty"`
-	RunbookStatus       model.RunbookStatus       `json:"runbook_status,omitempty"`
-	LedgerStatus        model.LedgerStatus        `json:"ledger_status,omitempty"`
-	LogEntryCount       int                       `json:"log_entry_count,omitempty"`
-	InvestigationStatus model.InvestigationStatus `json:"investigation_status,omitempty"`
-	OpenFindingCount    int                       `json:"open_finding_count,omitempty"`
-	PlanStatus          model.PlanStatus          `json:"plan_status,omitempty"`
+	StatusRecord
+	UpdatedTime         time.Time        `json:"updated_time"`
+	AnswerQuestionTerms []string         `json:"answer_question_terms,omitempty"`
+	AnswerBodyTerms     []string         `json:"answer_body_terms,omitempty"`
+	TextDigest          string           `json:"text_digest,omitempty"`
+	DuplicateContent    string           `json:"duplicate_content"`
+	Priority            model.Priority   `json:"priority,omitempty"`
+	Parent              model.EntityID   `json:"parent,omitempty"`
+	RunTasks            []model.EntityID `json:"run_tasks,omitempty"`
 }
 
 func projectQueryMetadata(binding string, tip model.SHA, snapshot model.Snapshot) queryMetadata {
 	meta := snapshot.Meta()
 	row := queryMetadata{
-		Version:          queryMetadataVersion(meta.Kind),
-		Binding:          binding,
-		Tip:              tip,
-		ID:               snapshot.EntityID(),
-		Kind:             meta.Kind,
-		CreatedAt:        meta.CreatedAt.Unix(),
-		UpdatedAt:        meta.UpdatedAt.Unix(),
+		StatusRecord: StatusRecord{
+			Version: queryMetadataVersion(meta.Kind), Binding: binding, Tip: tip,
+			ID: snapshot.EntityID(), Kind: meta.Kind,
+			CreatedAt: meta.CreatedAt.Unix(), UpdatedAt: meta.UpdatedAt.Unix(),
+			Deleted: meta.Deleted, Labels: slices.Clone(meta.Labels), SkippedOps: meta.SkippedOps,
+		},
 		UpdatedTime:      meta.UpdatedAt,
-		Deleted:          meta.Deleted,
-		Labels:           slices.Clone(meta.Labels),
-		SkippedOps:       meta.SkippedOps,
 		DuplicateContent: duplicateFingerprint(snapshot),
 	}
 	var anchors []model.Anchor

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -16,7 +17,34 @@ import (
 )
 
 // StatusRecord carries the captured, payload-free inputs of the status classifiers.
-type StatusRecord queryMetadata
+type StatusRecord struct {
+	Version             int                       `json:"version"`
+	Binding             string                    `json:"binding"`
+	Tip                 model.SHA                 `json:"tip"`
+	ID                  model.EntityID            `json:"id"`
+	Kind                model.Kind                `json:"kind"`
+	CreatedAt           int64                     `json:"created_at"`
+	UpdatedAt           int64                     `json:"updated_at"`
+	Deleted             bool                      `json:"deleted"`
+	Labels              []string                  `json:"labels"`
+	Anchors             []model.Anchor            `json:"anchors"`
+	SupersededBy        []model.EntityID          `json:"superseded_by"`
+	Branch              model.Branch              `json:"branch"`
+	SkippedOps          int                       `json:"skipped_ops"`
+	Witness             []model.AnchorWitness     `json:"witness,omitempty"`
+	VerifiedAt          int64                     `json:"verified_at,omitempty"`
+	StaleAt             int64                     `json:"stale_at,omitempty"`
+	TaskStatus          model.Status              `json:"task_status,omitempty"`
+	Assignee            model.Actor               `json:"assignee,omitempty"`
+	BlockedBy           []model.EntityID          `json:"blocked_by,omitempty"`
+	HasRunningRun       bool                      `json:"has_running_run,omitempty"`
+	RunbookStatus       model.RunbookStatus       `json:"runbook_status,omitempty"`
+	LedgerStatus        model.LedgerStatus        `json:"ledger_status,omitempty"`
+	LogEntryCount       int                       `json:"log_entry_count,omitempty"`
+	InvestigationStatus model.InvestigationStatus `json:"investigation_status,omitempty"`
+	OpenFindingCount    int                       `json:"open_finding_count,omitempty"`
+	PlanStatus          model.PlanStatus          `json:"plan_status,omitempty"`
+}
 
 // StatusMetadata retains one ref universe for both metadata and exposed bodies.
 type StatusMetadata struct {
@@ -51,14 +79,14 @@ func (s *Store) StatusMetadata(ctx context.Context, kinds ...model.Kind) (Status
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				row, err := decodeQueryMetadata(tx, source, readQueryMetadata(tx, source.binding, id))
+				row, err := decodeStatusMetadata(tx, source, readQueryMetadata(tx, source.binding, id))
 				if err != nil {
 					return err
 				}
 				if row.ID != id {
 					return fmt.Errorf("status metadata identity differs from %s", id)
 				}
-				rows = append(rows, StatusRecord(row))
+				rows = append(rows, row)
 			}
 			slices.SortFunc(rows, func(a, b StatusRecord) int {
 				if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
@@ -83,6 +111,17 @@ func (s *Store) StatusMetadata(ctx context.Context, kinds ...model.Kind) (Status
 		return StatusMetadata{}, false, err
 	}
 	return result, hit, nil
+}
+
+func decodeStatusMetadata(tx *bolt.Tx, source queryMetadataSource, data []byte) (StatusRecord, error) {
+	var row StatusRecord
+	if err := json.Unmarshal(data, &row); err != nil {
+		return StatusRecord{}, err
+	}
+	if err := validateQueryMetadata(tx, source, queryMetadata{StatusRecord: row}); err != nil {
+		return StatusRecord{}, err
+	}
+	return row, nil
 }
 
 func captureStatusMetadataSources(ctx context.Context, s *Store, kinds ...model.Kind) (pinned *Store, sources []queryMetadataSource, err error) {

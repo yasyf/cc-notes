@@ -43,12 +43,14 @@ func TestQueryMetadataProjection(t *testing.T) {
 			meta := tc.snapshot.Meta()
 			got := projectQueryMetadata("records-binding", "captured-tip", tc.snapshot)
 			want := queryMetadata{
-				Version: queryMetadataVersion(meta.Kind), Binding: "records-binding", Tip: "captured-tip",
-				ID: tc.snapshot.EntityID(), Kind: meta.Kind,
-				CreatedAt: meta.CreatedAt.Unix(), UpdatedAt: meta.UpdatedAt.Unix(),
-				UpdatedTime: meta.UpdatedAt,
-				Deleted:     meta.Deleted, Labels: labels, Anchors: tc.anchors,
-				SupersededBy: tc.supersededBy, Branch: tc.branch, SkippedOps: meta.SkippedOps,
+				StatusRecord: StatusRecord{
+					Version: queryMetadataVersion(meta.Kind), Binding: "records-binding", Tip: "captured-tip",
+					ID: tc.snapshot.EntityID(), Kind: meta.Kind,
+					CreatedAt: meta.CreatedAt.Unix(), UpdatedAt: meta.UpdatedAt.Unix(),
+					Deleted: meta.Deleted, Labels: labels, Anchors: tc.anchors,
+					SupersededBy: tc.supersededBy, Branch: tc.branch, SkippedOps: meta.SkippedOps,
+				},
+				UpdatedTime:      meta.UpdatedAt,
 				DuplicateContent: duplicateFingerprint(tc.snapshot),
 			}
 			if answer, ok := tc.snapshot.(model.Answer); ok {
