@@ -448,10 +448,14 @@ func TestReindexSwapFoldsWritersIntoAMintedBuild(t *testing.T) {
 	if tip, err := s.Repo.Tip(t.Context(), sourceindex.Ref); err != nil || tip != head.Token {
 		t.Fatalf("source ref=%s, %v; managed head=%s", tip, err, head.Token)
 	}
-	for _, snapshot := range []model.Snapshot{extended, created} {
-		key := "entity:note:" + string(snapshot.EntityID())
-		if _, found, err := s.SourceObject(t.Context(), head.Token, key); err != nil || !found {
-			t.Fatalf("swapped projection %s found=%t, %v", key, found, err)
+	for _, projection := range []struct {
+		name     string
+		snapshot model.Snapshot
+	}{{"extended", raw.Snapshot}, {"created", created}} {
+		key := "entity:note:" + string(projection.snapshot.EntityID())
+		object, found, err := s.SourceObject(t.Context(), head.Token, key)
+		if err != nil || !found || object.EntityTip != projection.snapshot.Meta().Head {
+			t.Fatalf("swapped %s projection %s tip=%s found=%t, %v; want tip=%s", projection.name, key, object.EntityTip, found, err, projection.snapshot.Meta().Head)
 		}
 	}
 	later, err := s.Append(t.Context(), createdRef, []model.Op{model.SetBody{Body: "written after the swap"}})

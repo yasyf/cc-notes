@@ -276,13 +276,11 @@ func (s *Store) extendSource(ctx context.Context, tx *bolt.Tx, previous, content
 		affected := make(map[string]struct{}, len(changed))
 		dependencyPrefixes := make(map[string]struct{})
 		for _, update := range changed {
-			old, found, err := graph.entityRef(update.Ref)
+			old, _, err := graph.entityRef(update.Ref)
 			if err != nil {
 				return err
 			}
-			if found {
-				before[update.Ref] = old
-			}
+			before[update.Ref] = old
 			next, present := values[update.Ref]
 			collectSourceDependents(old, next, dependencyPrefixes)
 			affected[update.Ref] = struct{}{}
