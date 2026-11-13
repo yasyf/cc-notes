@@ -38,11 +38,20 @@ func regexMatchTerms(text string) map[string]struct{} {
 }
 
 func TestMatchTermsScannerMatchesRegex(t *testing.T) {
-	texts := []string{
+	check := func(text string) {
+		t.Helper()
+		got, want := matchTerms(text), regexMatchTerms(text)
+		if !maps.Equal(got, want) {
+			t.Fatalf("text=%q got=%v want=%v", text, got, want)
+		}
+	}
+	for _, text := range []string{
 		"", "edge403s", "a1b2c3", "1a2b3c", "a.1b-2c", "a..b--c.-403s",
 		"GSK edge-403 HTTP500errors 123 12 1234 tests class grass the THE",
 		"Kelvin İSTANBUL Straße café αEDGE403β 🐋 ẞABC123def",
 		".foo-123.bar456baz-789..", "http://foo.example.com/v1/cache?code=403",
+	} {
+		check(text)
 	}
 	random := rand.New(rand.NewPCG(31, 47))
 	alphabet := []byte("abcxyzABCXYZ0123456789.-_ !/\n\x00\xff")
@@ -51,13 +60,7 @@ func TestMatchTermsScannerMatchesRegex(t *testing.T) {
 		for i := range data {
 			data[i] = alphabet[random.IntN(len(alphabet))]
 		}
-		texts = append(texts, string(data))
-	}
-	for _, text := range texts {
-		got, want := matchTerms(text), regexMatchTerms(text)
-		if !maps.Equal(got, want) {
-			t.Fatalf("text=%q got=%v want=%v", text, got, want)
-		}
+		check(string(data))
 	}
 }
 
