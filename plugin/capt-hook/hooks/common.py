@@ -6,6 +6,9 @@ import json
 import os
 import shutil
 import subprocess
+import threading
+import time
+from collections import OrderedDict
 from collections.abc import Sequence
 from itertools import takewhile
 from pathlib import Path
@@ -29,12 +32,21 @@ LLM_INPUT_CAP = 6000
 COMPACT_DIGEST_BUDGET = 1200
 COMPACT_ANSWER_BUDGET = 1200
 PROMPT_ANSWER_BUDGET = 600
+ANSWER_READ_CACHE_SIZE = 128
+ANSWER_READ_TTL = 600
+AUTHORITY_FILES = ("authority-v3.db", "authority-v3.db-wal")
+STORAGE_BINDING = "commonDir"
 
 MAX_TITLE_BYTES = 256
 
 RECORD_KINDS = ("note", "doc", "log", "task", "papercut")
 
 MCP_TOOL_PREFIX = "mcp__plugin_cc-notes_cc-notes__"
+
+type FileStamp = tuple[int, int, int] | None
+
+ANSWER_READS: OrderedDict[tuple[str, tuple[FileStamp, ...], tuple[str, ...], int], str] = OrderedDict()
+ANSWER_READS_LOCK = threading.Lock()
 
 
 class SessionAnswers(BaseModel):
@@ -152,6 +164,57 @@ def cc_notes_installed() -> bool:
 
 def run_cc_notes(evt: BaseHookEvent, *args: str) -> str | None:
     return evt.ctx.call_cli(["cc-notes", *args], timeout=10, env={"PATH": cc_notes_search_path()}, throw=False)
+
+
+def common_dir(start: Path) -> Path | None:
+    for dot_git in (directory / ".git" for directory in (start, *start.parents)):
+        if dot_git.is_dir():
+            git = dot_git
+        elif dot_git.is_file():
+            git = (dot_git.parent / dot_git.read_text().removeprefix("gitdir:").strip()).resolve()
+        else:
+            continue
+        return (git / (git / "commondir").read_text().strip()).resolve() if (git / "commondir").is_file() else git
+    return None
+
+
+def config_text(common: Path) -> str:
+    try:
+        return (common / "config").read_text(errors="replace")
+    except OSError:
+        return ""
+
+
+def file_stamp(path: Path) -> FileStamp:
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return info.st_ino, info.st_mtime_ns, info.st_size
+
+
+def authority_stamp(evt: BaseHookEvent) -> tuple[str, tuple[FileStamp, ...]] | None:
+    if not evt.cwd or (common := common_dir(Path(evt.cwd))) is None or STORAGE_BINDING in config_text(common):
+        return None
+    authority = common / "cc-notes-managed"
+    stamps = tuple(file_stamp(authority / name) for name in AUTHORITY_FILES)
+    return None if stamps[0] is None else (os.fspath(authority), stamps)
+
+
+def read_answers(evt: BaseHookEvent, *args: str) -> str | None:
+    if (stamp := authority_stamp(evt)) is None:
+        return run_cc_notes(evt, *args)
+    key = (*stamp, args, int(time.time() // ANSWER_READ_TTL))
+    with ANSWER_READS_LOCK:
+        if key in ANSWER_READS:
+            ANSWER_READS.move_to_end(key)
+            return ANSWER_READS[key]
+    if (out := run_cc_notes(evt, *args)) is not None:
+        with ANSWER_READS_LOCK:
+            ANSWER_READS[key] = out
+            while len(ANSWER_READS) > ANSWER_READ_CACHE_SIZE:
+                ANSWER_READS.popitem(last=False)
+    return out
 
 
 def json_field(out: str | None, key: str) -> str:
@@ -407,7 +470,7 @@ def current_branch(evt: BaseHookEvent) -> str:
 
 
 def durable_answers(evt: BaseHookEvent, *anchors: str) -> list[dict[str, Any]]:
-    out = run_cc_notes(evt, "answer", "list", "--json", "--label", "scope:durable", *anchors, "--limit", str(ANSWER_CANDIDATE_LIMIT))
+    out = read_answers(evt, "answer", "list", "--json", "--label", "scope:durable", *anchors, "--limit", str(ANSWER_CANDIDATE_LIMIT))
     return [a for a in parse_answers(out) if not a.get("stale_at")]
 
 
@@ -453,7 +516,7 @@ def remember_first_prompt(evt: BaseHookEvent, text: str) -> bool:
 
 
 def matched_answers(evt: BaseHookEvent, text: str) -> list[dict[str, Any]]:
-    return parse_answers(run_cc_notes(evt, "answer", "match", "--json", "--label", "scope:durable", "--", text[:LLM_INPUT_CAP])) if text.strip() else []
+    return parse_answers(read_answers(evt, "answer", "match", "--json", "--label", "scope:durable", "--", text[:LLM_INPUT_CAP])) if text.strip() else []
 
 
 def seen_answer_ids(evt: BaseHookEvent) -> set[str]:
