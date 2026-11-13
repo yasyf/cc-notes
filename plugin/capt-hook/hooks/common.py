@@ -17,6 +17,8 @@ from typing import Any
 from captain_hook import BaseHookEvent, CommandLine, CustomCondition, SessionSlot
 from captain_hook.session import state_root
 from captain_hook.state import SeenKeys
+from captain_hook.util import reqenv
+from captain_hook.util.paths import resolve_project_dir
 from pydantic import BaseModel, Field
 
 SESSION_TASK_CAP = 7
@@ -35,7 +37,7 @@ PROMPT_ANSWER_BUDGET = 600
 ANSWER_READ_CACHE_SIZE = 128
 ANSWER_READ_TTL = 600
 AUTHORITY_FILES = ("authority-v3.db", "authority-v3.db-wal")
-STORAGE_BINDING = "commonDir"
+STORAGE_KEY = "storage"
 
 MAX_TITLE_BYTES = 256
 
@@ -193,8 +195,9 @@ def file_stamp(path: Path) -> FileStamp:
     return info.st_ino, info.st_mtime_ns, info.st_size
 
 
-def authority_stamp(evt: BaseHookEvent) -> tuple[str, tuple[FileStamp, ...]] | None:
-    if not evt.cwd or (common := common_dir(Path(evt.cwd))) is None or STORAGE_BINDING in config_text(common):
+def authority_stamp() -> tuple[str, tuple[FileStamp, ...]] | None:
+    repo = Path(resolve_project_dir() or reqenv.cwd()) / (reqenv.getenv("CCN_REPO") or "")
+    if (common := common_dir(repo)) is None or STORAGE_KEY in config_text(common).lower():
         return None
     authority = common / "cc-notes-managed"
     stamps = tuple(file_stamp(authority / name) for name in AUTHORITY_FILES)
@@ -202,7 +205,7 @@ def authority_stamp(evt: BaseHookEvent) -> tuple[str, tuple[FileStamp, ...]] | N
 
 
 def read_answers(evt: BaseHookEvent, *args: str) -> str | None:
-    if (stamp := authority_stamp(evt)) is None:
+    if (stamp := authority_stamp()) is None:
         return run_cc_notes(evt, *args)
     key = (*stamp, args, int(time.time() // ANSWER_READ_TTL))
     with ANSWER_READS_LOCK:
