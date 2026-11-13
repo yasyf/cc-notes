@@ -250,12 +250,11 @@ jobs:
       - name: Attachment reference enumeration cost
         run: ./scripts/test.sh -race -count=1 -v -run '^TestReferencedAttachmentsPackedRefPasses$' ./internal/store
 
-  test:
-    runs-on: ${{ github.event_name == 'schedule' && 'macos-latest' || 'ubuntu-latest' }}
-    timeout-minutes: 45
+  answer-match-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-
       - uses: ./.github/actions/setup
 
       - name: Mixed-version answer edits and deletion preserve indexed matching
@@ -275,6 +274,14 @@ jobs:
       - name: Full indexed answer query CPU, IO and allocation comparison
         if: runner.os == 'Linux'
         run: ./scripts/test.sh -count=1 -v -run '^TestIndexedAnswerMatchQueryCost$' ./notes
+
+  test:
+    runs-on: ${{ github.event_name == 'schedule' && 'macos-latest' || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup
 
       - name: go vet
         run: go vet ./...
