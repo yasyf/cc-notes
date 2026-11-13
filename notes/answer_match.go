@@ -5,7 +5,6 @@ import (
 	"context"
 	"maps"
 	"math"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -29,19 +28,13 @@ const (
 	matchStatusLen   = 3
 )
 
-var (
-	matchWord       = regexp.MustCompile(`[a-z0-9]+(?:[.-][a-z0-9]+)*`)
-	matchLetterNum  = regexp.MustCompile(`([a-z])([0-9])`)
-	matchNumLetter  = regexp.MustCompile(`([0-9])([a-z])`)
-	matchWordJoiner = regexp.MustCompile(`[.-]`)
-	matchStopWords  = func() map[string]struct{} {
-		words := map[string]struct{}{}
-		for _, word := range strings.Fields("the and for that with this from you are not but all any can has have was were its our his her him she they them their what when which who how why will would should could into out over been being than then there here just only also more most some such very each both about after before because while where does did done yes get got use used using one two per via own new old") {
-			words[word] = struct{}{}
-		}
-		return words
-	}()
-)
+var matchStopWords = func() map[string]struct{} {
+	words := map[string]struct{}{}
+	for _, word := range strings.Fields("the and for that with this from you are not but all any can has have was were its our his her him she they them their what when which who how why will would should could into out over been being than then there here just only also more most some such very each both about after before because while where does did done yes get got use used using one two per via own new old") {
+		words[word] = struct{}{}
+	}
+	return words
+}()
 
 // AnswerMatch is one answer a text touches: the phrase label found in the text,
 // or the rare terms the two share.
@@ -178,12 +171,8 @@ func plainLabels(tags []string) []string {
 	return slices.DeleteFunc(slices.Clone(tags), func(tag string) bool { return strings.Contains(tag, ":") })
 }
 
-// matchTerms splits text into its comparable words: lowercased, split where a
-// letter meets a digit so "edge403" reads as edge and 403, with each dotted or
-// hyphenated word also kept whole, and a trailing plural s dropped. A number
-// counts only at three digits, the width of a status code.
 func matchTerms(text string) map[string]struct{} {
-	spaced := matchNumLetter.ReplaceAllString(matchLetterNum.ReplaceAllString(strings.ToLower(text), "$1 $2"), "$1 $2")
+	text = strings.ToLower(text)
 	terms := map[string]struct{}{}
 	add := func(word string) {
 		_, stop := matchStopWords[word]
@@ -195,13 +184,48 @@ func matchTerms(text string) map[string]struct{} {
 		}
 		terms[word] = struct{}{}
 	}
-	for _, word := range matchWord.FindAllString(spaced, -1) {
-		add(word)
-		for _, part := range matchWordJoiner.Split(word, -1) {
-			add(part)
+	for i := 0; i < len(text); {
+		if !matchAlphaNum(text[i]) {
+			i++
+			continue
+		}
+		start := i
+		i++
+		for i < len(text) {
+			if matchAlphaNum(text[i]) {
+				if matchDigit(text[i]) != matchDigit(text[i-1]) {
+					break
+				}
+				i++
+				continue
+			}
+			if (text[i] == '.' || text[i] == '-') && i+1 < len(text) && matchAlphaNum(text[i+1]) {
+				i += 2
+				continue
+			}
+			break
+		}
+		add(text[start:i])
+		part := start
+		for j := start; j < i; j++ {
+			if text[j] == '.' || text[j] == '-' {
+				add(text[part:j])
+				part = j + 1
+			}
+		}
+		if part != start {
+			add(text[part:i])
 		}
 	}
 	return terms
+}
+
+func matchAlphaNum(b byte) bool {
+	return b >= 'a' && b <= 'z' || matchDigit(b)
+}
+
+func matchDigit(b byte) bool {
+	return b >= '0' && b <= '9'
 }
 
 func isDigits(word string) bool {

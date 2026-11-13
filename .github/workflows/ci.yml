@@ -263,6 +263,9 @@ jobs:
       - name: Answer matching reads only selected bodies
         run: ./scripts/test.sh -race -count=1 -v -run '^TestLabeledListsReadOnlySelectedBodies/answer$' ./notes
 
+      - name: Answer tokenizer equivalence and allocation cost
+        run: ./scripts/test.sh -count=1 -v -run '^TestMatchTermsScanner' -bench '^BenchmarkMatchTermsScanner$' -benchtime=100x ./notes
+
       - name: Reject unfiltered answer matching on the public 0.76.9 baseline
         run: |
           set -euo pipefail
