@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -9,12 +10,16 @@ from typing import Any, Literal, NamedTuple
 
 from captain_hook import (
     Allow,
+    Annotated,
+    BaseHookEvent,
     Event,
     HookResult,
     Input,
     PostToolUseEvent,
+    PreToolUseEvent,
     Prompt,
     SessionStartEvent,
+    TaskCall,
     Tool,
     UserPromptSubmitEvent,
     on,
@@ -57,6 +62,8 @@ RECENT_ANSWER_LIMIT = 100
 DEDUP_WINDOW = timedelta(hours=24)
 PROMPT_ANSWERS_HEADER = "Durable answers bear on this prompt; honor them. `cc-notes answer show <id>` reads one:"
 RESTORE_ANSWERS_HEADER = "Durable answers from this session; honor them:"
+SEND_ANSWER_HEADER = "A durable answer bears on this message. Honor it, then send the same text again to pass:"
+SENT_TEXTS_SCOPE = "answer-gated-sends"
 CAPTURE_LABELS = ("from:owner", "source:askuserquestion")
 STANDING_ASK_RE = re.compile(r"\b(?:rules?|standing|always|never)\b", re.IGNORECASE)
 STANDING_REPLY_RE = re.compile(r"\b(?:always|never|going forward)\b", re.IGNORECASE)
@@ -370,9 +377,9 @@ def title_line(answer: dict[str, Any]) -> str:
     return f"{short_id(answer['id'])} {answer.get('title', '')}"
 
 
-def pick_prompt_answer(evt: UserPromptSubmitEvent, fresh: list[dict[str, Any]]) -> dict[str, Any] | None:
+def pick_prompt_answer(evt: BaseHookEvent, text: str, fresh: list[dict[str, Any]]) -> dict[str, Any] | None:
     asked = {"answer": Label(PROMPT_ANSWER_INSTRUCTIONS, answer_options(fresh, "The prompt bears on none of these answers."))}
-    match (decision := evt.decide((evt.user_prompt or "")[:LLM_INPUT_CAP], asked)) and decision.answers["answer"]:
+    match (decision := evt.decide(text[:LLM_INPUT_CAP], asked)) and decision.answers["answer"]:
         case LabelAnswer(choice=choice) if choice != NO_ANSWER:
             return next((a for a in fresh if a["id"] == choice), None)
     return None
@@ -391,7 +398,7 @@ def stage_prompt_answers(evt: UserPromptSubmitEvent) -> None:
     named = matched_answers(evt, prompt)
     if not (fresh := unseen_answers(evt, list({a["id"]: a for a in [*branch_answers(evt), *named]}.values()))):
         return
-    if not (picked := pick_prompt_answer(evt, fresh)):
+    if not (picked := pick_prompt_answer(evt, prompt, fresh)):
         return
     with evt.ctx.s[PromptAnswerPicks].mutate() as state:
         state.lines[picked["id"]] = title_line(picked)
@@ -410,6 +417,34 @@ def float_prompt_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
     if not (lines := remember_answer_lines(evt, dict(zip(fresh, shown)))):
         return None
     return evt.warn(PROMPT_ANSWERS_HEADER, *lines)
+
+
+def outgoing_text(evt: PreToolUseEvent) -> str:
+    match evt.input:
+        case TaskCall(prompt=prompt):
+            return prompt
+    message = evt.input.raw.get("message")
+    return message if isinstance(message, str) else ""
+
+
+@on(
+    Event.PreToolUse,
+    only_if=[Tool("Agent", "SendMessage"), CcNotesAvailable()],
+    skip_if=[Annotated("raw")],
+    max_fires=None,
+    tests={
+        Input(tool="SendMessage", tool_input={"to": "lead", "message": {"type": "shutdown_response", "approve": True}}): Allow(),
+        Input(tool="Edit", file="m.py"): Allow(),
+    },
+)
+def gate_sends_on_answers(evt: PreToolUseEvent) -> HookResult | None:
+    text = outgoing_text(evt)
+    if not text.strip() or not evt.ctx.s.once(hashlib.blake2b(text.encode(), digest_size=16).hexdigest(), scope=SENT_TEXTS_SCOPE):
+        return None
+    if not (named := matched_answers(evt, text)) or not (picked := pick_prompt_answer(evt, text, named)):
+        return None
+    remember_answers(evt, [picked])
+    return evt.block(f"{SEND_ANSWER_HEADER}\n```\n{answer_line(picked)}\n```")
 
 
 def current_answers(evt: SessionStartEvent, ids: list[str]) -> list[dict[str, Any]]:

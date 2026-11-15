@@ -53,7 +53,7 @@ def float_session_answers(evt: UserPromptSubmitEvent) -> HookResult | None:
         return None
     prompt = evt.user_prompt or ""
     named = [] if remember_first_prompt(evt, prompt) else unseen_answers(evt, matched_answers(evt, prompt))
-    picked = [answer] if named and (answer := pick_prompt_answer(evt, named)) else []
+    picked = [answer] if named and (answer := pick_prompt_answer(evt, prompt, named)) else []
     fresh = unseen_answers(evt, list({a["id"]: a for a in [*picked, *branch_answers(evt)]}.values()))
     if not fresh:
         return None
