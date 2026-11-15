@@ -12,12 +12,15 @@ import (
 )
 
 type queryMetadataSource struct {
-	store    *Store
-	kind     model.Kind
-	binding  string
-	tips     map[model.EntityID]model.SHA
-	pinned   bool
-	retained *retainedQuery
+	store   *Store
+	kind    model.Kind
+	binding string
+	tips    map[model.EntityID]model.SHA
+	pinned  bool
+	// deferActivation leaves activating the generation it reads to the
+	// publication that follows, for a read inside a write.
+	deferActivation bool
+	retained        *retainedQuery
 }
 
 func queryMetadataIdentity(ctx context.Context, s *Store, kind model.Kind) (queryMetadataSource, error) {

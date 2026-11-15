@@ -197,6 +197,8 @@ func TestDocListFullUsesNativeRefs(t *testing.T) {
 
 func TestDocShowReadsOneCorpusAndOpensOneStore(t *testing.T) {
 	dir := initRepo(t)
+	// A ceiling routes discovery through rev-parse, so the trace sees each store open.
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 	chain := extendChain(t, dir, "progress:x", nil, 2)
 	trace := traceGit(t)
 	for _, size := range []int{2, 6} {

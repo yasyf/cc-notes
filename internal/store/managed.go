@@ -666,6 +666,9 @@ func (s *Store) applyManaged(ctx context.Context, tx *bolt.Tx, intent managedInt
 	if err != nil {
 		return err
 	}
+	if err := s.activations.apply(tx); err != nil {
+		return err
+	}
 	tips := root.Bucket([]byte("refs"))
 	key := querySourceKey(s.queryMetadataBindingName(model.KindAnswer))
 	cursor := model.SHA(root.Get(key))

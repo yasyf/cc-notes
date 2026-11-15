@@ -10,7 +10,7 @@ import (
 	"github.com/yasyf/cc-notes/internal/gittest"
 )
 
-func TestTaskAddStartsThreeGitProcesses(t *testing.T) {
+func TestTaskAddStartsTwoGitProcesses(t *testing.T) {
 	dir := gittest.InitRepo(t)
 	gittest.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
 	gittest.Git(t, dir, "remote", "add", "origin", "https://example.invalid/none.git")
@@ -35,7 +35,7 @@ func TestTaskAddStartsThreeGitProcesses(t *testing.T) {
 		}
 		commands = append(commands, strings.Fields(command)[0])
 	}
-	if want := []string{"rev-parse", "config", "update-ref"}; !reflect.DeepEqual(commands, want) {
+	if want := []string{"config", "update-ref"}; !reflect.DeepEqual(commands, want) {
 		t.Fatalf("git processes = %q, want %q", commands, want)
 	}
 }

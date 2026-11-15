@@ -303,8 +303,12 @@ func readIndexedQuery[T any](ctx context.Context, q queryMetadataSource, read fu
 		}
 		advance := (!q.pinned && active != current) || bucket.Get(queryActiveRoot) == nil
 		if advance && !writable {
-			activate = true
-			return nil
+			if !q.deferActivation || q.pinned {
+				activate = true
+				return nil
+			}
+			q.store.activations.request(q.binding, bucket.Get(queryCurrentRoot))
+			advance = false
 		}
 		value, err = read(tx, selected)
 		if err != nil {
