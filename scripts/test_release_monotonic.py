@@ -16,6 +16,8 @@ class PluginVersionTests(unittest.TestCase):
         self.seed = self.root / "seed"
         self.checkout = self.root / "checkout"
         self.manifest = Path("plugin/.claude-plugin/plugin.json")
+        self.descriptor = Path("plugin/bin/cc-notes.binrun")
+        self.rendered = self.root / "cc-notes.binrun"
         self.env = {
             key: value
             for key, value in os.environ.items()
@@ -27,10 +29,13 @@ class PluginVersionTests(unittest.TestCase):
             "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.com",
             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@example.com",
+            "DESCRIPTOR": str(self.rendered),
         }
         self.git(self.root, "init", "--bare", "--initial-branch=main", str(self.remote))
         self.git(self.root, "clone", str(self.remote), str(self.seed))
         self.write_manifest(self.seed, "1.0.9")
+        (self.seed / self.descriptor).parent.mkdir(parents=True)
+        (self.seed / self.descriptor).write_text("descriptor 1.0.9\n")
         (self.seed / "unrelated.txt").write_text("initial\n")
         self.git(self.seed, "add", ".")
         self.git(self.seed, "commit", "-m", "initial")
@@ -61,7 +66,11 @@ class PluginVersionTests(unittest.TestCase):
     def current(self):
         return json.loads(self.git(self.root, "--git-dir", str(self.remote), "show", f"main:{self.manifest}"))
 
+    def published_descriptor(self):
+        return self.git(self.root, "--git-dir", str(self.remote), "show", f"main:{self.descriptor}")
+
     def publish(self, version):
+        self.rendered.write_text(f"descriptor {version}\n")
         result = subprocess.run(
             ["bash", os.environ["SYNC_PLUGIN_SCRIPT"]], cwd=self.checkout,
             env=self.env | {"TAG": "v" + version}, capture_output=True,
@@ -102,6 +111,13 @@ class PluginVersionTests(unittest.TestCase):
         self.publish("1.0.10")
         self.publish("1.0.11")
         self.assertEqual(self.head(), before)
+
+    def test_descriptor_moves_only_with_the_manifest(self):
+        self.clone_checkout()
+        self.publish("1.0.10")
+        self.assertEqual(self.published_descriptor(), "descriptor 1.0.10")
+        self.publish("1.0.9")
+        self.assertEqual(self.published_descriptor(), "descriptor 1.0.10")
 
     def test_rc_order_and_release_transition(self):
         self.advance("1.0.10-rc.2")

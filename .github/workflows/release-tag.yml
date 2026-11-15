@@ -20,6 +20,7 @@ jobs:
         model
         notes
         web
+        plugin/bin
         plugin/*.go
         plugin/workflows
         go.mod
