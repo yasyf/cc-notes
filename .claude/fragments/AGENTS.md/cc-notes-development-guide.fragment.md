@@ -28,7 +28,7 @@ cc-notes/
 │   ├── gittest/      #   shared real-git test fixtures — environment scrub, git runner, repo bootstrappers
 │   └── version/      #   ldflags-injected build metadata
 ├── helper-app/       # XcodeGen fixed signed CCNotesHelper.app packaging input
-├── plugin/           # Claude Code plugin — capt-hook pack (hooks/), using-cc-notes skill + references (skills/), embedded CI workflow (workflows/), bundled .mcp.json
+├── plugin/           # Claude Code plugin — capt-hook pack (hooks/), using-cc-notes skill + references (skills/), embedded CI workflow (workflows/), bundled .mcp.json, and bin/cc-notes and bin/ccn, which run the release its bin/cc-notes.binrun pins through binrun (scripts/install-binary.sh)
 ├── web/              # viz single-page app (Vite + TypeScript) — dist/ embedded by `-tags webui` builds (embed.go / embed_stub.go)
 ├── scripts/          # install.sh — curl-able release-binary installer
 ├── .github/          # GitHub Actions workflows (CI, tag-driven releases; release.yml renders + publishes the Homebrew formula to the shared yasyf/homebrew-tap)
