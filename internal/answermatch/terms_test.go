@@ -4,6 +4,7 @@ import (
 	"maps"
 	"math/rand/v2"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -44,6 +45,9 @@ func TestMatchTermsScannerMatchesRegex(t *testing.T) {
 		if !maps.Equal(got, want) {
 			t.Fatalf("text=%q got=%v want=%v", text, got, want)
 		}
+		if named := slices.Sorted(maps.Keys(Names(text))); !slices.Equal(named, slices.Sorted(maps.Keys(want))) {
+			t.Fatalf("text=%q names=%v want terms %v", text, named, want)
+		}
 	}
 	for _, text := range []string{
 		"", "edge403s", "a1b2c3", "1a2b3c", "a.1b-2c", "a..b--c.-403s",
@@ -61,6 +65,22 @@ func TestMatchTermsScannerMatchesRegex(t *testing.T) {
 			data[i] = alphabet[random.IntN(len(alphabet))]
 		}
 		check(string(data))
+	}
+}
+
+func TestNamesGivesEachJoinedNameOneNumber(t *testing.T) {
+	byName := map[int][]string{}
+	for term, name := range Names("ship the metrics stack on acme-east2-prod, then prod and acme-east2-staging") {
+		byName[name] = append(byName[name], term)
+	}
+	got := make([][]string, 0, len(byName))
+	for _, terms := range byName {
+		got = append(got, slices.Sorted(slices.Values(terms)))
+	}
+	slices.SortFunc(got, slices.Compare)
+	want := [][]string{{"2-prod", "2-staging", "acme", "acme-east", "east", "prod", "staging"}, {"metric"}, {"ship"}, {"stack"}}
+	if !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("names = %v, want %v", got, want)
 	}
 }
 

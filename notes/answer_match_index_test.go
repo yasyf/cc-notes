@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yasyf/cc-notes/internal/answermatch"
 	"github.com/yasyf/cc-notes/internal/gittest"
 	"github.com/yasyf/cc-notes/model"
 )
@@ -61,12 +62,13 @@ func TestIndexedAnswerMatchReference(t *testing.T) {
 	}
 	answers = slices.DeleteFunc(answers, func(a model.Answer) bool { return a.StaleAt != 0 })
 	text := "nebula quasar orbit"
-	asked := slices.Sorted(maps.Keys(matchTerms(text)))
+	names := answermatch.Names(text)
+	asked := slices.Sorted(maps.Keys(names))
 	corpus, err := c.s.IndexedAnswerMatches(t.Context(), nil, asked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	indexed := testing.AllocsPerRun(3, func() { scoreAnswerMatches(corpus, text, asked, -1, false) })
+	indexed := testing.AllocsPerRun(3, func() { scoreAnswerMatches(corpus, text, names, asked, -1, false) })
 	reference := testing.AllocsPerRun(3, func() { matchAnswers(answers, text, -1, false) })
 	t.Logf("indexed_score_allocs=%.0f reference_score_allocs=%.0f ratio=%.3f", indexed, reference, indexed/reference)
 	if indexed >= reference {

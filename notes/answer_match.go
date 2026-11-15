@@ -40,11 +40,13 @@ type AnswerMatch struct {
 // MatchAnswers ranks the live, unexpired answers against the words of text, so
 // an answer reaches a reader with no anchor and no search of their own. Phrase
 // matches come first. A word's rarity runs from 1 for a word only one answer
-// uses down to 0 for one they all use. Any other answer needs two rare words of
+// uses down to 0 for one they all use. Any other answer needs two rare names of
 // text in its question or plain labels whose rarities sum to 1.4, or three
-// anywhere that sum to 2 and make up at least half of text's rare words. Those
-// floors keep a record that merely shares a word or two from drawing a ruling,
-// and the result stays at f's limit however many answers the store holds.
+// anywhere that sum to 2 and make up at least half of text's rare names. A name
+// is a word, or words joined by dots or hyphens such as acme-east2-prod, and
+// counts once at the rarity of its rarest term the answer shares. Those floors
+// keep a record that merely shares a word or two from drawing a ruling, and the
+// result stays at f's limit however many answers the store holds.
 // Scores sum in term order, so answers sharing the same words with text score
 // alike and a text ranks the same answers in the same order on every call.
 func (c *Client) MatchAnswers(ctx context.Context, text string, f SearchFilter) ([]AnswerMatch, error) {
@@ -61,12 +63,13 @@ func (c *Client) NearestAnswers(ctx context.Context, text string, f SearchFilter
 }
 
 func (c *Client) rankAnswers(ctx context.Context, text string, f SearchFilter, floored bool) ([]AnswerMatch, error) {
-	asked := slices.Sorted(maps.Keys(matchTerms(text)))
+	names := answermatch.Names(text)
+	asked := slices.Sorted(maps.Keys(names))
 	corpus, err := c.s.IndexedAnswerMatches(ctx, f.Labels, asked)
 	if err != nil {
 		return nil, err
 	}
-	found := scoreAnswerMatches(corpus, text, asked, f.Limit, floored)
+	found := scoreAnswerMatches(corpus, text, names, asked, f.Limit, floored)
 	rows := make([]store.AnswerMatchRow, len(found))
 	for i, match := range found {
 		rows[i] = store.AnswerMatchRow{ID: match.Answer.ID, Tip: match.Answer.Head}
@@ -81,42 +84,48 @@ func (c *Client) rankAnswers(ctx context.Context, text string, f SearchFilter, f
 	return found, nil
 }
 
-func scoreAnswerMatches(corpus store.AnswerMatchCorpus, text string, asked []string, limit int, floored bool) []AnswerMatch {
+func scoreAnswerMatches(corpus store.AnswerMatchCorpus, text string, names map[string]int, asked []string, limit int, floored bool) []AnswerMatch {
 	lowered := strings.ToLower(text)
 	seen := corpus.Seen
 	answers := corpus.Answers
 
 	rare := max(matchRareFloor, len(answers)/matchRareShare)
-	askedRare := 0
-	for _, term := range asked {
+	named := make([]int, len(asked))
+	numbers := map[int]int{}
+	rareNames := map[int]struct{}{}
+	for i, term := range asked {
+		if _, numbered := numbers[names[term]]; !numbered {
+			numbers[names[term]] = len(numbers)
+		}
+		named[i] = numbers[names[term]]
 		if seen[term] <= rare {
-			askedRare++
+			rareNames[named[i]] = struct{}{}
 		}
 	}
+	askedRare := len(rareNames)
 	allAnswers := float64(len(answers) + 1)
+	shared := make([]nameRarity, len(numbers))
 	var found []AnswerMatch
 	for _, a := range answers {
 		match := AnswerMatch{Answer: model.Answer{ID: a.ID, UpdatedAt: a.UpdatedAt, Head: a.Tip}, Phrase: phraseIn(a.Labels, lowered)}
-		inQuestion := 0
-		var questionRarity, rarity float64
-		for _, term := range asked {
+		clear(shared)
+		for i, term := range asked {
 			question := a.Terms[term]&1 != 0
 			body := a.Terms[term]&2 != 0
 			if (!question && !body) || seen[term] > rare {
 				continue
 			}
 			weight := math.Log(allAnswers / float64(seen[term]))
-			rarity += weight / math.Log(allAnswers)
+			name := &shared[named[i]]
+			name.anywhere = max(name.anywhere, weight/math.Log(allAnswers))
 			if question {
-				inQuestion++
-				questionRarity += weight / math.Log(allAnswers)
+				name.question = max(name.question, weight/math.Log(allAnswers))
 				weight *= matchTitleBoost
 			}
 			match.Terms = append(match.Terms, term)
 			match.Score += weight
 		}
-		namedInQuestion := inQuestion >= matchTitleTerms && questionRarity >= matchTitleRarity
-		mostOfText := len(match.Terms) >= matchBodyTerms && rarity >= matchBodyRarity && len(match.Terms)*2 >= askedRare
+		namedInQuestion, mostOfText := sharedFloors(shared, askedRare)
 		if match.Phrase == "" && !namedInQuestion && !mostOfText && (floored || len(match.Terms) == 0) {
 			continue
 		}
@@ -141,6 +150,28 @@ func scoreAnswerMatches(corpus store.AnswerMatchCorpus, text string, asked []str
 	return found
 }
 
+// nameRarity is the rarity of the rarest term an answer shares with one name of
+// a text, anywhere in the answer and in its question; 0 shares none.
+type nameRarity struct{ anywhere, question float64 }
+
+func sharedFloors(shared []nameRarity, askedRare int) (namedInQuestion, mostOfText bool) {
+	var inQuestion, anywhere int
+	var questionRarity, rarity float64
+	for _, name := range shared {
+		if name.anywhere > 0 {
+			anywhere++
+			rarity += name.anywhere
+		}
+		if name.question > 0 {
+			inQuestion++
+			questionRarity += name.question
+		}
+	}
+	namedInQuestion = inQuestion >= matchTitleTerms && questionRarity >= matchTitleRarity
+	mostOfText = anywhere >= matchBodyTerms && rarity >= matchBodyRarity && anywhere*2 >= askedRare
+	return namedInQuestion, mostOfText
+}
+
 func boolRank(b bool) int {
 	if b {
 		return 1
@@ -155,8 +186,4 @@ func phraseIn(tags []string, lowered string) string {
 		}
 	}
 	return ""
-}
-
-func matchTerms(text string) map[string]struct{} {
-	return answermatch.Terms(text)
 }

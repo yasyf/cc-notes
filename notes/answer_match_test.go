@@ -120,6 +120,27 @@ func TestMatchAnswersLeavesALineSharingACommonWordWithItsQuestion(t *testing.T) 
 	}
 }
 
+func TestMatchAnswersLeavesALineSharingOnlyAHyphenatedName(t *testing.T) {
+	c, _ := newClient(t)
+	const freeze, metrics = "The billing apply on acme-east2-prod waits on the release freeze", "Should the metrics stack ship on acme-east2-prod?"
+	createAnswers(t, c,
+		notes.NoteSpec{Title: freeze, Body: "Hold it.", Tags: []string{"scope:durable"}},
+		notes.NoteSpec{Title: metrics, Body: "Yes.", Tags: []string{"scope:durable"}},
+		notes.NoteSpec{Title: "Which cache backend?", Body: "Redis", Tags: []string{"scope:durable"}},
+	)
+	line := "build: ship the metrics stack on acme-east2-prod at 242db7acca08 or later"
+	if got := matchedTitles(t, c, line, 5); !slices.Equal(got, []string{metrics}) {
+		t.Fatalf("matched %q, want the metrics ruling alone, never one sharing only acme-east2-prod", got)
+	}
+	nearest, err := c.NearestAnswers(t.Context(), line, notes.SearchFilter{Labels: []string{"scope:durable"}, Limit: 5})
+	if err != nil {
+		t.Fatalf("NearestAnswers: %v", err)
+	}
+	if len(nearest) != 2 || nearest[1].Answer.Title != freeze {
+		t.Fatalf("nearest = %+v, want the freeze ruling still ranked second", nearest)
+	}
+}
+
 func TestMatchAnswersLeavesAnAlertThatNamesNoneOfItsWords(t *testing.T) {
 	c, _ := newClient(t)
 	createAnswers(t, c, akamaiRuling())

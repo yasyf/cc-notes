@@ -68,6 +68,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt names its topic.
 
 ### Fixed
+- **`answer match` counts a hyphenated name once.** Its floors, two rare
+  words of the text in an answer's question or three anywhere, counted each
+  term a joined name yields, so `acme-east2-prod` alone made five
+  (`acme-east`, `acme`, `east`, `2-prod`, `prod`) and drew any answer naming
+  the same environment. Each run of letters and digits joined by dots or
+  hyphens now counts once, at the rarity of its rarest shared term, and so do
+  names sharing a term, such as `prod` beside `acme-east2-prod`. Ranking and
+  `--nearest` are unchanged.
 - **A ref a Git command deleted or rewound comes back on the next write or
   sync.** A `git fetch` with `fetch.prune` and a forced
   `+refs/cc-notes/*:refs/cc-notes/*` refspec deletes every record the remote

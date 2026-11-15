@@ -33,8 +33,44 @@ func QuestionTerms(title string, tags []string) map[string]struct{} {
 
 // Terms extracts normalized ASCII words and three-digit status codes, including joined word parts.
 func Terms(text string) map[string]struct{} {
-	text = strings.ToLower(text)
 	terms := map[string]struct{}{}
+	scan(text, func(term string, _ int) { terms[term] = struct{}{} })
+	return terms
+}
+
+// Names maps each term of Terms(text) to the name it came from, a run of
+// letters and digits joined by single dots or hyphens, so a floor can count a
+// name once: every term one name yields, such as the five of acme-east2-prod,
+// maps to the same number, and so does every term of two names sharing a term.
+// The numbers only tell names apart.
+func Names(text string) map[string]int {
+	names := map[string]int{}
+	var parent []int
+	root := func(name int) int {
+		for parent[name] != name {
+			parent[name] = parent[parent[name]]
+			name = parent[name]
+		}
+		return name
+	}
+	scan(text, func(term string, name int) {
+		for len(parent) <= name {
+			parent = append(parent, len(parent))
+		}
+		if other, seen := names[term]; seen {
+			parent[root(other)] = root(name)
+		}
+		names[term] = name
+	})
+	for term, name := range names {
+		names[term] = root(name)
+	}
+	return names
+}
+
+func scan(text string, found func(term string, name int)) {
+	text = strings.ToLower(text)
+	name, end := -1, -1
 	add := func(word string) {
 		if !IsContentWord(word) || (isDigits(word) && len(word) != matchStatusLen) {
 			return
@@ -42,7 +78,7 @@ func Terms(text string) map[string]struct{} {
 		if len(word) > matchMinTerm && strings.HasSuffix(word, "s") && !strings.HasSuffix(word, "ss") {
 			word = strings.TrimSuffix(word, "s")
 		}
-		terms[word] = struct{}{}
+		found(word, name)
 	}
 	for i := 0; i < len(text); {
 		if !matchAlphaNum(text[i]) {
@@ -50,6 +86,9 @@ func Terms(text string) map[string]struct{} {
 			continue
 		}
 		start := i
+		if start != end {
+			name++
+		}
 		i++
 		for i < len(text) {
 			if matchAlphaNum(text[i]) {
@@ -65,6 +104,7 @@ func Terms(text string) map[string]struct{} {
 			}
 			break
 		}
+		end = i
 		add(text[start:i])
 		part := start
 		for j := start; j < i; j++ {
@@ -77,7 +117,6 @@ func Terms(text string) map[string]struct{} {
 			add(text[part:i])
 		}
 	}
-	return terms
 }
 
 func matchAlphaNum(b byte) bool {
