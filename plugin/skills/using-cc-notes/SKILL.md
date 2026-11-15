@@ -506,7 +506,9 @@ small classifier judges the prompt bears on. A prompt that mostly repeats anothe
 prompt, such as a launch template, draws no matched answers. From then on `stage_prompt_answers`
 has the same pick, in the background, choose the one unseen answer the prompt clearly bears on
 or would violate, and `float_prompt_answers` floats that pick on the next prompt without a model
-call. `restore_answers_after_compact` restores answers captured
+call. Before an `Agent` dispatch or a `SendMessage` string leaves, `gate_sends_on_answers` runs
+the same match and pick on its text and refuses the call once with the answer it picks; sending
+the same text again passes. `restore_answers_after_compact` restores answers captured
 or surfaced this session after compaction, capped at 30. File surfacing through `relevant`
 is opt-in: `git config cc-notes.answers.fileSurfacing true`. The `answers` seen-set tracks
 what has surfaced. See `references/answers.md` for the record shape and lifecycle.

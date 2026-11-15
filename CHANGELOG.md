@@ -40,6 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import, which now folds its records on eight readers: 49.5 s instead of 158 s.
 
 ### Added
+- **A dispatch or message a durable answer bears on is refused once.** Before
+  an `Agent` dispatch or a `SendMessage` string leaves, `gate_sends_on_answers`
+  runs `answer match` on its text and the same small classifier the prompt
+  floats use. When it picks an answer, the call is refused with that answer's
+  id, question and chosen answer, so the sender reads it before the step goes
+  out; the same text sent again passes. Each new text is judged once, whether
+  or not its answer surfaced earlier in the session.
 - **`answer match --nearest` ranks without the floors.** Every answer sharing
   one rare word with the text competes on the same score, and `--limit` keeps
   the best; the MCP `answer_match` tool takes `nearest`. A question checked with
