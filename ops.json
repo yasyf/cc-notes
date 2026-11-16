@@ -1,1 +1,1 @@
-{"v":1,"lamport":3,"ops":[{"kind":"set_branch","branch":"quota-header-pacing-nov15"}]}
+{"v":1,"lamport":4,"ops":[{"kind":"add_comment","body":"Implementation owner root. Four-file patch replaces1000 floor with1 for foreground, BackgroundQuota2percent capped100 for known gh watch commands, admits against current header window, accepts regional increases, preserves actual zero until reset, and keeps secondary hold unchanged. Regression tests added; ship normal hooks running under local runtime slot; hosted CI will grade suites. No live load tests. Other work remains held."}]}
