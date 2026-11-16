@@ -1124,6 +1124,24 @@ func (g Git) ConfigFileSet(ctx context.Context, path, key, value string) error {
 // ConfigGetAll returns every value of key in the repository-local config,
 // in order, or an empty slice when the key is unset.
 func (g Git) ConfigGetAll(ctx context.Context, key string) ([]string, error) {
+	if g.memoizes(ctx) {
+		first, last := strings.IndexByte(key, '.'), strings.LastIndexByte(key, '.')
+		if first <= 0 || last == len(key)-1 {
+			return nil, fmt.Errorf("config get-all %s: invalid key", key)
+		}
+		key = strings.ToLower(key[:first]) + key[first:last+1] + strings.ToLower(key[last+1:])
+		pairs, err := g.memoizedConfigLocal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var values []string
+		for _, pair := range pairs {
+			if pair[0] == key {
+				values = append(values, pair[1])
+			}
+		}
+		return values, nil
+	}
 	out, err := g.runEnv(ctx, envWithoutGitConfig(), "", "config", "--local", "--get-all", "-z", key)
 	var cmdErr *commandError
 	if errors.As(err, &cmdErr) && cmdErr.exitCode() == 1 && cmdErr.stderr == "" {
