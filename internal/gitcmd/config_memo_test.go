@@ -74,6 +74,41 @@ func assertMemoConfigMatchesGit(t *testing.T, plain gitcmd.Git) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ConfigLocal = %q, git says %q", got, want)
 	}
+	for _, key := range []string{"remote.Mixed.fetch", "REMOTE.Mixed.FETCH", "remote.mixed.fetch", "cc-notes.localLabel", "http.https://example.com.extraHeader", "memo.barekey", "remote.included.fetch", "nothing.matches"} {
+		want, err := plain.ConfigGetAll(t.Context(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := plain.ConfigGetAll(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("ConfigGetAll(%s) = %q, git says %q", key, got, want)
+		}
+	}
+}
+
+func TestMemoizedConfigGetAllReusesListing(t *testing.T) {
+	dir := gittest.InitRepo(t)
+	writeMemoConfig(t, filepath.Join(dir, ".git"))
+	g := gitcmd.Git{Dir: dir}
+	ctx := gitcmd.WithCommandMemo(t.Context())
+	if _, err := g.ConfigLocal(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	got, err := g.ConfigGetAll(ctx, "REMOTE.Mixed.FETCH")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"+refs/a/*:refs/b/*", "+refs/c/*:refs/d/*"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ConfigGetAll = %q, want %q", got, want)
+	}
+	if _, err := g.ConfigGetAll(ctx, "invalid"); err == nil {
+		t.Fatal("ConfigGetAll accepted a key without a section")
+	}
 }
 
 func TestMemoizedConfigMatchesGit(t *testing.T) {
