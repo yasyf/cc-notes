@@ -4,47 +4,47 @@
   "name": "cc-notes",
   "kind": "release-binary",
   "version": {
-    "static": "0.76.28"
+    "static": "0.76.29"
   },
   "platforms": {
     "macos-aarch64": {
       "size": 26637376,
       "hash": "sha256",
-      "digest": "82aaea36cdf7e2468d3e67e63cd065805e0a2b7befa3f1c98736b1c7bc1aff3f",
+      "digest": "fcb2ffc6c8f57aca9e8eaa096b4bb0a5f03ffd1fc0bdb2bfbd46ccd884cd13b1",
       "path": "cc-notes",
       "providers": [
         {
           "type": "github-release",
           "repo": "yasyf/cc-notes",
-          "tag": "v0.76.28",
+          "tag": "v0.76.29",
           "name": "cc-notes_darwin_arm64"
         }
       ]
     },
     "macos-x86_64": {
-      "size": 29172768,
+      "size": 29176896,
       "hash": "sha256",
-      "digest": "01fc3eff0865fd66230ff952ed10f118d1805c35b73ab07fbac6cf0d663cef19",
+      "digest": "15ec51bab618c6db3f214cfbfa1f3b8f5c63f23df8254c323a053cb6f3c71ae9",
       "path": "cc-notes",
       "providers": [
         {
           "type": "github-release",
           "repo": "yasyf/cc-notes",
-          "tag": "v0.76.28",
+          "tag": "v0.76.29",
           "name": "cc-notes_darwin_amd64"
         }
       ]
     },
     "linux-x86_64": {
-      "size": 28156066,
+      "size": 28164258,
       "hash": "sha256",
-      "digest": "4a3acd55a3781b3ea89bc600b0cfc56eea19c1fddcf348fcf41d9d88b2fc1880",
+      "digest": "f5db046c7ec9ceface5bedbe570bb0744c7d6a50272892fbfb989ebf221276d8",
       "path": "cc-notes",
       "providers": [
         {
           "type": "github-release",
           "repo": "yasyf/cc-notes",
-          "tag": "v0.76.28",
+          "tag": "v0.76.29",
           "name": "cc-notes_linux_amd64"
         }
       ]
@@ -52,13 +52,13 @@
     "linux-aarch64": {
       "size": 25690274,
       "hash": "sha256",
-      "digest": "5dd47cefbb48d744752c0383ec1716c02d7514d39fefa551ea4d5393c41d4525",
+      "digest": "253a63f9da2f9ea400af98fd75c03e8bec0908df8e48813f83dbc286f25fcc72",
       "path": "cc-notes",
       "providers": [
         {
           "type": "github-release",
           "repo": "yasyf/cc-notes",
-          "tag": "v0.76.28",
+          "tag": "v0.76.29",
           "name": "cc-notes_linux_arm64"
         }
       ]
