@@ -1,1 +1,1 @@
-{"v":1,"lamport":10,"ops":[{"kind":"set_criterion_status","id":"e35bdc393e50164b58d0e58525522407","status":"met","note":"PR939 merge13aee7b; official0.96.22 Homebrew and plugin installed, both executable versions verified, quarantine absent, real gateway read succeeded. Receipt cost-retro-20261102/ccx-quota-installation.json."}]}
+{"v":1,"lamport":11,"ops":[{"kind":"set_status","status":"done"},{"kind":"add_comment","body":"Delivered in yasyf/cc-context PR939 merge13aee7b12f539652c073f837a75240320b1ff93f, released/installed0.96.22; full CI43814397613 passed."}]}
