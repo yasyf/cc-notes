@@ -1,1 +1,1 @@
-{"v":1,"lamport":19,"ops":[{"kind":"add_comment","body":"Staging lookup fix merged as cc-skills PR5908, merge d1198ff4f5c1a22090a121bb2261be6b6b474379. Shared runtime slot released naturally; hooks passed. Hosted CI43808530065 runs full long-running tests. Supported installation started, followed by natural rebuild measurement. No independent reviewer launched: conservative budget admission remains exhausted; root source review and hosted regression are recorded separately."}]}
+{"v":1,"lamport":20,"ops":[{"kind":"set_status","status":"open"}]}
