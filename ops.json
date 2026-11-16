@@ -1,1 +1,1 @@
-{"v":1,"lamport":9,"ops":[{"kind":"set_criterion_status","id":"ad68aae44f94442a7ec754da30a28744","status":"met","note":"CI43814397613 passed new foreground/background reserve and real exhaustion checks plus existing secondary-limit tests."}]}
+{"v":1,"lamport":10,"ops":[{"kind":"set_criterion_status","id":"e35bdc393e50164b58d0e58525522407","status":"met","note":"PR939 merge13aee7b; official0.96.22 Homebrew and plugin installed, both executable versions verified, quarantine absent, real gateway read succeeded. Receipt cost-retro-20261102/ccx-quota-installation.json."}]}
