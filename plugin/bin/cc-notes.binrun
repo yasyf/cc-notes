@@ -4,19 +4,19 @@
   "name": "cc-notes",
   "kind": "release-binary",
   "version": {
-    "static": "0.76.29"
+    "static": "0.76.30"
   },
   "platforms": {
     "macos-aarch64": {
       "size": 26637376,
       "hash": "sha256",
-      "digest": "fcb2ffc6c8f57aca9e8eaa096b4bb0a5f03ffd1fc0bdb2bfbd46ccd884cd13b1",
+      "digest": "27da37ab7714755ef90f79c49ad408e21959e89f253ff178aead029ab213ead3",
       "path": "cc-notes",
       "providers": [
         {
           "type": "github-release",
           "repo": "yasyf/cc-notes",
-          "tag": "v0.76.29",
+          "tag": "v0.76.30",
           "name": "cc-notes_darwin_arm64"
         }
       ]
@@ -24,13 +24,13 @@
     "macos-x86_64": {
       "size": 29176896,
       "hash": "sha256",
-      "digest": "15ec51bab618c6db3f214cfbfa1f3b8f5c63f23df8254c323a053cb6f3c71ae9",
+      "digest": "37c820c600419625ff7a77dcadcc65bb433a9e33fb25f31a97ccf8bc5a509c15",
       "path": "cc-notes",
       "providers": [
         {
           "type": "github-release",
           "repo": "yasyf/cc-notes",
-          "tag": "v0.76.29",
+          "tag": "v0.76.30",
           "name": "cc-notes_darwin_amd64"
         }
       ]
@@ -38,13 +38,13 @@
     "linux-x86_64": {
       "size": 28164258,
       "hash": "sha256",
-      "digest": "f5db046c7ec9ceface5bedbe570bb0744c7d6a50272892fbfb989ebf221276d8",
+      "digest": "e412e4fa34ce6fa79f137e539aabbde52d5d0c6d7915aab1a64d4d528e6eb462",
       "path": "cc-notes",
       "providers": [
         {
           "type": "github-release",
           "repo": "yasyf/cc-notes",
-          "tag": "v0.76.29",
+          "tag": "v0.76.30",
           "name": "cc-notes_linux_amd64"
         }
       ]
@@ -52,13 +52,13 @@
     "linux-aarch64": {
       "size": 25690274,
       "hash": "sha256",
-      "digest": "253a63f9da2f9ea400af98fd75c03e8bec0908df8e48813f83dbc286f25fcc72",
+      "digest": "9ae84d12d49f3f81d2f59c2a269efb7824fd6a1d4526c4a28c5139522d1919da",
       "path": "cc-notes",
       "providers": [
         {
           "type": "github-release",
           "repo": "yasyf/cc-notes",
-          "tag": "v0.76.29",
+          "tag": "v0.76.30",
           "name": "cc-notes_linux_arm64"
         }
       ]
