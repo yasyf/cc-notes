@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Dispatches and messages are no longer refused over a durable answer.**
+  `gate_sends_on_answers` blocked an `Agent` dispatch or `SendMessage` it
+  judged an answer bore on until the same text was sent again; it misfired on
+  unrelated sends, so it is gone. Answers still float on prompts.
+
 ### Security
 - **Builds with Go 1.26.11.** It fixes the `net/http` vulnerability
   [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) that `govulncheck`
