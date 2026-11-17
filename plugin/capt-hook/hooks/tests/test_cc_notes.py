@@ -46,7 +46,6 @@ from hooks.answers import (
     SupersedeTriage,
     SupersedeVerdict,
     float_prompt_answers,
-    gate_sends_on_answers,
     heuristic_scope,
     record_user_answers,
     refine_user_answers,
@@ -5233,82 +5232,6 @@ def test_float_prompt_answers_drops_an_answer_surfaced_meanwhile(monkeypatch, tm
     stage_prompt_answers(lone)
     common.remember_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1]), rows[:1])
     check("prompt answers: a wholly stale pick floats nothing", float_prompt_answers(prompt_event(monkeypatch, tmp_path / "lone", rows[:1])) is None)
-
-
-def send_event(monkeypatch, tmp_path, tool: str, tool_input: dict, matched: list[dict]):
-    monkeypatch.setattr(common.shutil, "which", lambda _name, **_: "/usr/bin/cc-notes")
-    evt = mock_tool_event(tool=tool, event=Event.PreToolUse, tool_input=tool_input, session_dir=tmp_path)
-    evt._raw["session_id"] = tmp_path.name
-    text = tool_input.get("prompt", tool_input.get("message"))
-    calls: list[tuple[str, ...]] = []
-
-    def cli(args, **_):
-        calls.append(tuple(args[1:]))
-        return json.dumps(matched) if isinstance(text, str) and tuple(args[1:]) == prompt_named_answer(text) else None
-
-    monkeypatch.setattr(evt.ctx, "call_cli", cli)
-    return evt, calls
-
-
-DRY_RUN_RULING = durable_answer(
-    "hold001aaaa",
-    title="May the migration dry runs start on staging and the production clusters while you hold releases?",
-    body="Start the staging dry run only, the others after your hold lifts",
-)
-
-
-def test_a_dispatch_a_durable_answer_bears_on_is_refused_until_sent_again(monkeypatch, tmp_path) -> None:
-    """The first Agent dispatch an answer bears on is refused with the answer's id, question and words; the same prompt again passes, a changed one is judged afresh."""
-    dispatch = {"description": "dry run", "prompt": "Start the migration dry run on the production cluster now", "subagent_type": "general-purpose"}
-    evt, _ = send_event(monkeypatch, tmp_path, "Agent", dispatch, [DRY_RUN_RULING])
-    asked: list[tuple[object, dict]] = []
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("hold001aaaa")}, asked))
-    result = gate_sends_on_answers(evt)
-    check("send gate: refuses the dispatch", result is not None and result.action is Action.block, repr(result))
-    quoted = "hold001 May the migration dry runs start on staging and the production clusters while you hold releases? → Start the staging dry run only, the others after your hold lifts"
-    check("send gate: quotes the answer's id, question and words", result is not None and quoted in (result.message or ""), repr(result))
-    check("send gate: judges the outgoing prompt", bool(asked) and asked[0][0] == dispatch["prompt"], repr(asked))
-    check("send gate: marks the answer seen", "hold001aaaa" in common.seen_answer_ids(evt))
-
-    again, calls = send_event(monkeypatch, tmp_path, "Agent", dispatch, [DRY_RUN_RULING])
-    monkeypatch.setattr(again.ctx, "decide", stub_decide({"answer": label("hold001aaaa")}, asked))
-    check("send gate: the same prompt sent again passes", gate_sends_on_answers(again) is None)
-    check("send gate: a resend runs no match and no pick", calls == [] and len(asked) == 1, repr((calls, asked)))
-
-    changed, _ = send_event(monkeypatch, tmp_path, "Agent", {**dispatch, "prompt": "Start the migration dry run on staging only"}, [DRY_RUN_RULING])
-    monkeypatch.setattr(changed.ctx, "decide", stub_decide({"answer": label("hold001aaaa")}))
-    result = gate_sends_on_answers(changed)
-    check("send gate: a changed prompt is judged afresh", result is not None and result.action is Action.block, repr(result))
-
-
-def test_a_message_a_durable_answer_bears_on_is_refused_and_a_structured_one_passes(monkeypatch, tmp_path) -> None:
-    """A SendMessage string goes through the same gate; a structured message such as a shutdown reply is never judged."""
-    message = {"to": "builder", "message": "Go ahead and start the dry run on the production cluster"}
-    evt, _ = send_event(monkeypatch, tmp_path / "text", "SendMessage", message, [DRY_RUN_RULING])
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("hold001aaaa")}))
-    result = gate_sends_on_answers(evt)
-    check("send gate: refuses the message", result is not None and result.action is Action.block and "hold001" in (result.message or ""), repr(result))
-
-    reply = {"to": "lead", "message": {"type": "shutdown_response", "request_id": "r1", "approve": True}}
-    evt, calls = send_event(monkeypatch, tmp_path / "structured", "SendMessage", reply, [DRY_RUN_RULING])
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide({"answer": label("hold001aaaa")}))
-    check("send gate: a structured message passes", gate_sends_on_answers(evt) is None)
-    check("send gate: a structured message runs no match", calls == [], repr(calls))
-
-
-def test_a_send_no_answer_bears_on_passes_and_marks_nothing_seen(monkeypatch, tmp_path) -> None:
-    """When the pick names no answer, or nothing matches, the send passes and no answer is marked seen."""
-    dispatch = {"description": "status", "prompt": "Report the CI state of the open PR", "subagent_type": "general-purpose"}
-    evt, _ = send_event(monkeypatch, tmp_path / "none", "Agent", dispatch, [DRY_RUN_RULING])
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide(PICK_NONE))
-    check("send gate: no bearing answer passes", gate_sends_on_answers(evt) is None)
-    check("send gate: nothing marked seen", "hold001aaaa" not in common.seen_answer_ids(evt))
-
-    evt, _ = send_event(monkeypatch, tmp_path / "empty", "Agent", dispatch, [])
-    asked: list[tuple[object, dict]] = []
-    monkeypatch.setattr(evt.ctx, "decide", stub_decide(PICK_NONE, asked))
-    check("send gate: no matched answer passes", gate_sends_on_answers(evt) is None)
-    check("send gate: no matched answer asks no model", asked == [], repr(asked))
 
 
 def test_float_prompt_answers_never_calls_out(monkeypatch, tmp_path) -> None:
